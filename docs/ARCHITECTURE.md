@@ -217,6 +217,16 @@ Evidence: `frontend/app/page.tsx:221-287`, `backend/app/services/retrieval/rag_s
 
 Note: code defaults `VECTOR_STORE_DIR` to `./vector_db`, while the current workspace also contains `backend/chroma_db/`. The active persistence directory therefore depends on env configuration. Evidence: `backend/app/main.py:61-66`.
 
+## LLM Wiki Layer
+
+LLM Wiki is a scoped business-data layer on top of raw document evidence. Wiki pages live in SQLite tables `wiki_page`, `wiki_folder`, `wiki_page_issue`, `wiki_page_proposal`, and `wiki_page_source_ref`; contribution convergence uses `wiki_document_contribution`, `wiki_ingest_pending`, and `wiki_log_entry`. Every row is owned by the same `workspace_id` and `knowledge_base_id` boundaries as documents and chunks.
+
+Wiki capability is controlled by persisted `indexing_strategy.wiki_enabled`; `type = "wiki"` is a creation preset, not a runtime bypass. The Wiki preset enables Wiki and disables dense, keyword, and graph indexing. Parsed chunks are always persisted, while vector writes run only when dense or keyword indexing is enabled. Wiki, graph, and retrieval stages can therefore be combined independently.
+
+Wiki ingest is handled by durable typed tasks (`wiki.ingest` and `wiki.finalize`). Map reconstructs bounded source text, extracts candidates, and runs summary/classification concurrently. Per-slug Reduce merges active document contributions into published summary/entity/concept pages. Finalization maintains scoped Index and Log system pages, links, and lint issues. Source revisions and contribution manifests make reprocessing convergent and allow stale contributions to be retracted without placing Wiki pages in the raw vector collection.
+
+The agent runtime has optional Wiki tools behind `AGENT_RUNTIME_WIKI_TOOLS_ENABLED` and `AGENT_RUNTIME_WIKI_MAINTENANCE_TOOLS_ENABLED`. Read tools can search/read pages, drill back to raw source chunks, and flag issues. Maintenance tools create pending proposals by default instead of mutating published content directly.
+
 ## Dependency Highlights
 
 - Backend packages include FastAPI, OpenAI, ChromaDB, Python DOCX parsing, Excel parsing, multipart upload support, and PDF tooling. Evidence: `backend/requirements.txt`.
@@ -341,7 +351,7 @@ system prompt
 
 ## Multi-Knowledge-Base Domain
 
-`workspace` 是轻量顶层容器，第一阶段每个 `knowledge_base` 都是 `document` 类型。SQLite 是 workspace、KB、document、chunk 和 enrichment 状态的事实源；Milvus、FTS5、实体向量和 Neo4j 是可重建派生索引。
+`workspace` 是轻量顶层容器，`knowledge_base.type` 可记录 `document`、`faq` 或 `wiki` 元数据类型；当前内容处理仍复用文档证据管线。SQLite 是 workspace、KB、document、chunk 和 enrichment 状态的事实源；Milvus、FTS5、实体向量和 Neo4j 是可重建派生索引。
 
 请求在 HTTP 边界解析一次 `KnowledgeBaseScope`：
 
@@ -353,11 +363,11 @@ HTTP knowledge_base_id(s)
   -> CitationVerifier scoped source_chunk lookup
 ```
 
-未传范围只解析到稳定默认 KB。显式多库查询在所选 KB 中 fan-out，并用 `(knowledge_base_id, chunk_id)` 去重。归档 KB 保留物理数据，但不能上传或检索。
+未传范围只解析到当前 `is_default=true` 的稳定默认 KB；初始部署会把配置的 `DEFAULT_KNOWLEDGE_BASE_ID` 标记为默认。显式多库查询在所选 KB 中 fan-out，并用 `(knowledge_base_id, chunk_id)` 去重。归档 KB 保留物理数据，但不能上传或检索，默认 KB 不可归档。
 
 上传基础路径完成后，`DocumentEnrichmentService` 独立生成概要、关键词和建议问题。状态为 `none -> pending -> processing -> completed|failed`；失败不改变文档 `parsed` 状态。概要只用于目录导航、建议问题和可选召回增强，答案引用必须回查原始 chunk。
 
-SQLite 只接受空库或唯一最终 schema 版本。发现历史表、未知版本或旧 Milvus collection 时，系统报告 `reset_required`，不会执行 `ALTER`、回填或请求期降级迁移。部署升级通过仅限 CLI 的 `KnowledgeStorageResetCoordinator` 编排 SQLite、Milvus、可选 Neo4j、评测报告、ingest 状态和受管理源文件：
+SQLite 只接受空库或唯一最终 schema 版本。发现历史表、未知版本或旧 Milvus collection 时，系统报告 `reset_required`；同版本内仅允许小范围兼容元数据升级，例如知识库 `is_default` 列和类型约束放宽。破坏性部署升级通过仅限 CLI 的 `KnowledgeStorageResetCoordinator` 编排 SQLite、Milvus、可选 Neo4j、评测报告、ingest 状态和受管理源文件：
 
 ```text
 stop all writers

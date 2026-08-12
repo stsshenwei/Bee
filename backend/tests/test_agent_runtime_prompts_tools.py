@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from app.models.knowledge_base import KnowledgeBaseScope
+from app.models.agent_runtime import AgentRuntimeConfig, resolve_chat_runtime_policy
 from app.services.agent.agent_prompt_templates import AgentPromptCatalog, ContextPromptCatalog, PromptTemplateCatalog, PromptTemplateError
 from app.services.agent.agent_runtime_tools import (
     DataAnalysisTool,
@@ -139,6 +140,26 @@ class AgentRuntimePromptsToolsTests(unittest.TestCase):
         self.assertNotIn("faq_id", rendered)
         self.assertNotIn("<kb doc=", rendered)
 
+    def test_wiki_prompt_and_runtime_policy_prefer_wiki_tools(self):
+        catalog = AgentPromptCatalog.load("config/prompt_templates/agent_system_prompt.yaml")
+        rendered = catalog.render(
+            "wiki_rag_agent",
+            knowledge_bases=[{"id": "kb1", "name": "Wiki", "type": "wiki", "doc_count": 1}],
+            tools=[{"name": "wiki_search", "description": "Search Wiki"}, {"name": "wiki_read_source_doc", "description": "Read raw source"}],
+            skills=[],
+        )
+        policy = resolve_chat_runtime_policy("wiki", AgentRuntimeConfig())
+
+        self.assertIn("Wiki Q&A agent", rendered)
+        self.assertIn("wiki_search", rendered)
+        self.assertIn("raw source chunks", rendered)
+        self.assertNotIn("PostgreSQL POSIX", rendered)
+        self.assertEqual("wiki", policy.mode)
+        self.assertEqual("wiki_rag_agent", policy.prompt_template_id)
+        self.assertIn("wiki_search", policy.enabled_tools)
+        self.assertIn("wiki_read_source_doc", policy.enabled_tools)
+        self.assertTrue(policy.require_deep_read)
+
     def test_grep_tool_description_prefers_one_packed_alternation_call(self):
         tool = GrepChunksTool()
 
@@ -180,6 +201,7 @@ class AgentRuntimePromptsToolsTests(unittest.TestCase):
             "session_title",
             "graph_extraction",
             "fallback_response",
+            "generate_wiki_summary_page",
         }
         catalog = PromptTemplateCatalog.load_directory("config/prompt_templates", required_ids=required)
 
@@ -196,6 +218,19 @@ class AgentRuntimePromptsToolsTests(unittest.TestCase):
         self.assertIn("manual.txt", rendered)
         self.assertIn("DH-P5000", rendered)
         self.assertIn("zh-CN", rendered)
+        wiki_rendered = catalog.render(
+            "generate_wiki_summary_page",
+            {
+                "document_name": "manual.txt",
+                "source_chunks": "chunk c1: DH-P5000 supports GPON uplink.",
+                "language": "zh-CN",
+                "existing_pages": "dh-p5000",
+                "max_claims": "8",
+            },
+            mode="postprocess",
+        )
+        self.assertIn("source chunks", wiki_rendered.lower())
+        self.assertIn("chunk c1", wiki_rendered)
 
     def test_generic_prompt_catalog_rejects_missing_variables_and_secrets(self):
         catalog = PromptTemplateCatalog.load_directory("config/prompt_templates", required_ids={"query_rewrite"})

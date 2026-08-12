@@ -1,6 +1,33 @@
-import type { DocumentProcessingPreview, UploadFileTaskRecord, UploadProcessingPhase } from "./types";
+import type { DocumentItem, DocumentProcessingPreview, UploadFileTaskRecord, UploadProcessingPhase } from "./types";
 
 const PHASE_ORDER = ["parse", "chunk", "index", "multimodal", "postprocess"];
+const ACTIVE_DOCUMENT_TASK_STATUSES = new Set(["queued", "pending", "scheduled", "processing", "retrying"]);
+
+export function isDocumentProcessingActive(
+  item: Pick<DocumentItem, "parse_status" | "processing_task_status">,
+): boolean {
+  const taskStatus = String(item.processing_task_status || "").toLowerCase();
+  const parseStatus = String(item.parse_status || "").toLowerCase();
+  return ACTIVE_DOCUMENT_TASK_STATUSES.has(taskStatus) || ["pending", "uploaded", "parsing", "processing"].includes(parseStatus);
+}
+
+export function summarizeDocumentCard(
+  item: Pick<DocumentItem, "parse_status" | "processing_task_status" | "summary" | "summary_status" | "summary_error">,
+): string {
+  if (isDocumentProcessingActive(item)) {
+    return "文档处理中，摘要和后处理结果将在任务完成后更新。";
+  }
+  const summary = item.summary?.trim();
+  if (summary) return summary;
+  const status = String(item.summary_status || "none").toLowerCase();
+  if (status === "pending" || status === "processing") {
+    return "摘要生成中，完成后会自动显示在卡片中。";
+  }
+  if (status === "failed") {
+    return item.summary_error?.trim() || "摘要生成失败，可在右上角菜单中重试。";
+  }
+  return "未生成摘要。";
+}
 
 export function orderedPhases(phases: UploadProcessingPhase[] = []): UploadProcessingPhase[] {
   return [...phases].sort((left, right) => {

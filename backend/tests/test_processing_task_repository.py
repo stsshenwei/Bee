@@ -61,6 +61,28 @@ class ProcessingTaskRepositoryTests(unittest.TestCase):
             self.assertEqual(payload, first["payload"])
             self.assertEqual(1, len(repo.list_tasks(self.scope)))
 
+    def test_create_task_deduplicates_by_nonempty_idempotency_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._repo(tmp)
+            first = repo.create_task(
+                "wiki.ingest",
+                self.scope,
+                task_id="task-first",
+                payload={"generation_run_id": "run-1"},
+                idempotency_key="wiki-ingest:kb:doc:rev",
+            )
+            duplicate = repo.create_task(
+                "wiki.ingest",
+                self.scope,
+                task_id="task-duplicate",
+                payload={"generation_run_id": "run-2"},
+                idempotency_key="wiki-ingest:kb:doc:rev",
+            )
+
+            self.assertEqual(first["id"], duplicate["id"])
+            self.assertEqual("run-1", duplicate["payload"]["generation_run_id"])
+            self.assertEqual(1, len(repo.list_tasks(self.scope)))
+
     def test_claim_orders_runnable_tasks_and_refreshes_lease(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = self._repo(tmp)
@@ -89,6 +111,32 @@ class ProcessingTaskRepositoryTests(unittest.TestCase):
             self.assertEqual(stale["id"], reclaimed["id"])
             self.assertEqual(2, reclaimed["attempt"])
             self.assertEqual("worker-new", reclaimed["lease_owner"])
+
+    def test_runnable_finalize_payloads_are_coalesced_per_scope(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._repo(tmp)
+            first = repo.create_task(
+                "wiki.finalize",
+                self.scope,
+                task_id="finalize-1",
+                payload={
+                    "schema_version": 1,
+                    "generation_run_id": "run-1",
+                    "generation_run_ids": ["run-1"],
+                    "document_ids": ["doc-1"],
+                    "affected_slugs": ["onu"],
+                },
+            )
+            merged = repo.merge_runnable_task_payload(
+                self.scope,
+                "wiki.finalize",
+                {"generation_run_id": "run-2", "generation_run_ids": ["run-2"], "document_ids": ["doc-2"], "affected_slugs": ["gpon", "onu"]},
+            )
+
+            self.assertEqual(first["id"], merged["id"])
+            self.assertEqual(["doc-1", "doc-2"], merged["payload"]["document_ids"])
+            self.assertEqual(["onu", "gpon"], merged["payload"]["affected_slugs"])
+            self.assertEqual(["run-1", "run-2"], merged["payload"]["generation_run_ids"])
 
     def test_retry_complete_cancel_and_dead_letter_lifecycle(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -7,8 +7,8 @@
 The create flow is a Bee-branded WeKnora-like wizard:
 
 - left configuration rail: basic information, type, model, vector storage, parser, chunking, image/OCR, audio, graph, and advanced settings
-- only `Document` knowledge bases can be submitted
-- FAQ, Wiki, future types, audio, multimodal, and unsupported runtime features are visible as disabled or unavailable
+- `Document`, `FAQ`, and `Wiki` knowledge-base metadata types can be submitted
+- the wizard exposes a default-knowledge-base toggle; future types, audio, multimodal, and unsupported runtime features remain disabled or unavailable
 - supported requested settings are submitted through `POST /knowledge-bases`
 - the detail page displays effective provider configuration and inactive overrides returned by the backend
 - validation failures keep user input in the wizard
@@ -19,6 +19,17 @@ The selected KB document workspace now includes API-backed filters and two view 
 - view modes: compact grid cards and dense list rows
 - actions always carry the selected `knowledge_base_id` for preview, delete, enrichment retry, upload task retry, and bulk delete plumbing
 - bulk delete is intentionally sequential and scoped; partial failures are shown in the page notice
+
+Wiki-capable KBs now add a `Wiki` tab beside the document workspace. The tab loads scoped Wiki pages, open issues, pending proposals, recent generation tasks, and a bounded page-link graph. Users can:
+
+- filter Wiki pages by query, status, and page type
+- read Markdown pages with status, type, version, source refs, inbound links, and outbound links
+- open source refs through the existing document preview when the source document is present, while also showing bounded raw chunk context in the Wiki side panel
+- trigger draft generation from indexed documents without starting provider work automatically on tab open
+- review issues and mark them resolved or ignored
+- apply or reject pending proposals created by generation or agent maintenance tools
+
+The chat composer now includes a `Wiki 问答` mode. It sends `chat_mode: "wiki"` to `/chat/stream`; the backend routes this to the Wiki runtime policy, which searches Wiki pages first and drills into raw source chunks for exact facts. The frontend keeps the same SSE parser and agent timeline surface, so Wiki tool calls appear as normal safe timeline events without exposing hidden reasoning.
 
 The upload interaction uses a staged flow:
 
@@ -231,6 +242,6 @@ Reasoning streams may additionally include thought, tool, result, reflection, an
 
 聊天输入栏提供知识库多选菜单。从 KB 详情进入时预选该库；没有显式选择时显示“默认知识库”，不显示“全部知识库”。选中 ID 随 `/chat/stream` 发送，SSE 事件顺序保持兼容。多库回答保存反馈前必须缩小到一个目标 KB。
 
-目录和详情页将 `aggregate.reset_required` 显示为“存储需要清空重建”，但前端不提供全局清空按钮；破坏性升级只允许运维 CLI。归档操作明确提示无法继续上传和检索，且不会假装数据已物理删除。
+目录和详情页将 `aggregate.reset_required` 显示为“存储需要清空重建”，但前端不提供全局清空按钮；破坏性升级只允许运维 CLI。普通知识库可从卡片删除图标或设置弹窗执行“删除知识库”，该操作调用逻辑归档接口并立即移出活动列表；默认知识库不显示删除入口，确认文案明确底层数据仍暂时保留以便恢复。
 
 桌面 `1440x900` 与移动 `390x844` 的目录、长名称详情、上传进度和多 KB 聊天范围截图保存在 `openspec/changes/add-multi-knowledge-base-domain/verification/`。验收要求无横向溢出、无非预期元素重叠，并在知识库菜单展开时隐藏其后的空状态文案。

@@ -1,10 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import ReactMarkdown from "react-markdown";
+import type { Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { DocumentViewer } from "../components/DocumentViewer";
 import { DeleteIcon, EditIcon, LibraryIcon, MoreIcon, TraceIcon, UploadIcon } from "../components/Icons";
+import { WikiWorkspace } from "./WikiWorkspace";
 import {
   API_BASE,
   archiveKnowledgeBase,
@@ -13,17 +17,28 @@ import {
   createKnowledgeBase,
   createUploadBatch,
   getDocumentProcessingTrace,
+  getWikiGraph,
+  getWikiPage,
   getUploadBatch,
+  generateWikiPage,
+  listWikiGenerationTasks,
+  listWikiIssues,
+  listWikiPages,
+  listWikiProposals,
   listKnowledgeBaseDocuments,
   listKnowledgeBases,
   previewDocument,
+  readWikiSourceDoc,
   readJson,
+  rejectWikiProposal,
   retryDocumentEnrichment,
   retryUploadBatchFile,
+  applyWikiProposal,
+  updateWikiIssue,
   updateKnowledgeBase,
   uploadBatchFile,
 } from "../lib/api";
-import { toKnowledgeBaseCreateInput, validateKnowledgeCreationSettings } from "../lib/knowledge-validation";
+import { applyKnowledgeBaseTypePreset, toKnowledgeBaseCreateInput, validateKnowledgeCreationSettings } from "../lib/knowledge-validation";
 import { canRetryUploadFile, summarizeProcessingPreview, summarizeUploadFile } from "../lib/processing-ui";
 import type {
   DocumentProcessingPreview,
@@ -33,11 +48,17 @@ import type {
   DocumentViewMode,
   KnowledgeBase,
   KnowledgeBaseCreationSection,
+  KnowledgeBaseType,
   KnowledgeCreationWizardSettings,
   UploadBatch,
   UploadBatchSettings,
   UploadFileTaskRecord,
   ProcessingTraceSpan,
+  WikiGenerationTask,
+  WikiGraph,
+  WikiIssue,
+  WikiPage,
+  WikiProposal,
 } from "../lib/types";
 
 type BrowserFile = File & { webkitRelativePath?: string };
@@ -106,11 +127,15 @@ const DEFAULT_WIZARD: KnowledgeCreationWizardSettings = {
   name: "",
   description: "",
   type: "document",
+  isDefault: false,
   activeSection: "basic",
   indexingStrategy: {
     dense_enabled: true,
     keyword_enabled: true,
     graph_enabled: false,
+    wiki_enabled: false,
+    wiki_generation_enabled: true,
+    wiki_auto_publish_enabled: false,
   },
   parser: {
     engine: "builtin",
@@ -163,6 +188,7 @@ export default function KnowledgePage() {
   const [settingsTarget, setSettingsTarget] = useState<KnowledgeBase | null>(null);
   const [settingsName, setSettingsName] = useState("");
   const [settingsDescription, setSettingsDescription] = useState("");
+  const [settingsIndexingStrategy, setSettingsIndexingStrategy] = useState<KnowledgeBase["indexing_strategy"]>(DEFAULT_WIZARD.indexingStrategy);
   const [wizard, setWizard] = useState<KnowledgeCreationWizardSettings>(DEFAULT_WIZARD);
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -286,6 +312,7 @@ export default function KnowledgePage() {
   function openSettingsFor(item: KnowledgeBase) {
     setSettingsName(item.name);
     setSettingsDescription(item.description);
+    setSettingsIndexingStrategy({ ...item.indexing_strategy });
     setFormError("");
     setSettingsTarget(item);
   }
@@ -322,7 +349,11 @@ export default function KnowledgePage() {
     setSaving(true);
     setFormError("");
     try {
-      await updateKnowledgeBase(settingsTarget.id, { name: settingsName, description: settingsDescription });
+      await updateKnowledgeBase(settingsTarget.id, {
+        name: settingsName,
+        description: settingsDescription,
+        indexing_strategy: settingsIndexingStrategy,
+      });
       setSettingsTarget(null);
       await loadKnowledgeBases();
     } catch (cause) {
@@ -332,11 +363,26 @@ export default function KnowledgePage() {
     }
   }
 
-  async function archiveSelected() {
-    if (!selected || selected.id === "default-knowledge-base") return;
-    if (!window.confirm(`归档“${selected.name}”？归档后不能继续上传和检索，但现有数据会保留。`)) return;
-    await archiveKnowledgeBase(selected.id);
-    closeKnowledgeBase();
+  async function deleteKnowledgeBase(target: KnowledgeBase) {
+    if (target.is_default) {
+      setFormError("默认知识库不能删除，请先将其他知识库设为默认。");
+      return;
+    }
+    if (!window.confirm(`删除“${target.name}”？删除后将从列表中移除，不能继续上传或检索；底层数据会暂时保留以便恢复。`)) return;
+    setSaving(true);
+    setFormError("");
+    try {
+      await archiveKnowledgeBase(target.id);
+      setSettingsTarget(null);
+      setKnowledgeBases((current) => current.filter((item) => item.id !== target.id));
+      if (selectedId === target.id) closeKnowledgeBase();
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "知识库删除失败";
+      if (settingsTarget?.id === target.id) setFormError(message);
+      else setError(message);
+    } finally {
+      setSaving(false);
+    }
   }
 
   function uploadFiles(files: FileList | null) {
@@ -687,13 +733,15 @@ export default function KnowledgePage() {
               selected={settingsTarget}
               name={settingsName}
               description={settingsDescription}
+              indexingStrategy={settingsIndexingStrategy}
               error={formError}
               saving={saving}
               onName={setSettingsName}
               onDescription={setSettingsDescription}
+              onIndexingStrategy={setSettingsIndexingStrategy}
               onCancel={() => setSettingsTarget(null)}
               onSubmit={() => void submitSettings()}
-              onArchive={settingsTarget.id === selected.id ? () => void archiveSelected() : undefined}
+              onDelete={!settingsTarget.is_default ? () => void deleteKnowledgeBase(settingsTarget) : undefined}
             />
           ) : null
         }
@@ -732,6 +780,7 @@ export default function KnowledgePage() {
       onRefresh={() => void loadKnowledgeBases()}
       onOpenKnowledgeBase={openKnowledgeBase}
       onEditKnowledgeBase={openSettingsFor}
+      onDeleteKnowledgeBase={(item) => void deleteKnowledgeBase(item)}
       onOpenCreate={openCreateWizard}
       onCloseCreate={() => setCreateOpen(false)}
       onWizardChange={setWizard}
@@ -742,12 +791,15 @@ export default function KnowledgePage() {
             selected={settingsTarget}
             name={settingsName}
             description={settingsDescription}
+            indexingStrategy={settingsIndexingStrategy}
             error={formError}
             saving={saving}
             onName={setSettingsName}
             onDescription={setSettingsDescription}
+            onIndexingStrategy={setSettingsIndexingStrategy}
             onCancel={() => setSettingsTarget(null)}
             onSubmit={() => void submitSettings()}
+            onDelete={!settingsTarget.is_default ? () => void deleteKnowledgeBase(settingsTarget) : undefined}
           />
         ) : null
       }
@@ -766,6 +818,7 @@ function KnowledgeCatalog({
   onRefresh,
   onOpenKnowledgeBase,
   onEditKnowledgeBase,
+  onDeleteKnowledgeBase,
   onOpenCreate,
   onCloseCreate,
   onWizardChange,
@@ -782,6 +835,7 @@ function KnowledgeCatalog({
   onRefresh: () => void;
   onOpenKnowledgeBase: (id: string) => void;
   onEditKnowledgeBase: (item: KnowledgeBase) => void;
+  onDeleteKnowledgeBase: (item: KnowledgeBase) => void;
   onOpenCreate: () => void;
   onCloseCreate: () => void;
   onWizardChange: (settings: KnowledgeCreationWizardSettings) => void;
@@ -827,6 +881,10 @@ function KnowledgeCatalog({
                   event.stopPropagation();
                   onEditKnowledgeBase(item);
                 }}
+                onDelete={(event) => {
+                  event.stopPropagation();
+                  onDeleteKnowledgeBase(item);
+                }}
               />
             ))}
           </div>
@@ -851,21 +909,31 @@ function KnowledgeBaseCard({
   item,
   onOpen,
   onEdit,
+  onDelete,
 }: {
   item: KnowledgeBase;
   onOpen: () => void;
   onEdit: (event: React.MouseEvent<HTMLButtonElement>) => void;
+  onDelete: (event: React.MouseEvent<HTMLButtonElement>) => void;
 }) {
+  const typeLabel = knowledgeBaseTypeLabel(item.type);
   return (
     <article className="kb-card" onClick={onOpen}>
       <div className="kb-card-head">
         <div>
           <h2>{item.name}</h2>
-          <span>Document</span>
+          <span>{typeLabel}{item.is_default ? " · 默认" : ""}</span>
         </div>
-        <button type="button" aria-label="编辑知识库" title="编辑知识库" onClick={onEdit}>
-          <EditIcon />
-        </button>
+        <div className="kb-card-actions">
+          <button type="button" aria-label="编辑知识库" title="编辑知识库" onClick={onEdit}>
+            <EditIcon />
+          </button>
+          {!item.is_default ? (
+            <button type="button" className="danger-icon" aria-label="删除知识库" title="删除知识库" onClick={onDelete}>
+              <DeleteIcon />
+            </button>
+          ) : null}
+        </div>
       </div>
       {item.description ? <p>{item.description}</p> : null}
       <div className="kb-card-stats">
@@ -877,6 +945,16 @@ function KnowledgeBaseCard({
       </div>
     </article>
   );
+}
+
+function knowledgeBaseTypeLabel(type: KnowledgeBaseType): string {
+  const labels: Record<KnowledgeBaseType, string> = {
+    document: "Document",
+    faq: "FAQ",
+    wiki: "Wiki",
+    future: "更多类型",
+  };
+  return labels[type] || type;
 }
 
 function KnowledgeBaseCreateWizard({
@@ -957,6 +1035,10 @@ function renderWizardPanel(settings: KnowledgeCreationWizardSettings, onChange: 
           <span>描述</span>
           <textarea value={settings.description} maxLength={300} onChange={(event) => onChange({ ...settings, description: event.target.value })} />
         </label>
+        <label className="kb-check-row">
+          <input type="checkbox" checked={settings.isDefault} onChange={(event) => onChange({ ...settings, isDefault: event.target.checked })} />
+          <span>设为默认知识库</span>
+        </label>
       </div>
     );
   }
@@ -965,15 +1047,32 @@ function renderWizardPanel(settings: KnowledgeCreationWizardSettings, onChange: 
       <div className="kb-wizard-section">
         <h3>知识库类型</h3>
         <div className="kb-type-grid">
-          <button type="button" className={settings.type === "document" ? "selected" : ""} onClick={() => onChange({ ...settings, type: "document" })}>
+          <button type="button" className={settings.type === "document" ? "selected" : ""} onClick={() => onChange(applyKnowledgeBaseTypePreset(settings, "document"))}>
             <strong>Document</strong>
             <span>上传 PDF、Word、Markdown、表格等文档。</span>
           </button>
-          {(["faq", "wiki", "future"] as const).map((type) => (
-            <button key={type} type="button" disabled>
-              <strong>{type === "faq" ? "FAQ" : type === "wiki" ? "Wiki" : "更多类型"}</strong>
-              <span>暂未开放</span>
+          {(["faq", "wiki"] as const).map((type) => (
+            <button key={type} type="button" className={settings.type === type ? "selected" : ""} onClick={() => onChange(applyKnowledgeBaseTypePreset(settings, type))}>
+              <strong>{type === "faq" ? "FAQ" : "Wiki"}</strong>
+              <span>{type === "faq" ? "适合问答条目和标准回复。" : "适合结构化主题和说明页面。"}</span>
             </button>
+          ))}
+          <button type="button" disabled>
+            <strong>更多类型</strong>
+            <span>暂未开放</span>
+          </button>
+        </div>
+        <div className="kb-indexing-controls" aria-label="索引策略">
+          {([
+            ["wiki_enabled", "Wiki"],
+            ["dense_enabled", "Dense"],
+            ["keyword_enabled", "Keyword"],
+            ["graph_enabled", "Graph"],
+          ] as const).map(([key, label]) => (
+            <label className="kb-check-row" key={key}>
+              <input type="checkbox" checked={Boolean(settings.indexingStrategy[key])} onChange={(event) => onChange({ ...settings, indexingStrategy: { ...settings.indexingStrategy, [key]: event.target.checked } })} />
+              <span>{label}</span>
+            </label>
           ))}
         </div>
       </div>
@@ -1160,6 +1259,13 @@ function KnowledgeBaseDetailShell({
   viewer: ReactNode;
   traceDrawer: ReactNode;
 }) {
+  const wikiCapable = selected.type === "wiki" || Boolean(selected.indexing_strategy?.wiki_enabled);
+  const [activeTab, setActiveTab] = useState<"documents" | "wiki" | "graph">("documents");
+
+  useEffect(() => {
+    if (!wikiCapable && activeTab !== "documents") setActiveTab("documents");
+  }, [wikiCapable, activeTab]);
+
   return (
     <section className="knowledge-page kb-detail-page">
       <header className="knowledge-header kb-detail-header">
@@ -1171,8 +1277,8 @@ function KnowledgeBaseDetailShell({
             <span>›</span>
             <strong>文档</strong>
           </div>
-          <h1>文档</h1>
-          <p>{selected.description || "支持点击或拖拽上传，多格式文档自动解析并智能分块，快速构建可检索的知识库。"}</p>
+          <h1>{selected.name}</h1>
+          <p>{selected.description || "上传文档后自动解析并构建可浏览、可追溯的知识空间。"}</p>
         </div>
         <div className="knowledge-actions">
           <button type="button" onClick={onStartChat}>开始聊天</button>
@@ -1187,7 +1293,13 @@ function KnowledgeBaseDetailShell({
           />
         </div>
       </header>
-      <KnowledgeBaseMetrics selected={selected} />
+      {activeTab === "documents" ? <KnowledgeBaseMetrics selected={selected} /> : null}
+      <div className="kb-detail-tabs" role="tablist" aria-label="Knowledge base workspace">
+        <button type="button" className={activeTab === "documents" ? "active" : ""} onClick={() => setActiveTab("documents")}>Documents</button>
+        {wikiCapable ? <button type="button" className={activeTab === "wiki" ? "active" : ""} onClick={() => setActiveTab("wiki")}>Wiki</button> : null}
+        {wikiCapable ? <button type="button" className={activeTab === "graph" ? "active" : ""} onClick={() => setActiveTab("graph")}>Graph</button> : null}
+      </div>
+      <div hidden={activeTab !== "documents"}>
       <DocumentToolbar
         filters={filters}
         viewMode={viewMode}
@@ -1237,11 +1349,318 @@ function KnowledgeBaseDetailShell({
         />
       ) : null}
       <ProcessingPreviewPanel preview={processingPreview} />
+      </div>
+      {activeTab !== "documents" && wikiCapable ? (
+        <WikiWorkspace selected={selected} documents={documents} onOpenDocument={onOpenDocument} workspaceMode={activeTab === "graph" ? "graph" : "reader"} />
+      ) : null}
       {settingsDialog}
       {viewer}
       {traceDrawer}
     </section>
   );
+}
+
+function LegacyWikiWorkspace({
+  selected,
+  documents,
+  onOpenDocument,
+}: {
+  selected: KnowledgeBase;
+  documents: DocumentItem[];
+  onOpenDocument: (item: DocumentItem) => void;
+}) {
+  const [filters, setFilters] = useState({ q: "", status: "", page_type: "", folder_id: "" });
+  const [pages, setPages] = useState<WikiPage[]>([]);
+  const [selectedSlug, setSelectedSlug] = useState("");
+  const [page, setPage] = useState<WikiPage | null>(null);
+  const [issues, setIssues] = useState<WikiIssue[]>([]);
+  const [proposals, setProposals] = useState<WikiProposal[]>([]);
+  const [graph, setGraph] = useState<WikiGraph | null>(null);
+  const [tasks, setTasks] = useState<WikiGenerationTask[]>([]);
+  const [sourcePanel, setSourcePanel] = useState<{ title: string; chunks: Array<Record<string, unknown>>; error: string }>({ title: "", chunks: [], error: "" });
+  const [loading, setLoading] = useState(false);
+  const [actionStatus, setActionStatus] = useState("");
+  const openIssueCountBySlug = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const issue of issues) counts[issue.slug] = (counts[issue.slug] || 0) + 1;
+    return counts;
+  }, [issues]);
+
+  async function loadWiki(nextSlug = selectedSlug) {
+    setLoading(true);
+    setActionStatus("");
+    try {
+      const [pageResult, issueResult, proposalResult, graphResult, taskResult] = await Promise.all([
+        listWikiPages(selected.id, { ...filters, limit: 80 }),
+        listWikiIssues(selected.id, { status: "open", limit: 50 }),
+        listWikiProposals(selected.id, { status: "pending", limit: 50 }),
+        getWikiGraph(selected.id, { center_slug: nextSlug || undefined, limit: 80 }),
+        listWikiGenerationTasks(selected.id, { limit: 20 }),
+      ]);
+      setPages(pageResult.items);
+      setIssues(issueResult);
+      setProposals(proposalResult);
+      setGraph(graphResult);
+      setTasks(taskResult);
+      const slug = nextSlug || pageResult.items[0]?.slug || "";
+      setSelectedSlug(slug);
+      if (slug) {
+        setPage(await getWikiPage(selected.id, slug));
+      } else {
+        setPage(null);
+      }
+    } catch (cause) {
+      setActionStatus(cause instanceof Error ? cause.message : "Wiki workspace failed to load.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadWiki("");
+  }, [selected.id, filters.q, filters.status, filters.page_type, filters.folder_id]);
+
+  async function selectPage(slug: string) {
+    setSelectedSlug(slug);
+    try {
+      setPage(await getWikiPage(selected.id, slug));
+      setGraph(await getWikiGraph(selected.id, { center_slug: slug, limit: 80 }));
+    } catch (cause) {
+      setActionStatus(cause instanceof Error ? cause.message : "Wiki page failed to load.");
+    }
+  }
+
+  async function openSource(ref: { doc_id?: string; chunk_id?: string; title?: string }) {
+    const doc = documents.find((item) => item.id === ref.doc_id);
+    if (doc) onOpenDocument(doc);
+    try {
+      const data = await readWikiSourceDoc(selected.id, {
+        doc_id: ref.doc_id || "",
+        chunk_ids: ref.chunk_id ? [ref.chunk_id] : [],
+        limit: 8,
+      });
+      setSourcePanel({
+        title: ref.title || doc?.name || ref.doc_id || "Source evidence",
+        chunks: Array.isArray(data.chunks) ? data.chunks as Array<Record<string, unknown>> : [],
+        error: "",
+      });
+    } catch (cause) {
+      setSourcePanel({ title: ref.title || ref.doc_id || "Source evidence", chunks: [], error: cause instanceof Error ? cause.message : "Source evidence failed to load." });
+    }
+  }
+
+  async function generateFromDocument(docId: string) {
+    setActionStatus("Generating Wiki draft...");
+    const result = await generateWikiPage(selected.id, { doc_id: docId });
+    setActionStatus(result.page ? `Draft generated: ${result.page.title}` : result.proposal ? `Proposal created: ${result.proposal.title || result.proposal.slug}` : result.task.status);
+    await loadWiki(result.page?.slug || result.proposal?.slug || selectedSlug);
+  }
+
+  async function updateIssueStatus(issueId: string, status: string) {
+    await updateWikiIssue(selected.id, issueId, status);
+    await loadWiki(selectedSlug);
+  }
+
+  async function applyProposal(proposalId: string) {
+    const result = await applyWikiProposal(selected.id, proposalId);
+    await loadWiki(result.page?.slug || selectedSlug);
+  }
+
+  async function rejectProposal(proposalId: string) {
+    await rejectWikiProposal(selected.id, proposalId);
+    await loadWiki(selectedSlug);
+  }
+
+  const markdownComponents: Components = {
+    a({ href, children }) {
+      const value = String(href || "");
+      if (value.startsWith("wiki:")) {
+        const slug = decodeURIComponent(value.slice(5));
+        return <button type="button" className="wiki-inline-link" onClick={() => void selectPage(slug)}>{children}</button>;
+      }
+      return <a href={href}>{children}</a>;
+    },
+  };
+
+  return (
+    <section className="wiki-workspace">
+      <div className="wiki-toolbar">
+        <input value={filters.q} placeholder="Search Wiki" onChange={(event) => setFilters({ ...filters, q: event.target.value })} />
+        <select value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}>
+          <option value="">All status</option>
+          <option value="draft">Draft</option>
+          <option value="published">Published</option>
+          <option value="stale">Stale</option>
+        </select>
+        <select value={filters.page_type} onChange={(event) => setFilters({ ...filters, page_type: event.target.value })}>
+          <option value="">All types</option>
+          <option value="summary">Summary</option>
+          <option value="entity">Entity</option>
+          <option value="concept">Concept</option>
+          <option value="synthesis">Synthesis</option>
+          <option value="manual">Manual</option>
+        </select>
+        <button type="button" onClick={() => void loadWiki(selectedSlug)}>Refresh</button>
+      </div>
+      {actionStatus ? <div className={actionStatus.includes("failed") || actionStatus.includes("Error") ? "notice error" : "notice"}>{actionStatus}</div> : null}
+      <div className="wiki-layout">
+        <aside className="wiki-page-list">
+          <div className="wiki-panel-title">
+            <strong>Pages</strong>
+            {loading ? <span>Loading</span> : <span>{pages.length}</span>}
+          </div>
+          {!pages.length ? (
+            <div className="wiki-empty">
+              <p>No Wiki pages yet.</p>
+              {documents[0] ? <button type="button" onClick={() => void generateFromDocument(documents[0].id)}>Generate draft</button> : null}
+            </div>
+          ) : pages.map((item) => (
+            <button key={item.id} type="button" className={`wiki-page-row ${item.slug === selectedSlug ? "active" : ""}`} onClick={() => void selectPage(item.slug)}>
+              <span>{item.title}</span>
+              <small>{item.page_type} · {item.status} · v{item.version}</small>
+              {item.summary ? <em>{item.summary}</em> : null}
+              {openIssueCountBySlug[item.slug] ? <b>{openIssueCountBySlug[item.slug]} issue</b> : null}
+            </button>
+          ))}
+          {documents.length ? (
+            <div className="wiki-generation-box">
+              <strong>Draft from source</strong>
+              {documents.slice(0, 5).map((doc) => (
+                <button key={doc.id} type="button" onClick={() => void generateFromDocument(doc.id)}>{doc.name}</button>
+              ))}
+              {tasks.slice(0, 3).map((task) => <small key={task.id}>{task.status}: {task.page_slug || task.doc_id}</small>)}
+            </div>
+          ) : null}
+        </aside>
+        <main className="wiki-reader">
+          {page ? (
+            <>
+              <div className="wiki-reader-head">
+                <div>
+                  <h2>{page.title}</h2>
+                  <p>{page.summary}</p>
+                </div>
+                <div className="wiki-badges">
+                  <span>{page.status}</span>
+                  <span>{page.page_type}</span>
+                  <span>v{page.version}</span>
+                </div>
+              </div>
+              <div className="wiki-markdown">
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{wikiLinkMarkdown(page.content_markdown)}</ReactMarkdown>
+              </div>
+              <div className="wiki-evidence-grid">
+                <section>
+                  <h3>Source refs</h3>
+                  {(page.source_refs || []).length ? page.source_refs.map((ref, index) => (
+                    <button key={`${ref.doc_id}-${ref.chunk_id || index}`} type="button" onClick={() => void openSource(ref)}>
+                      {ref.title || ref.doc_id}{ref.chunk_id ? ` · ${ref.chunk_id.slice(0, 8)}` : ""}
+                    </button>
+                  )) : <p>No source refs.</p>}
+                </section>
+                <section>
+                  <h3>Links</h3>
+                  <div className="wiki-link-cloud">
+                    {[...page.out_links.map((slug) => ({ slug, type: "out" })), ...page.in_links.map((slug) => ({ slug, type: "in" }))].map((link) => (
+                      <button key={`${link.type}-${link.slug}`} type="button" onClick={() => void selectPage(link.slug)}>{link.type}: {link.slug}</button>
+                    ))}
+                  </div>
+                </section>
+              </div>
+            </>
+          ) : (
+            <div className="wiki-empty"><p>Select or generate a Wiki page.</p></div>
+          )}
+        </main>
+        <aside className="wiki-review">
+          <WikiGraphPanel graph={graph} onSelect={(slug) => void selectPage(slug)} />
+          <WikiIssuePanel issues={issues} onUpdate={updateIssueStatus} />
+          <WikiProposalPanel proposals={proposals} onApply={applyProposal} onReject={rejectProposal} />
+          <WikiSourcePanel panel={sourcePanel} />
+        </aside>
+      </div>
+    </section>
+  );
+}
+
+function WikiGraphPanel({ graph, onSelect }: { graph: WikiGraph | null; onSelect: (slug: string) => void }) {
+  const nodes = (graph?.nodes || []) as Array<{ slug?: string; title?: string; page_type?: string; status?: string }>;
+  const edges = graph?.edges || [];
+  return (
+    <section className="wiki-review-panel">
+      <div className="wiki-panel-title"><strong>Graph</strong><span>{nodes.length} / {edges.length}</span></div>
+      <div className="wiki-graph-list">
+        {nodes.slice(0, 16).map((node) => (
+          <button key={node.slug || node.title} type="button" onClick={() => node.slug && onSelect(node.slug)}>
+            <span>{node.title || node.slug}</span>
+            <small>{node.page_type} · {node.status}</small>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function WikiIssuePanel({ issues, onUpdate }: { issues: WikiIssue[]; onUpdate: (id: string, status: string) => Promise<void> }) {
+  return (
+    <section className="wiki-review-panel">
+      <div className="wiki-panel-title"><strong>Issues</strong><span>{issues.length}</span></div>
+      {issues.slice(0, 8).map((issue) => (
+        <article key={issue.id}>
+          <b>{issue.slug}</b>
+          <small>{issue.issue_type} · {issue.reported_by}</small>
+          <p>{issue.description}</p>
+          <div className="wiki-review-actions">
+            <button type="button" onClick={() => void onUpdate(issue.id, "resolved")}>Resolve</button>
+            <button type="button" onClick={() => void onUpdate(issue.id, "wontfix")}>Ignore</button>
+          </div>
+        </article>
+      ))}
+    </section>
+  );
+}
+
+function WikiProposalPanel({ proposals, onApply, onReject }: { proposals: WikiProposal[]; onApply: (id: string) => Promise<void>; onReject: (id: string) => Promise<void> }) {
+  return (
+    <section className="wiki-review-panel">
+      <div className="wiki-panel-title"><strong>Proposals</strong><span>{proposals.length}</span></div>
+      {proposals.slice(0, 8).map((proposal) => (
+        <article key={proposal.id}>
+          <b>{proposal.title || proposal.slug}</b>
+          <small>{proposal.action} · {proposal.created_by}</small>
+          <p>{proposal.reason || JSON.stringify(proposal.payload).slice(0, 180)}</p>
+          <div className="wiki-review-actions">
+            <button type="button" onClick={() => void onApply(proposal.id)}>Apply</button>
+            <button type="button" onClick={() => void onReject(proposal.id)}>Reject</button>
+          </div>
+        </article>
+      ))}
+    </section>
+  );
+}
+
+function WikiSourcePanel({ panel }: { panel: { title: string; chunks: Array<Record<string, unknown>>; error: string } }) {
+  if (!panel.title && !panel.error) return null;
+  return (
+    <section className="wiki-review-panel wiki-source-panel">
+      <div className="wiki-panel-title"><strong>Source</strong><span>{panel.chunks.length}</span></div>
+      {panel.error ? <p className="metric-error">{panel.error}</p> : null}
+      {panel.title ? <b>{panel.title}</b> : null}
+      {panel.chunks.map((chunk, index) => (
+        <article key={String(chunk.chunk_id || index)}>
+          <small>{String(chunk.chunk_type || "")} · {String(chunk.chunk_id || "").slice(0, 12)}</small>
+          <p>{String(chunk.content || "").slice(0, 900)}</p>
+        </article>
+      ))}
+    </section>
+  );
+}
+
+function wikiLinkMarkdown(markdown: string): string {
+  return (markdown || "").replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_match, slug: string, label?: string) => {
+    const cleanSlug = encodeURIComponent(String(slug || "").trim());
+    return `[${label || slug}](wiki:${cleanSlug})`;
+  });
 }
 
 function KnowledgeBaseMetrics({ selected }: { selected: KnowledgeBase }) {
@@ -2403,24 +2822,28 @@ function KnowledgeBaseSettingsDialog({
   selected,
   name,
   description,
+  indexingStrategy,
   error,
   saving,
   onName,
   onDescription,
+  onIndexingStrategy,
   onCancel,
   onSubmit,
-  onArchive,
+  onDelete,
 }: {
   selected: KnowledgeBase;
   name: string;
   description: string;
+  indexingStrategy: KnowledgeBase["indexing_strategy"];
   error: string;
   saving: boolean;
   onName: (value: string) => void;
   onDescription: (value: string) => void;
+  onIndexingStrategy: (value: KnowledgeBase["indexing_strategy"]) => void;
   onCancel: () => void;
   onSubmit: () => void;
-  onArchive?: () => void;
+  onDelete?: () => void;
 }) {
   return (
     <div className="dialog-mask" role="presentation" onClick={onCancel}>
@@ -2431,9 +2854,24 @@ function KnowledgeBaseSettingsDialog({
         </header>
         <label><span>名称</span><input autoFocus value={name} maxLength={80} onChange={(event) => onName(event.target.value)} /></label>
         <label><span>描述</span><textarea value={description} maxLength={300} onChange={(event) => onDescription(event.target.value)} /></label>
+        <fieldset className="kb-settings-indexing">
+          <legend>索引策略</legend>
+          {([
+            ["wiki_enabled", "Wiki"],
+            ["dense_enabled", "Dense"],
+            ["keyword_enabled", "Keyword"],
+            ["graph_enabled", "Graph"],
+          ] as const).map(([key, label]) => (
+            <label className="kb-check-row" key={key}>
+              <input type="checkbox" checked={Boolean(indexingStrategy[key])} onChange={(event) => onIndexingStrategy({ ...indexingStrategy, [key]: event.target.checked })} />
+              <span>{label}</span>
+            </label>
+          ))}
+          {indexingStrategy.wiki_enabled && !indexingStrategy.dense_enabled && !indexingStrategy.keyword_enabled ? <p>Wiki-only：文档会保留解析分块并生成 Wiki，不执行向量化。</p> : null}
+        </fieldset>
         {error ? <p className="feedback-err">{error}</p> : null}
         <div className="kb-dialog-actions">
-          {onArchive && selected.id !== "default-knowledge-base" ? <button type="button" className="danger-action" onClick={onArchive}>归档知识库</button> : null}
+          {onDelete && !selected.is_default ? <button type="button" className="danger-action" disabled={saving} onClick={onDelete}>删除知识库</button> : null}
           <span />
           <button type="button" onClick={onCancel}>取消</button>
           <button type="button" className="primary-action" disabled={saving} onClick={onSubmit}>{saving ? "保存中..." : "保存"}</button>

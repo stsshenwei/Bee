@@ -1,0 +1,298 @@
+templates:
+  - id: "generate_wiki_summary_page"
+    name: "Wiki Summary Page Compatibility"
+    description: "Compatibility template for the legacy single-page Wiki generator."
+    modes: ["postprocess"]
+    default_language: "zh-CN"
+    placeholders: ["document_name", "source_chunks", "language"]
+    content: |
+      You are a careful wiki editor. Create one source-grounded document summary page from the supplied chunks.
+
+      <source_chunks>
+      {{source_chunks}}
+      </source_chunks>
+
+      <instructions>
+      - Use only information explicitly present in <source_chunks>. The filename is metadata, not evidence.
+      - Preserve exact product names, identifiers, dates, quantities, units, qualifications, and limitations.
+      - Organize the page with a title, an overview, factual sections justified by the source, and key takeaways.
+      - source_chunk_ids must contain only exact IDs from [chunk:...] markers above.
+      - If there is no substantive text, return empty summary/content and an empty source_chunk_ids array.
+      - Write all prose in {{language}}.
+      - Output only valid JSON. Do not place literal newlines inside JSON string values; use \n.
+      </instructions>
+
+      Output schema:
+      {"title":"...","slug":"...","summary":"one self-contained sentence","content_markdown":"# ...\n\n...","source_chunk_ids":["exact-chunk-id"]}
+
+  - id: "wiki_extract_candidates"
+    name: "Wiki Candidate Extraction"
+    description: "Pass 0: extract a bounded, stable skeleton of significant entity and concept candidates."
+    modes: ["postprocess"]
+    default_language: "zh-CN"
+    placeholders: ["document_name", "source_chunks", "max_candidates", "language"]
+    content: |
+      You are a knowledge extraction system. Analyze the source chunks and produce a lightweight candidate set. A later citation pass will attach exact supporting chunks, so focus on identity, scope, aliases, and a concise grounding description.
+
+      Candidate limit: {{max_candidates}}
+      Output language: {{language}}
+
+      <source_chunks>
+      {{source_chunks}}
+      </source_chunks>
+
+      <instructions>
+      1. If the source is empty, extraction is unreadable, or it contains no substantive information, return {"candidates":[]}.
+      2. Extract the document's main subjects plus secondary items that receive concrete discussion: a dedicated paragraph, multiple factual bullets, a table row with meaningful attributes, or several sentences of context.
+      3. Entities are specific named things: people, organizations, products, models, places, standards, technologies, events, or named systems.
+      4. Concepts are abstract ideas, methods, architectures, theories, processes, policies, or reusable domain topics.
+      5. Exclude passing mentions, generic nouns, navigation labels, section names, raw filenames, isolated values, and items whose only evidence is a comma-separated list.
+      6. Never emit the same subject as both entity and concept. Prefer entity for a specific named thing and concept for an abstract idea.
+      7. Aliases must refer to the exact same subject: official abbreviation, full/short name, translation, or established alternate spelling. Related products, parent categories, subtopics, versions, and implementation details are not aliases.
+      8. Slugs must be stable, lowercase, URL-friendly, and derived from the canonical subject name. Different versions or models remain distinct candidates. Do not invent IDs or subjects.
+      9. description is a self-contained 15-40 word index summary of what the item is. details is a 1-3 sentence fallback containing only source-supported facts.
+      10. Rank by importance and source support, then return at most the candidate limit. When uncertain, omit the item.
+      11. Write title, aliases, description, details, and reason in {{language}}. Preserve official identifiers verbatim.
+
+      JSON formatting rules:
+      - Output only valid JSON, with no Markdown fence or preamble.
+      - Do not use literal newlines inside JSON string values; use \n when needed.
+      </instructions>
+
+      Return:
+      {"candidates":[{"title":"...","slug":"...","page_type":"entity|concept","aliases":["..."],"description":"...","details":"...","reason":"why the source support is substantive"}]}
+
+  - id: "wiki_classify_chunks"
+    name: "Wiki Chunk Citation Classification"
+    description: "Pass 1: attach exact, substantive source chunks to each extracted candidate."
+    modes: ["postprocess"]
+    default_language: "zh-CN"
+    placeholders: ["document_name", "source_chunks", "candidates", "language"]
+    content: |
+      You are a precise citation classifier. For every supplied candidate, identify which chunks substantively discuss that exact entity or concept.
+
+      <instructions>
+      - A chunk is substantive only when it states at least one concrete fact, attribute, step, date, number, relationship, constraint, conclusion, or useful explanation about the candidate. A passing name mention is not enough.
+      - Use only candidate slugs supplied in <candidates> and only exact IDs found in [chunk:...] markers in <source_chunks>.
+      - A chunk may support multiple candidates when it genuinely discusses each one.
+      - Keep different products, organizations, document types, credentials, versions, and similarly named subjects separate. Related does not mean identical.
+      - Omit candidates with no substantive supporting chunk; never return an empty chunk_ids list.
+      - summary must synthesize only the cited chunks, remain directly about the candidate, preserve exact identifiers and numbers, and be useful as a page contribution.
+      - Do not infer facts from the filename or from general knowledge.
+      - Write summary in {{language}}.
+      - Output only valid JSON. Do not place literal newlines inside JSON string values; use \n.
+      </instructions>
+
+      <candidates>
+      {{candidates}}
+      </candidates>
+
+      <source_chunks>
+      {{source_chunks}}
+      </source_chunks>
+
+      Return {"matches":[{"slug":"candidate-slug","chunk_ids":["exact-marker-id"],"summary":"grounded contribution from only those chunks"}]}.
+      If nothing is cite-worthy, return {"matches":[]}.
+
+  - id: "wiki_document_summary"
+    name: "Wiki Document Summary"
+    description: "Generate a comprehensive source-grounded document summary contribution."
+    modes: ["postprocess"]
+    default_language: "zh-CN"
+    placeholders: ["document_name", "source_chunks", "candidates", "language"]
+    content: |
+      You are a wiki editor. Create a structured summary page using only the extracted document content below. The source filename is intentionally not evidence because uploaded filenames are often meaningless or misleading.
+
+      <document_content>
+      {{source_chunks}}
+      </document_content>
+
+      <available_wiki_pages>
+      {{candidates}}
+      </available_wiki_pages>
+
+      <instructions>
+      1. summary must be one self-contained sentence, roughly 15-40 words, suitable for an index listing.
+      2. content_markdown must comprehensively cover the source's key facts, arguments, procedures, relationships, constraints, and conclusions. Scale detail to source length; do not force a long page from thin evidence.
+      3. Use a clear top-level title and only source-justified ## / ### sections. End substantive pages with a "Key Takeaways" section containing concise bullets.
+      4. Preserve exact product identifiers, dates, quantities, units, table values, qualifications, exceptions, and uncertainty.
+      5. Whenever a mentioned name or alias exactly matches an item in available_wiki_pages, write it as [[slug|title]] using the supplied slug. Never invent a slug, use a related candidate, or link the summary page to itself.
+      6. Do not guess the topic from a filename, import outside knowledge, fabricate quotations, or invent wiki links.
+      7. When useful, append exact source markers such as [chunk:abc] to factual paragraphs or bullets. Never cite a marker absent from the input.
+      8. If there is no substantive textual content, return empty strings for both fields. Do not invent a topic.
+      9. Write all prose in {{language}}.
+      10. Output only valid JSON. Encode Markdown line breaks as \n inside the JSON string.
+      </instructions>
+
+      Return JSON only with keys summary and content_markdown:
+      {"summary":"...","content_markdown":"# ...\n\n## ...\n\n..."}
+
+  - id: "wiki_reduce_page"
+    name: "Wiki Canonical Page Writer"
+    description: "Merge active grounded contributions into one canonical, cited Wiki page."
+    modes: ["postprocess"]
+    default_language: "zh-CN"
+    placeholders: ["page_title", "page_type", "current_page", "contributions", "language"]
+    content: |
+      You are a strict wiki editor updating one canonical page from active grounded contributions. Act as a compiler of evidence, not a creative writer.
+
+      <page_metadata>
+      title: {{page_title}}
+      type: {{page_type}}
+      language: {{language}}
+      </page_metadata>
+
+      <existing_page_content>
+      {{current_page}}
+      </existing_page_content>
+
+      <active_grounded_contributions>
+      {{contributions}}
+      </active_grounded_contributions>
+
+      <strict_merge_rules>
+      1. Every statement must be directly about the exact page subject {{page_title}}, not an adjacent, related, broader, narrower, or similarly named subject. Reject off-topic contribution fragments.
+      2. Use only facts explicitly present in active contributions. Do not infer, embellish, generalize, advertise, or add rhetorical filler.
+      3. Preserve exact identifiers, names, dates, numbers, units, limitations, and source qualifications.
+      4. Deduplicate repeated facts across contributions. If sources clearly conflict, do not silently choose one; describe the conflict or update in a short "Contradictions / Updates" section with the relevant chunk IDs.
+      5. Newly written factual paragraphs and bullets must end with one or more exact supporting chunk references from source_chunk_ids, formatted as [chunk-id]. Never invent a chunk ID.
+      6. Preserve still-supported existing content and its citations. Remove existing generated claims that are no longer supported by any active contribution.
+      7. Keep protected manual content unchanged when it appears in the existing page.
+      8. Stay close to source wording. Lightly reorder, deduplicate, and join facts, but do not expand terse evidence into unsupported prose.
+      9. Do not over-structure. Use "# {{page_title}}" and add section headings only when the source or existing page justifies them. A few focused paragraphs or bullets are better than invented hierarchy.
+      10. Keep [[slug|name]] links only when already present in grounded input. Do not invent pages or self-links.
+      11. summary must be a self-contained 15-40 word description of the resulting page. content_markdown must contain the complete updated page.
+      12. Write in {{language}} and output only valid JSON. Encode Markdown line breaks as \n.
+      </strict_merge_rules>
+
+      Return JSON only with keys summary and content_markdown:
+      {"summary":"...","content_markdown":"# {{page_title}}\n\n..."}
+
+  - id: "wiki_taxonomy_plan"
+    name: "Wiki Taxonomy Planner"
+    description: "Assign unclassified generated pages to one coherent, stable directory tree."
+    modes: ["postprocess"]
+    default_language: "zh-CN"
+    placeholders: ["pages", "existing_taxonomy", "language"]
+    content: |
+      You are organizing a wiki knowledge base into a navigation directory. Assign every item below to a category path so the whole set lands on one coherent tree.
+
+      <existing_folders>
+      {{existing_taxonomy}}
+      </existing_folders>
+
+      <items>
+      {{pages}}
+      </items>
+
+      <instructions>
+      1. Classify what each item fundamentally is: the stable library shelf where it belongs, not the temporary role it plays in one document.
+      2. Reuse an applicable existing folder label character-for-character. Do not invent a synonym folder when an existing path fits.
+      3. If no existing folder fits, create a broad, durable label such as organizations, products, people, places, technical standards, methods, or legal concepts. Group equivalent items under the same label and depth.
+      4. Prefer one broad top-level category. Add a second level only for a genuinely durable subdomain shared by multiple items. Maximum depth is two.
+      5. Use an empty path only when an item genuinely has no durable subject category; this must be rare. Lack of an existing folder is not a reason to leave it empty.
+      6. Do not use page types such as entity, concept, or summary as folder names. Do not put slashes inside a label.
+      7. Every input slug must appear exactly once. Do not output unknown slugs.
+      8. Write every folder label in {{language}}.
+      9. Output only valid JSON with no preamble. Do not use literal newlines in string values.
+      </instructions>
+
+      Return:
+      {"assignments":[{"slug":"...","path":["broad label","optional subdomain"]}]}
+
+  - id: "wiki_duplicate_review"
+    name: "Wiki Duplicate Review"
+    description: "Strictly identify exact duplicate entity/concept pages and propose canonical merge targets."
+    modes: ["postprocess"]
+    default_language: "zh-CN"
+    placeholders: ["pages", "language"]
+    content: |
+      You are a strict deduplication system. Review the Wiki pages below and identify only pages that refer to the exact same real-world entity or exact same concept.
+
+      <pages>
+      {{pages}}
+      </pages>
+
+      <instructions>
+      Merge criteria - all must be true:
+      1. Both pages refer to the same subject, not merely related subjects in the same domain.
+      2. The match is explainable as an abbreviation, full/short name, translation, established alternate name, or minor spelling variation.
+      3. Page types are identical. Never merge an entity with a concept.
+
+      Correct examples: "Acme Corp" and "Acme Corporation"; "RAG" and "Retrieval-Augmented Generation"; a translated organization name and its official original name.
+      Incorrect examples: competing products; product versions; parent and subsidiary; person and employer; broad method and one implementation; category and member; "Machine Learning" and "Neural Networks"; two different certificates, standards, models, companies, or places with similar names.
+
+      The key principle is: related is not the same. Shared words, backlinks, source documents, industry, or category are not sufficient. When uncertain, do not merge.
+      Choose as canonical the established page with the clearer stable slug, broader provenance, and better content. Never map a page to itself or create chains/cycles.
+      This output creates a review proposal only; do not rewrite content.
+      Write reasons in {{language}}.
+      Output only valid JSON with no preamble and no literal newlines in string values.
+      </instructions>
+
+      Return:
+      {"merges":{"duplicate-slug":"canonical-slug"},"reasons":{"duplicate-slug":"high-confidence identity evidence"}}
+      If no exact duplicates exist, return {"merges":{},"reasons":{}}.
+
+  - id: "wiki_index_intro"
+    name: "Wiki Index Introduction"
+    description: "Create or refresh a concise domain-aware introduction for the maintained Wiki index."
+    modes: ["postprocess"]
+    default_language: "zh-CN"
+    placeholders: ["knowledge_base_name", "page_counts", "page_summaries", "current_introduction", "language"]
+    content: |
+      You are a wiki editor maintaining the introduction of a knowledge base index.
+
+      <knowledge_base_name>{{knowledge_base_name}}</knowledge_base_name>
+      <page_counts>{{page_counts}}</page_counts>
+      <current_introduction>{{current_introduction}}</current_introduction>
+      <page_summaries>
+      {{page_summaries}}
+      </page_summaries>
+
+      <instructions>
+      1. Write a concise 2-3 sentence introduction describing the Wiki's actual knowledge domain and coverage based on page summaries, not merely its name.
+      2. Mention major subject areas only when supported by multiple pages or a central summary. Do not list every page.
+      3. If a current introduction exists, preserve its useful tone while correcting scope that is no longer represented.
+      4. Do not generate a title, directory listing, page counts, links, maintenance boilerplate, or unsupported claims; the application adds those separately.
+      5. Write in {{language}}.
+      6. Return JSON only with key introduction. Encode any required line break as \n.
+      </instructions>
+
+      Return JSON only with key introduction:
+      {"introduction":"..."}
+
+  - id: "wiki_combined_extract_fallback"
+    name: "Wiki Combined Extraction Fallback"
+    description: "One conservative fallback after the primary candidate response remains invalid."
+    modes: ["postprocess"]
+    default_language: "zh-CN"
+    placeholders: ["document_name", "source_chunks", "max_candidates", "language"]
+    content: |
+      You are a conservative knowledge extractor recovering from an invalid primary response.
+
+      <source_chunks>
+      {{source_chunks}}
+      </source_chunks>
+
+      Return at most {{max_candidates}} high-confidence candidates using this exact schema:
+      {"candidates":[{"title":"...","slug":"...","page_type":"entity|concept","aliases":[],"description":"...","details":"...","reason":"..."}]}
+
+      Include only entities or concepts that are explicitly named and substantively discussed. Keep different subjects and versions separate. Aliases must denote the exact same subject. Prefer an empty list to an uncertain item. Use only source evidence, write prose in {{language}}, and output valid JSON without Markdown fences or literal newlines in string values.
+
+  - id: "wiki_link_repair"
+    name: "Wiki Link Repair"
+    description: "Compatibility prompt for reviewable semantic link repair; deterministic canonical refresh remains primary."
+    modes: ["postprocess"]
+    default_language: "zh-CN"
+    placeholders: ["content", "available_slugs", "aliases", "language"]
+    content: |
+      You are repairing internal Wiki links without changing factual prose.
+
+      <content>{{content}}</content>
+      <available_slugs>{{available_slugs}}</available_slugs>
+      <aliases>{{aliases}}</aliases>
+
+      Normalize an aliased target to its supplied canonical slug. Keep links only when the target exists in available_slugs, render unavailable targets as plain text, remove self-links, and never invent a slug or alter any factual claim. Preserve all other Markdown exactly. Write labels in {{language}} when a supplied label is available.
+
+      Return only valid JSON:
+      {"content_markdown":"..."}

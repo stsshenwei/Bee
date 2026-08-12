@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { listParserEngines, updateUploadBatchSettings, uploadChatAttachment } from "./api.ts";
+import { archiveKnowledgeBase, generateWikiPage, listParserEngines, updateUploadBatchSettings, uploadChatAttachment } from "./api.ts";
 
 function jsonResponse(body, init = {}) {
   return new Response(JSON.stringify(body), {
@@ -27,6 +27,20 @@ test("lists parser engines including unavailable optional engines", async () => 
   assert.equal(engines[1].name, "docling");
   assert.equal(engines[1].available, false);
   assert.match(engines[1].unavailable_reason, /dependency/);
+});
+
+test("deletes a knowledge base through the scoped archive endpoint", async () => {
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url: String(url), options });
+    return jsonResponse({ id: "kb/a", status: "archived" });
+  };
+
+  const deleted = await archiveKnowledgeBase("kb/a");
+
+  assert.equal(calls[0].url, "http://localhost:8000/knowledge-bases/kb%2Fa");
+  assert.equal(calls[0].options.method, "DELETE");
+  assert.equal(deleted.status, "archived");
 });
 
 test("serializes force-scanned and effective upload processing settings", async () => {
@@ -93,4 +107,37 @@ test("uploads temporary chat attachment as multipart form data", async () => {
   assert.equal(calls[0].options.method, "POST");
   assert.ok(calls[0].options.body instanceof FormData);
   assert.equal(attachment.id, "att-1");
+});
+
+test("generates a Wiki draft from an indexed document", async () => {
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url: String(url), options });
+    return jsonResponse({
+      task: {
+        id: "task-1",
+        workspace_id: "ws",
+        knowledge_base_id: "kb-1",
+        doc_id: "doc-1",
+        status: "completed",
+        page_slug: "manual",
+        error_message: "",
+        config: {},
+        attempts: 1,
+        created_at: "",
+        updated_at: "",
+        started_at: "",
+        finished_at: "",
+      },
+      page: null,
+      proposal: null,
+    });
+  };
+
+  const result = await generateWikiPage("kb-1", { doc_id: "doc-1", max_source_chunks: 4 });
+
+  assert.match(calls[0].url, /\/knowledge-bases\/kb-1\/wiki\/generate$/);
+  assert.equal(calls[0].options.method, "POST");
+  assert.deepEqual(JSON.parse(calls[0].options.body), { doc_id: "doc-1", max_source_chunks: 4 });
+  assert.equal(result.task.status, "completed");
 });

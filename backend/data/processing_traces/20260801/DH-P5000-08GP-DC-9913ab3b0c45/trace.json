@@ -1,0 +1,326 @@
+{
+  "doc_id": "895ffeb059dbc96057d006bcd07d1208",
+  "duration_ms": 15490,
+  "ended_at": "2026-08-01T15:46:46.675Z",
+  "error": null,
+  "file_name": "DH-P5000-08GP-DC.txt",
+  "metadata": {
+    "effective_processing": {
+      "caption_enabled": false,
+      "caption_provider": "disabled",
+      "child_chunk_overlap_chars": 76,
+      "child_chunk_size_chars": 384,
+      "chunk_strategy": "auto",
+      "dense_enabled": true,
+      "embedding_token_limit": 0,
+      "graph_enabled": false,
+      "inactive_overrides": [],
+      "keyword_enabled": true,
+      "max_protected_span_chars": 7500,
+      "media_max_bytes": 26214400,
+      "media_storage_dir": "vector_db\\media",
+      "media_storage_provider": "local",
+      "ocr_enabled": false,
+      "ocr_min_confidence": 0.6,
+      "ocr_provider": "disabled",
+      "parent_child_enabled": true,
+      "parent_chunk_size_chars": 4096,
+      "parser_engine": "builtin",
+      "pdf_force_scanned": false,
+      "pdf_jpeg_quality": 90,
+      "pdf_max_image_edge_px": 2400,
+      "pdf_max_pages": 1000,
+      "pdf_render_concurrency": 2,
+      "pdf_render_dpi": 200,
+      "preview_max_chunks": 50,
+      "preview_max_file_bytes": 10485760,
+      "preview_max_pages": 20,
+      "preview_timeout_seconds": 5.0,
+      "processing_version": "weknora-adaptive-v1",
+      "question_generation_enabled": false,
+      "size_unit": "chars",
+      "warnings": []
+    },
+    "extension": ".txt",
+    "file_size": 3871,
+    "requested_processing": {
+      "caption_enabled": false,
+      "caption_provider": "disabled",
+      "child_chunk_overlap_chars": 76,
+      "child_chunk_size_chars": 384,
+      "chunk_strategy": "auto",
+      "dense_enabled": true,
+      "embedding_token_limit": 0,
+      "graph_enabled": false,
+      "keyword_enabled": true,
+      "max_protected_span_chars": 7500,
+      "media_max_bytes": 26214400,
+      "media_storage_dir": "./vector_db/media",
+      "media_storage_provider": "local",
+      "ocr_enabled": false,
+      "ocr_min_confidence": 0.6,
+      "ocr_provider": "docling",
+      "parent_child_enabled": true,
+      "parent_chunk_size_chars": 4096,
+      "parser_engine": "builtin",
+      "pdf_force_scanned": false,
+      "pdf_jpeg_quality": 90,
+      "pdf_max_image_edge_px": 2400,
+      "pdf_max_pages": 1000,
+      "pdf_render_concurrency": 2,
+      "pdf_render_dpi": 200,
+      "preview_max_chunks": 50,
+      "preview_max_file_bytes": 10485760,
+      "preview_max_pages": 20,
+      "preview_timeout_seconds": 5.0,
+      "question_generation_enabled": false,
+      "size_unit": "chars"
+    }
+  },
+  "name": "document_processing",
+  "schema_version": "20260718_processing_trace_v1",
+  "scope": {
+    "compatibility_default": false,
+    "document_ids": [],
+    "knowledge_base_ids": [
+      "b6cf23efd5e34c92be41a6f8971cd7f5"
+    ],
+    "workspace_id": "default-workspace"
+  },
+  "source": "uploads/b6cf23efd5e34c92be41a6f8971cd7f5/upload-2241cb3d0f7d4d0f93c8eb2327b172b9/DH-P5000-08GP-DC.txt",
+  "spans": [
+    {
+      "_db_span_id": "49b35647f82b448a9d3e1c8dd03f131c",
+      "duration_ms": 83,
+      "ended_at": "2026-08-01T15:46:31.353Z",
+      "error": null,
+      "input": {
+        "file_name": "DH-P5000-08GP-DC.txt",
+        "file_type": "txt",
+        "parser_engine": "builtin",
+        "size": 3871,
+        "source": "uploads/b6cf23efd5e34c92be41a6f8971cd7f5/upload-2241cb3d0f7d4d0f93c8eb2327b172b9/DH-P5000-08GP-DC.txt"
+      },
+      "name": "load",
+      "output": {
+        "characters": 2180,
+        "doc_id": "895ffeb059dbc96057d006bcd07d1208",
+        "document_metadata": {},
+        "elements": 189,
+        "file_type": "txt",
+        "images": 0,
+        "parsed_markdown_file": "parsed.md",
+        "parser_diagnostics": {
+          "effective_engine": "builtin",
+          "fallback_reason": "",
+          "parse_duration_ms": 6,
+          "parser_name": "BuiltinMarkdownParser",
+          "requested_engine": "builtin",
+          "warnings": []
+        }
+      },
+      "span_id": "af3331971d6642caa1fb6779f8d518aa",
+      "started_at": "2026-08-01T15:46:31.270Z",
+      "status": "completed"
+    },
+    {
+      "_db_span_id": "56030183a23848a5bc23669e7e28eded",
+      "duration_ms": 75,
+      "ended_at": "2026-08-01T15:46:31.445Z",
+      "error": null,
+      "input": {
+        "child_chunk_overlap_chars": 76,
+        "child_chunk_size_chars": 384,
+        "effective_strategy": "auto",
+        "parent_chunk_size_chars": 4096,
+        "requested_strategy": "auto"
+      },
+      "name": "chunk_strategy",
+      "output": {
+        "by_strategy": {
+          "legacy": 7
+        },
+        "by_type": {
+          "child": 6,
+          "parent": 1
+        },
+        "chunk_count": 7,
+        "chunks_file": "chunks.jsonl",
+        "lengths": {
+          "average": 620.0,
+          "maximum": 2170,
+          "minimum": 288,
+          "oversize_count": 1,
+          "tiny_count": 0
+        },
+        "processing_version": "weknora-adaptive-v1",
+        "tier_chains": [
+          [
+            "legacy"
+          ]
+        ]
+      },
+      "span_id": "ec62b6ee96664a60b06028b997884064",
+      "started_at": "2026-08-01T15:46:31.369Z",
+      "status": "completed"
+    },
+    {
+      "_db_span_id": "3048a395efe045d2ba7fc15b9d01b186",
+      "duration_ms": 14891,
+      "ended_at": "2026-08-01T15:46:46.353Z",
+      "error": null,
+      "input": {
+        "by_strategy": {
+          "legacy": 7
+        },
+        "by_type": {
+          "child": 6,
+          "parent": 1
+        },
+        "chunk_count": 7,
+        "doc_id": "895ffeb059dbc96057d006bcd07d1208",
+        "lengths": {
+          "average": 620.0,
+          "maximum": 2170,
+          "minimum": 288,
+          "oversize_count": 1,
+          "tiny_count": 0
+        },
+        "tier_chains": [
+          [
+            "legacy"
+          ]
+        ]
+      },
+      "name": "index",
+      "output": {
+        "sqlite_chunks": 7,
+        "vector_chunks": 6
+      },
+      "span_id": "3607b3839e85410484726db740c87061",
+      "started_at": "2026-08-01T15:46:31.461Z",
+      "status": "completed"
+    },
+    {
+      "_db_span_id": "365ebaae39b2464790a093b2ea1d657e",
+      "duration_ms": 60,
+      "ended_at": "2026-08-01T15:46:46.426Z",
+      "error": null,
+      "input": {
+        "caption_enabled": false,
+        "image_count": 0,
+        "ocr_enabled": false
+      },
+      "name": "multimodal",
+      "output": {
+        "image_errors": [],
+        "image_operations": 0,
+        "image_resources": 0,
+        "multimodal": {
+          "canceled": 0,
+          "completed": 0,
+          "errors": [],
+          "failed": 0,
+          "skipped": 0,
+          "total": 0
+        }
+      },
+      "span_id": "6d734798f8ae4fb88f075e49c1300ce9",
+      "started_at": "2026-08-01T15:46:46.365Z",
+      "status": "completed"
+    },
+    {
+      "_db_span_id": "55d645fd5e99478d859b8f72f078681a",
+      "duration_ms": 212,
+      "ended_at": "2026-08-01T15:46:46.652Z",
+      "error": null,
+      "input": {
+        "kg_enabled": false
+      },
+      "name": "postprocess",
+      "output": {
+        "enrichment_queued": true,
+        "kg_attempted": false,
+        "wiki_generation": {
+          "page": {
+            "aliases": [
+              "DH-P5000-08GP-DC",
+              "基础参数",
+              "设备类型",
+              "OLT",
+              "是否管理型",
+              "系统容量",
+              "背板带宽256Gbps"
+            ],
+            "category_path": [],
+            "chunk_refs": [
+              "895ffeb059dbc96057d006bcd07d1208::parent-0"
+            ],
+            "content_markdown": "# DH-P5000-08GP-DC\n\n## Summary\n基础参数\n\n设备类型\n\nOLT\n\n是否管理型\n\n是\n\n层级\n\n二层\n\n系统容量\n\n背板带宽256Gbps\n\n业务端口/槽位描述\n\nP 1-8：8×GPON SC/UPC；\n\nT 1-4：4×SFP+ 10Gbps；\n\nG 1-4：4×SFP 1000Mbps（Combo）；\n\nG 1-4：4×RJ-45 10/100/1000Mbps（Combo）；\n\nG 5-8：4×SFP 1000Mbps\n\n工作温度\n\n0℃～+45℃\n\n工作湿度\n\n10%～90%RH（无凝结）\n\n储存温度\n\n-40℃～+80℃\n\n储存湿度\n\n5%～95%RH（无凝结）\n\n供电方式\n\n支持双电源，默认内置电源：36–72VDC，3A\n\n电源是否标配\n\n是\n\n最大支持电源数量\n\n2\n\n功耗\n\n空载功耗：37.5W；\n\n满载功耗：59W\n\n风扇\n\n## Source-Bound Notes\n\n### parent\n\n基础参数\n\n设备类型\n\nOLT\n\n是否管理型\n\n是\n\n层级\n\n二层\n\n系统容量\n\n背板带宽256Gbps\n\n业务端口/槽位描述\n\nP 1-8：8×GPON SC/UPC；\n\nT 1-4：4×SFP+ 10Gbps；\n\nG 1-4：4×SFP 1000Mbps（Combo）；\n\nG 1-4：4×RJ-45 10/100/1000Mbps（Combo）；\n\nG 5-8：4×SFP 1000Mbps\n\n工作温度\n\n0℃～+45℃\n\n工作湿度\n\n10%～90%RH（无凝结）\n\n储存温度\n\n-40℃～+80℃\n\n储存湿度\n\n5%～95%RH（无凝结）\n\n供电方式\n\n支持双电源，默认内置电源：36–72VDC，3A\n\n电源是否标配\n\n是\n\n最大支持电源数量\n\n2\n\n功耗\n\n空载功耗：37.5W；\n\n满载功耗：59W\n\n风扇\n\n3个\n\n风向\n\n左右\n\n静电防护\n\n空气：8kV；\n\n接触：6kV\n\n雷电防护\n\n共模：2kV；\n\n差模：1kV\n\n净重\n\n5.6kg\n\n毛重\n\n6.9kg\n\n产品尺寸\n\n442.5mm×300mm×44mm（长×宽×高）\n\n包装盒尺寸\n\n576mm×448mm×94mm（长×宽×高）\n\n外壳材料\n\n铁\n\n安装方式\n\n机架式安装\n\n硬件参数\n\n框式/盒式\n\n盒式\n\n上行电口\n\n4个\n\n上行电口速率\n\n10/100/1000Mbps\n\n上行光口\n\n12个\n\n上行光口速率\n\n1/10Gbps\n\n接入PON口\n\n8个GPON口，支持EPON/GPON自适应\n\nPON口速率\n\nGPON：下行2.5Gbps；上行1.25Gbps\n\nPON口最大分路比\n\n1:128\n\nPON口模块特性\n\n支持Class B+、ClassC+、ClassC++ PON模块\n\nPON口安全性\n\nONU认证机制\n\n调试端口\n\n1个Console口；1个MGT口；1个Micro-USB口\n\n性能参数\n\n通信标准\n\nITU-T G.984/G.988，中华人民共和国通讯行业标准《接入网技术要求——吉比特无源光网络（GPON）》，IEEE 802.1D，IEEE 802.1Q，IEEE 802.1w，ITU-T Y.1291，IEEE 802.3ab\n\nVLAN表项\n\n4K\n\n功能特点\n\n环网协议\n\n支持STP；\n\n支持RSTP；\n\n支持MSTP；\n\nVLAN功能\n\n支持基于端口VLAN；\n\n支持基于MAC VLAN；\n\n支持基于IPv4子网VLAN；\n\n支持基于协议类型VLAN；\n\n支持QinQ；\n\n支持灵活QinQ；\n\n端口特性\n\n支持IEEE802.3x流量控制；\n\n支持背压式流控；\n\n支持风暴控制；\n\n支持IP+MAC绑定；\n\n支持单链路检测；\n\n支持端口隔离；\n\n支持端口环路检测；\n\n支持非法帧过滤；\n\n支持MAC地址学习数限制；\n\n支持黑洞MAC；\n\nIEEE802.3x流量\n\n_Source chunk: `895ffeb059dbc96057d006bcd07d1208::parent-0`_\n\n## Review Notes\nThis draft was generated from indexed source chunks and should be reviewed before relying on it as curated Wiki knowledge.",
+            "created_at": "2026-08-01T15:46:46Z",
+            "depth": 0,
+            "folder_id": "",
+            "id": "dce69c7bed864b4dbdd2bbeeb5f4673b",
+            "in_links": [],
+            "knowledge_base_id": "b6cf23efd5e34c92be41a6f8971cd7f5",
+            "metadata": {
+              "generated": true,
+              "generator": "deterministic_summary_v1",
+              "provenance_warning": "",
+              "source_chunk_count": 1,
+              "source_doc_id": "895ffeb059dbc96057d006bcd07d1208"
+            },
+            "out_links": [],
+            "page_type": "summary",
+            "parent_slug": "",
+            "slug": "dh-p5000-08gp-dc",
+            "sort_order": 0,
+            "source_refs": [
+              {
+                "chunk_id": "895ffeb059dbc96057d006bcd07d1208::parent-0",
+                "doc_id": "895ffeb059dbc96057d006bcd07d1208",
+                "title": "DH-P5000-08GP-DC"
+              }
+            ],
+            "status": "draft",
+            "summary": "基础参数\n\n设备类型\n\nOLT\n\n是否管理型\n\n是\n\n层级\n\n二层\n\n系统容量\n\n背板带宽256Gbps\n\n业务端口/槽位描述\n\nP 1-8：8×GPON SC/UPC；\n\nT 1-4：4×SFP+ 10Gbps；\n\nG 1-4：4×SFP 1000Mbps（Combo）；\n\nG 1-4：4×RJ-45 10/100/1000Mbps（Combo）；\n\nG 5-8：4×SFP 1000Mbps\n\n工作温度\n\n0℃～+45℃\n\n工作湿度\n\n10%～90%RH（无凝结）\n\n储存温度\n\n-40℃～+80℃\n\n储存湿度\n\n5%～95%RH（无凝结）\n\n供电方式\n\n支持双电源，默认内置电源：36–72VDC，3A\n\n电源是否标配\n\n是\n\n最大支持电源数量\n\n2\n\n功耗\n\n空载功耗：37.5W；\n\n满载功耗：59W\n\n风扇",
+            "title": "DH-P5000-08GP-DC",
+            "updated_at": "2026-08-01T15:46:46Z",
+            "version": 1,
+            "wiki_path": "dh-p5000-08gp-dc",
+            "workspace_id": "default-workspace"
+          },
+          "proposal": null,
+          "task": {
+            "attempts": 1,
+            "config": {
+              "auto_publish": false,
+              "enabled": true,
+              "max_chars": 12000,
+              "max_pages_per_document": 1,
+              "max_source_chunks": 8
+            },
+            "created_at": "2026-08-01T15:46:46Z",
+            "doc_id": "895ffeb059dbc96057d006bcd07d1208",
+            "error_message": "",
+            "finished_at": "2026-08-01T15:46:46Z",
+            "id": "wiki-gen-8bab47239f734ac0bfd3749137da3c62",
+            "knowledge_base_id": "b6cf23efd5e34c92be41a6f8971cd7f5",
+            "page_slug": "dh-p5000-08gp-dc",
+            "started_at": "2026-08-01T15:46:46Z",
+            "status": "completed",
+            "updated_at": "2026-08-01T15:46:46Z",
+            "workspace_id": "default-workspace"
+          }
+        }
+      },
+      "span_id": "aecd7509bd5d4fe591ea456473312115",
+      "started_at": "2026-08-01T15:46:46.439Z",
+      "status": "completed"
+    }
+  ],
+  "started_at": "2026-08-01T15:46:31.185Z",
+  "status": "completed",
+  "trace_dir": "data\\processing_traces\\20260801\\DH-P5000-08GP-DC-9913ab3b0c45",
+  "trace_id": "9913ab3b0c4543a8b4ac518a71470e9b"
+}

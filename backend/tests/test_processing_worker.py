@@ -1,6 +1,8 @@
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 from app.models.processing_config import DurableProcessingWorkerConfig
 from app.services.documents.document_repository import DocumentRepository
@@ -22,6 +24,51 @@ from tests.test_rag_service_structured_ingest import FakeParser, FakeVectorStore
 
 
 class ProcessingWorkerTests(unittest.TestCase):
+    def test_typed_worker_honors_rate_limit_and_recovers_dead_letter(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = ProcessingTaskRepository(Path(tmpdir) / "metadata.sqlite3")
+            scope = KnowledgeBaseService(KnowledgeBaseRepository(repo.db_path, repo.defaults)).resolve_scope()
+            worker = DocumentProcessingWorker(
+                repository=repo,
+                rag_service=SimpleNamespace(),
+                config=DurableProcessingWorkerConfig(enabled=True, retry_backoff_seconds=(0,)),
+                worker_id="typed-worker",
+            )
+            calls = 0
+
+            class ProviderRateLimitError(RuntimeError):
+                retry_after_seconds = 7
+
+            def rate_limited_once(_task):
+                nonlocal calls
+                calls += 1
+                if calls == 1:
+                    raise ProviderRateLimitError("provider rate limited")
+
+            worker.register_handler("wiki.ingest", rate_limited_once)
+            task = repo.create_task("wiki.ingest", scope, task_id="wiki-rate-limit", max_attempts=2)
+            before = datetime.now()
+            self.assertTrue(worker.run_once())
+            retrying = repo.get_task(task["id"])
+            self.assertEqual(TASK_RETRYING, retrying["status"])
+            self.assertGreaterEqual((datetime.fromisoformat(retrying["next_run_at"]) - before).total_seconds(), 6)
+            repo.retry(task["id"], error_code="TEST", error_message="run now", delay_seconds=0)
+            self.assertTrue(worker.run_once())
+            self.assertEqual(TASK_COMPLETED, repo.get_task(task["id"])["status"])
+            rate_attempts = repo.list_attempts(task["id"])
+            self.assertEqual(["retrying", "completed"], [item["status"] for item in rate_attempts])
+            self.assertEqual("ProviderRateLimitError", rate_attempts[0]["error_code"])
+
+            worker.register_handler("wiki.finalize", lambda _task: (_ for _ in ()).throw(RuntimeError("fatal")))
+            dead = repo.create_task("wiki.finalize", scope, task_id="wiki-dead", max_attempts=1)
+            self.assertTrue(worker.run_once())
+            self.assertEqual(TASK_DEAD_LETTERED, repo.get_task(dead["id"])["status"])
+            repo.retry_dead_letter(dead["id"], delay_seconds=0)
+            worker.register_handler("wiki.finalize", lambda _task: None)
+            self.assertTrue(worker.run_once())
+            self.assertEqual(TASK_COMPLETED, repo.get_task(dead["id"])["status"])
+            self.assertEqual(["dead_lettered", "completed"], [item["status"] for item in repo.list_attempts(dead["id"])])
+
     def test_worker_enqueues_and_processes_upload_file(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)

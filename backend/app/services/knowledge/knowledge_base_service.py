@@ -20,6 +20,9 @@ class KnowledgeBaseValidationError(ValueError):
     pass
 
 
+SUPPORTED_KNOWLEDGE_BASE_TYPES = {"document", "faq", "wiki"}
+
+
 class KnowledgeBaseService:
     def __init__(
         self,
@@ -45,13 +48,15 @@ class KnowledgeBaseService:
 
     @property
     def default_knowledge_base_id(self) -> str:
-        return self.repository.defaults.knowledge_base_id
+        default = self.repository.get_default_knowledge_base(self.default_workspace_id)
+        return default.id if default is not None else self.repository.defaults.knowledge_base_id
 
     def create(
         self,
         name: str,
         description: str = "",
         knowledge_base_type: str = "document",
+        is_default: bool = False,
         workspace_id: str | None = None,
         indexing_strategy: dict[str, Any] | None = None,
         provider_config: dict[str, Any] | None = None,
@@ -63,8 +68,9 @@ class KnowledgeBaseService:
         clean_name = name.strip()
         if not clean_name:
             raise KnowledgeBaseValidationError("Knowledge base name cannot be empty")
-        if knowledge_base_type != "document":
-            raise KnowledgeBaseValidationError("Only document knowledge bases are supported")
+        clean_type = knowledge_base_type.strip().lower() or "document"
+        if clean_type not in SUPPORTED_KNOWLEDGE_BASE_TYPES:
+            raise KnowledgeBaseValidationError("Unsupported knowledge base type")
         requested = ProviderReferences.from_dict(provider_config)
         effective_config = self._resolve_provider_config(requested)
         now = utc_now_iso()
@@ -73,14 +79,19 @@ class KnowledgeBaseService:
             workspace_id=workspace_id,
             name=clean_name,
             description=description.strip(),
-            type="document",
-            indexing_strategy=IndexingStrategy.from_dict(indexing_strategy),
+            type=clean_type,
+            is_default=is_default,
+            indexing_strategy=(
+                IndexingStrategy.from_dict(indexing_strategy)
+                if indexing_strategy
+                else IndexingStrategy.default_for_type(clean_type)
+            ),
             provider_config=effective_config,
             created_at=now,
             updated_at=now,
         )
         try:
-            return self.repository.create_knowledge_base(knowledge_base)
+            return self.repository.create_knowledge_base(knowledge_base, set_as_default=is_default)
         except sqlite3.IntegrityError as exc:
             raise KnowledgeBaseValidationError("A knowledge base with this name already exists") from exc
 
@@ -98,6 +109,7 @@ class KnowledgeBaseService:
         knowledge_base_id: str,
         name: str | None = None,
         description: str | None = None,
+        is_default: bool | None = None,
         indexing_strategy: dict[str, Any] | None = None,
         provider_config: dict[str, Any] | None = None,
     ) -> KnowledgeBase:
@@ -116,14 +128,19 @@ class KnowledgeBaseService:
             config = self._resolve_provider_config(ProviderReferences.from_dict(provider_config))
             changes["provider_config_json"] = json.dumps(config.to_dict())
         try:
-            return self.repository.update_knowledge_base(current.id, changes)
+            updated = self.repository.update_knowledge_base(current.id, changes)
+            if is_default:
+                updated = self.repository.set_default_knowledge_base(current.id)
+            return updated
         except sqlite3.IntegrityError as exc:
             raise KnowledgeBaseValidationError("A knowledge base with this name already exists") from exc
+        except ValueError as exc:
+            raise KnowledgeBaseValidationError(str(exc)) from exc
 
     def archive(self, knowledge_base_id: str) -> KnowledgeBase:
-        if knowledge_base_id == self.default_knowledge_base_id:
+        current = self.get(knowledge_base_id, allow_archived=False)
+        if current.is_default:
             raise KnowledgeBaseValidationError("Default knowledge base cannot be archived")
-        self.get(knowledge_base_id, allow_archived=False)
         return self.repository.set_knowledge_base_status(knowledge_base_id, "archived")
 
     def restore(self, knowledge_base_id: str) -> KnowledgeBase:
@@ -159,6 +176,9 @@ class KnowledgeBaseService:
 
     def effective_config(self, knowledge_base_id: str) -> dict[str, Any]:
         return self.get(knowledge_base_id).provider_config.to_dict()
+
+    def resolve_indexing_strategy(self, scope: KnowledgeBaseScope) -> IndexingStrategy:
+        return self.assert_writable(scope).indexing_strategy
 
     def _resolve_provider_config(self, requested: ProviderReferences) -> EffectiveKnowledgeBaseConfig:
         effective_values = self.default_providers.to_dict()

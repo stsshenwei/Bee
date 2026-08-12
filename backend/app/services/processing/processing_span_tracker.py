@@ -613,6 +613,17 @@ class ProcessingSpanTracker:
             duration_ms=_elapsed_ms(span.started_clock),
         )
 
+    def skip_span(self, span: ProcessingSpan | None, output: dict[str, Any] | None = None) -> None:
+        if self.repository is None or span is None:
+            return
+        self.repository.update_span(
+            span.span_id,
+            status=STATUS_SKIPPED,
+            output=output if output is not None else None,
+            finished_at=_utc_now(),
+            duration_ms=_elapsed_ms(span.started_clock),
+        )
+
     def fail_span(self, span: ProcessingSpan | None, exc: BaseException) -> None:
         if self.repository is None or span is None:
             return

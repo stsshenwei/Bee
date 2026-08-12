@@ -92,6 +92,19 @@ Common optional env:
 - `PROCESSING_WORKER_MAX_CONCURRENT_TASKS`
 - `PROCESSING_WORKER_DEFAULT_MAX_ATTEMPTS`
 - `PROCESSING_WORKER_RETRY_BACKOFF_SECONDS`
+- `WIKI_INGEST_ENABLED` (default `true`)
+- `WIKI_INGEST_DEBOUNCE_SECONDS` (default `30`)
+- `WIKI_FINALIZE_DEBOUNCE_SECONDS` (default `5`)
+- `WIKI_INGEST_BATCH_SIZE` (default `5`)
+- `WIKI_MAP_CONCURRENCY` (default `4`)
+- `WIKI_REDUCE_CONCURRENCY` (default `4`)
+- `WIKI_MAX_SOURCE_CHUNKS` (default `80`)
+- `WIKI_MAX_SOURCE_CHARS` (default `32768`)
+- `WIKI_MAX_CANDIDATES` (default `24`)
+- `WIKI_MAX_PAGES_PER_DOCUMENT` (default `30`)
+- `WIKI_TASK_TIMEOUT_SECONDS` (default `3600`)
+- `WIKI_TASK_MAX_ATTEMPTS` (default `3`)
+- `WIKI_LANGUAGE` (default `zh-CN`)
 - `LANGFUSE_ENABLED`
 - `LANGFUSE_BASE_URL`
 - `LANGFUSE_HOST`
@@ -101,6 +114,10 @@ Common optional env:
 - `LANGFUSE_DEBUG`
 - `KG_EXTRACTION_ENABLED`
 - `KG_METADATA_DB_PATH`
+
+Wiki worker defaults are calibrated for one local SQLite writer and ordinary provider quotas. The 30-second ingest debounce absorbs upload bursts, batches are capped at 5 documents, and finalization waits 5 seconds so adjacent Reduce work can coalesce. Map and distinct-slug Reduce concurrency default to 4; same-slug commits remain serialized and SQLite lock conflicts use short bounded retries. Each LLM task has a 3600-second ceiling and 3 durable attempts. Worker backoff starts at `10,30,120` seconds, while provider `Retry-After` values take precedence up to 3600 seconds. Lower Map/Reduce concurrency to `1-2` for network filesystems or constrained SQLite deployments; raise it only after observing lock and provider-rate metrics.
+
+`WIKI_INGEST_ENABLED=true` also enables the typed processing worker even when the legacy `PROCESSING_WORKER_ENABLED` setting is absent. To roll back typed Wiki execution without deleting pages or task history, set `WIKI_INGEST_ENABLED=false`; raw document processing and existing Wiki reads remain available.
 - `KG_EXTRACTOR_MODEL`
 - `KG_EXTRACTOR_VERSION`
 - `KG_ENTITY_VECTOR_ENABLED`

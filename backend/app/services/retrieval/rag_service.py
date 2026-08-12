@@ -131,6 +131,7 @@ class RAGService:
         ocr_provider: str = "docling",
         document_repository: DocumentRepository | None = None,
         knowledge_base_service: Any | None = None,
+        wiki_page_service: Any | None = None,
         upload_batch_repository: UploadBatchRepository | None = None,
         document_parser: DocumentParser | None = None,
         document_chunker: DocumentChunker | None = None,
@@ -209,6 +210,7 @@ class RAGService:
         self.upload_dir = self.data_dir / "uploads"
         self.document_repository = document_repository or DocumentRepository(self.vector_store.persist_dir / "rag_metadata.sqlite3")
         self.knowledge_base_service = knowledge_base_service
+        self.wiki_page_service = wiki_page_service
         self.upload_batch_repository = upload_batch_repository or UploadBatchRepository(
             self.document_repository.db_path,
             self.document_repository.defaults,
@@ -440,12 +442,24 @@ class RAGService:
         cancel_check: Any | None = None,
     ) -> dict[str, Any]:
         scope = scope or self.default_scope
+        indexing_strategy = None
         if self.knowledge_base_service is not None:
-            self.knowledge_base_service.assert_writable(scope)
+            indexing_strategy = self.knowledge_base_service.resolve_indexing_strategy(scope)
+        dense_enabled = bool(getattr(indexing_strategy, "dense_enabled", True))
+        keyword_enabled = bool(getattr(indexing_strategy, "keyword_enabled", True))
+        graph_enabled = bool(getattr(indexing_strategy, "graph_enabled", self.kg_extraction_enabled))
+        wiki_enabled = bool(getattr(indexing_strategy, "wiki_enabled", False))
+        needs_embedding = dense_enabled or keyword_enabled
         resolved_processing = self._resolve_processing_settings(processing_settings)
         processing_metadata = {
             "processing_version": resolved_processing.effective.processing_version,
             "processing": resolved_processing.to_dict(),
+            "indexing_strategy": {
+                "dense_enabled": dense_enabled,
+                "keyword_enabled": keyword_enabled,
+                "graph_enabled": graph_enabled,
+                "wiki_enabled": wiki_enabled,
+            },
         }
         resolved_file = file_path.resolve()
         data_root = self.data_dir.resolve()
@@ -626,29 +640,41 @@ class RAGService:
                     extra={"stage": "chunk", "doc_id": parsed.doc_id, **chunk_summary},
                 )
 
-            with trace.span("index", input={"doc_id": parsed.doc_id, **self._chunk_trace_summary(chunks)}) as index_span:
+            with trace.span(
+                "index",
+                input={
+                    "doc_id": parsed.doc_id,
+                    "dense_enabled": dense_enabled,
+                    "keyword_enabled": keyword_enabled,
+                    **self._chunk_trace_summary(chunks),
+                },
+            ) as index_span:
                 if callable(cancel_check):
                     cancel_check()
                 logger.info("document.processing.stage.start", extra={"stage": "index", "doc_id": parsed.doc_id})
+                self._mark_wiki_source_stale(parsed.doc_id, scope, reason="source_reindexed")
                 self.document_repository.replace_chunks(parsed.doc_id, chunks, scope)
                 self._reset_image_resources_for_reparse(parsed.doc_id, parsed.images, scope)
-                with trace.db_subspan(
-                    index_span,
-                    "embedding_batch",
-                    input={
-                        "doc_id": parsed.doc_id,
-                        "chunks": len(chunks),
-                        "vector_store": self.vector_store.__class__.__name__,
-                    },
-                ):
-                    replace_document_chunks = getattr(self.vector_store, "replace_document_chunks", None)
-                    if callable(replace_document_chunks):
-                        try:
-                            replace_document_chunks(parsed.doc_id, chunks, scope=scope)
-                        except TypeError:
-                            replace_document_chunks(parsed.doc_id, chunks)
-                    else:
-                        self.vector_store.upsert_chunks(chunks)
+                if needs_embedding:
+                    with trace.db_subspan(
+                        index_span,
+                        "embedding_batch",
+                        input={
+                            "doc_id": parsed.doc_id,
+                            "chunks": len(chunks),
+                            "vector_store": self.vector_store.__class__.__name__,
+                        },
+                    ):
+                        replace_document_chunks = getattr(self.vector_store, "replace_document_chunks", None)
+                        if callable(replace_document_chunks):
+                            try:
+                                replace_document_chunks(parsed.doc_id, chunks, scope=scope)
+                            except TypeError:
+                                replace_document_chunks(parsed.doc_id, chunks)
+                        else:
+                            self.vector_store.upsert_chunks(chunks)
+                else:
+                    self._delete_vector_document(parsed.doc_id, scope)
                 self.document_repository.upsert_document(
                     id=parsed.doc_id,
                     name=parsed.file_name,
@@ -678,7 +704,9 @@ class RAGService:
                                 for chunk in chunks
                                 if chunk.chunk_type in {"child", "table", "ocr", "image_ocr", "image_caption"}
                             ]
-                        ),
+                        ) if needs_embedding else 0,
+                        "embedding_status": "completed" if needs_embedding else "skipped",
+                        "skip_reason": "dense_and_keyword_disabled" if not needs_embedding else "",
                     },
                 )
                 logger.info(
@@ -733,16 +761,44 @@ class RAGService:
                     },
                 )
 
-            with trace.span("postprocess", input={"kg_enabled": self.kg_extraction_enabled}) as postprocess_span:
+            with trace.span(
+                "postprocess",
+                input={"kg_enabled": graph_enabled, "wiki_enabled": wiki_enabled},
+            ) as postprocess_span:
                 if callable(cancel_check):
                     cancel_check()
                 logger.info("document.processing.stage.start", extra={"stage": "postprocess", "doc_id": parsed.doc_id})
                 with trace.db_subspan(
                     postprocess_span,
                     "graph_extraction",
-                    input={"enabled": self.kg_extraction_enabled, "chunks": len(chunks)},
-                ):
-                    self._run_kg_enrichment(parsed.doc_id, chunks, scope)
+                    input={"enabled": graph_enabled, "chunks": len(chunks)},
+                ) as graph_span:
+                    if graph_enabled:
+                        self._run_kg_enrichment(parsed.doc_id, chunks, scope)
+                    else:
+                        trace.mark_db_subspan_skipped(
+                            graph_span,
+                            reason="graph_disabled_by_strategy",
+                            output={"enabled": False},
+                        )
+                with trace.db_subspan(
+                    postprocess_span,
+                    "wiki_enqueue",
+                    input={"enabled": wiki_enabled, "document_id": parsed.doc_id},
+                ) as wiki_enqueue_span:
+                    if wiki_enabled:
+                        wiki_generation_result = self._run_wiki_generation(parsed.doc_id, scope)
+                    else:
+                        wiki_generation_result = {
+                            "task": {"status": "skipped", "reason": "wiki_disabled_by_strategy"},
+                            "page": None,
+                            "proposal": None,
+                        }
+                        trace.mark_db_subspan_skipped(
+                            wiki_enqueue_span,
+                            reason="wiki_disabled_by_strategy",
+                            output={"enabled": False},
+                        )
                 enrichment_queued = False
                 if self.document_enrichment_service is not None:
                     provider_known = hasattr(self.document_enrichment_service, "provider")
@@ -757,10 +813,31 @@ class RAGService:
                         input={"enabled": enrichment_queued, "chunks": len(chunks)},
                     ):
                         self.document_enrichment_service.enqueue(parsed.doc_id, chunks, scope)
-                trace.record_output(postprocess_span, {"kg_attempted": self.kg_extraction_enabled, "enrichment_queued": enrichment_queued})
+                trace.record_output(
+                    postprocess_span,
+                    {
+                        "kg_attempted": graph_enabled,
+                        "wiki_generation": wiki_generation_result,
+                        "enrichment_queued": enrichment_queued,
+                    },
+                )
+                if not needs_embedding:
+                    trace.mark_skipped(
+                        index_span,
+                        reason="dense_and_keyword_disabled",
+                        output={"sqlite_chunks": len(chunks), "vector_chunks": 0},
+                    )
                 logger.info(
                     "document.processing.stage.end",
-                    extra={"stage": "postprocess", "doc_id": parsed.doc_id, "kg_enabled": self.kg_extraction_enabled, "enrichment_queued": enrichment_queued},
+                    extra={
+                        "stage": "postprocess",
+                        "doc_id": parsed.doc_id,
+                        "kg_enabled": graph_enabled,
+                        "wiki_generation_status": (wiki_generation_result.get("task") or {}).get("status", "skipped")
+                        if isinstance(wiki_generation_result, dict)
+                        else "skipped",
+                        "enrichment_queued": enrichment_queued,
+                    },
                 )
 
             result = {
@@ -769,11 +846,13 @@ class RAGService:
                 "parent_chunks": len([chunk for chunk in chunks if chunk.chunk_type == "parent"]),
                 "child_chunks": len([chunk for chunk in chunks if chunk.chunk_type == "child"]),
                 "table_chunks": len([chunk for chunk in chunks if chunk.chunk_type == "table"]),
-                "indexed_chunks": len([chunk for chunk in chunks if chunk.chunk_type in {"child", "table", "ocr", "image_ocr", "image_caption"}]),
+                "indexed_chunks": len([chunk for chunk in chunks if chunk.chunk_type in {"child", "table", "ocr", "image_ocr", "image_caption"}]) if needs_embedding else 0,
+                "persisted_chunks": len(chunks),
                 "image_resources": image_operation_summary["resources"],
                 "image_operations": image_operation_summary["operations"],
                 "image_operation_errors": image_operation_summary["errors"],
                 "multimodal": multimodal_summary,
+                "wiki_generation": wiki_generation_result,
                 "parser_warnings": list(getattr(parsed.diagnostics, "warnings", ()) or ()),
                 "requested_processing": resolved_processing.requested.to_dict(),
                 "effective_processing": resolved_processing.effective.to_dict(),
@@ -891,7 +970,7 @@ class RAGService:
         ]
 
     def _run_kg_enrichment(self, doc_id: str, chunks: list[Chunk], scope: KnowledgeBaseScope) -> None:
-        if not self.kg_extraction_enabled or self.kg_service is None:
+        if self.kg_service is None:
             return
         try:
             try:
@@ -3081,6 +3160,68 @@ class RAGService:
         message = re.sub(rf"/[^\s]*{root_name}[^\s]*", "<data-dir>", message)
         return message[:300]
 
+    def _run_wiki_generation(self, doc_id: str, scope: KnowledgeBaseScope) -> dict[str, Any]:
+        service = getattr(self, "wiki_page_service", None)
+        worker = getattr(self, "processing_worker", None)
+        ingest_service = getattr(worker, "wiki_ingest_service", None)
+        enqueue = getattr(ingest_service, "enqueue_document", None)
+        if callable(enqueue):
+            try:
+                return enqueue(scope, doc_id, trace_id=_current_log_trace_id() or "")
+            except Exception as exc:
+                message = self._sanitize_preview_error(exc)
+                logger.warning(
+                    "wiki.generation.enqueue_failed",
+                    extra={
+                        "workspace_id": scope.workspace_id,
+                        "knowledge_base_id": scope.knowledge_base_id,
+                        "doc_id": doc_id,
+                        "error_type": exc.__class__.__name__,
+                        "error_message": message,
+                    },
+                )
+                return {"task": {"status": "failed", "error_message": message}}
+        generate = getattr(service, "generate_draft_for_document", None)
+        if not callable(generate):
+            return {"task": {"status": "skipped", "error_message": "Wiki service is unavailable"}}
+        try:
+            return generate(scope, doc_id)
+        except Exception as exc:
+            message = self._sanitize_preview_error(exc)
+            logger.info(
+                "wiki.generation.skipped",
+                extra={
+                    "workspace_id": scope.workspace_id,
+                    "knowledge_base_id": scope.knowledge_base_id,
+                    "doc_id": doc_id,
+                    "error_type": exc.__class__.__name__,
+                    "error_message": message,
+                },
+            )
+            return {"task": {"status": "skipped", "error_message": message}}
+
+    def _mark_wiki_source_stale(self, doc_id: str, scope: KnowledgeBaseScope, *, reason: str) -> list[dict[str, Any]]:
+        service = getattr(self, "wiki_page_service", None)
+        mark = getattr(service, "mark_source_stale", None)
+        if not callable(mark):
+            return []
+        try:
+            return mark(scope, doc_id=doc_id, reason=reason)
+        except Exception as exc:
+            message = self._sanitize_preview_error(exc)
+            logger.info(
+                "wiki.source_stale.skipped",
+                extra={
+                    "workspace_id": scope.workspace_id,
+                    "knowledge_base_id": scope.knowledge_base_id,
+                    "doc_id": doc_id,
+                    "reason": reason,
+                    "error_type": exc.__class__.__name__,
+                    "error_message": message,
+                },
+            )
+            return []
+
     def ingest_document_by_id(
         self,
         doc_id: str,
@@ -3271,6 +3412,7 @@ class RAGService:
                     extra={"workspace_id": scope.workspace_id, "knowledge_base_id": scope.knowledge_base_id, "doc_id": doc_id, "storage_key": storage_key},
                 )
                 self.object_storage.delete(storage_key)
+        self._mark_wiki_source_stale(doc_id, scope, reason="source_deleted")
         logger.info(
             "rag_service.document.delete.sqlite",
             extra={"workspace_id": scope.workspace_id, "knowledge_base_id": scope.knowledge_base_id, "doc_id": doc_id},
@@ -3290,6 +3432,15 @@ class RAGService:
             "rag_service.document.delete.end",
             extra={"workspace_id": scope.workspace_id, "knowledge_base_id": scope.knowledge_base_id, "doc_id": doc_id},
         )
+
+    def _delete_vector_document(self, doc_id: str, scope: KnowledgeBaseScope) -> None:
+        delete_document = getattr(self.vector_store, "delete_document", None)
+        if not callable(delete_document):
+            return
+        try:
+            delete_document(doc_id, scope=scope)
+        except TypeError:
+            delete_document(doc_id)
 
     def list_documents(
         self,

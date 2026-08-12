@@ -43,6 +43,34 @@ from app.schemas import (
     UploadBatchCreateRequest,
     UploadBatchResponse,
     UploadBatchSettingsUpdateRequest,
+    WikiFolderCreateRequest,
+    WikiFolderResponse,
+    WikiFoldersResponse,
+    WikiFolderUpdateRequest,
+    WikiGenerationRequest,
+    WikiGenerationResponse,
+    WikiGenerationTaskResponse,
+    WikiGenerationTasksResponse,
+    WikiGraphResponse,
+    WikiLogResponse,
+    WikiLogsResponse,
+    WikiOverviewResponse,
+    WikiProcessingTaskResponse,
+    WikiProcessingTasksResponse,
+    WikiIssueCreateRequest,
+    WikiIssueResponse,
+    WikiIssuesResponse,
+    WikiIssueUpdateRequest,
+    WikiPageCreateRequest,
+    WikiPageMoveRequest,
+    WikiPageResponse,
+    WikiPagesResponse,
+    WikiPageUpdateRequest,
+    WikiProposalApplyResponse,
+    WikiProposalCreateRequest,
+    WikiProposalResponse,
+    WikiProposalsResponse,
+    WikiSourceDocRequest,
     WorkspaceResponse,
 )
 from app.models.agentic_retrieval import AgenticRetrievalConfig
@@ -81,6 +109,9 @@ from app.services.kg.kg_repository import KGRepository
 from app.services.kg.kg_service import KGEnrichmentService
 from app.services.knowledge.knowledge_base_repository import KnowledgeBaseRepository
 from app.services.knowledge.knowledge_base_service import KnowledgeBaseService, KnowledgeBaseValidationError
+from app.services.wiki.wiki_repository import WikiRepository
+from app.services.wiki.wiki_service import WikiPageService, WikiValidationError
+from app.services.wiki.wiki_ingest_service import WikiIngestConfig, WikiIngestService
 from app.services.storage.storage_schema import DefaultKnowledgeBaseSettings, StorageResetRequired
 from app.services.storage.storage_reset import clear_runtime_lock, write_runtime_lock
 from app.services.documents.temporary_attachment_repository import TemporaryAttachmentRepository
@@ -345,6 +376,16 @@ def build_rag_service() -> RAGService:
             enrichment=str(rag_config.get("llm", {}).get("provider", "openai")),
         ),
     )
+    wiki_repository = WikiRepository(metadata_db_path, defaults=knowledge_base_defaults)
+    wiki_page_service = WikiPageService(
+        wiki_repository,
+        knowledge_base_service,
+        document_repository,
+        generation_enabled=_get_env_bool("WIKI_GENERATION_ENABLED", default=True),
+        generation_max_pages_per_document=_get_env_int("WIKI_GENERATION_MAX_PAGES_PER_DOCUMENT", default=1),
+        generation_max_source_chunks=_get_env_int("WIKI_GENERATION_MAX_SOURCE_CHUNKS", default=8),
+        generation_max_chars=_get_env_int("WIKI_GENERATION_MAX_CHARS", default=12000),
+    )
     reranker_enabled = _get_env_bool("RERANKER_ENABLED", default=False)
     reranker_provider = _get_env("RERANKER_PROVIDER", default=str(rag_config["reranker"].get("provider", "local")))
     reranker_model = _get_env("RERANKER_MODEL", default=str(rag_config["reranker"].get("model", "BAAI/bge-reranker-v2-m3")))
@@ -559,6 +600,7 @@ def build_rag_service() -> RAGService:
         ocr_provider=_get_env("OCR_PROVIDER", default="docling"),
         document_repository=document_repository,
         knowledge_base_service=knowledge_base_service,
+        wiki_page_service=wiki_page_service,
         upload_batch_repository=upload_batch_repository,
         document_parser=RegistryDocumentParser(
             engine=_get_env("PARSER_ENGINE", default="builtin"),
@@ -679,6 +721,27 @@ def build_rag_service() -> RAGService:
         quick_max_repeated_responses=_get_env_int("AGENT_RUNTIME_QUICK_MAX_REPEATED_RESPONSES", default=0),
         quick_preload_retrieval=_get_env_bool("AGENT_RUNTIME_QUICK_PRELOAD_RETRIEVAL", default=True),
         quick_remedial_retrieval_enabled=_get_env_bool("AGENT_RUNTIME_QUICK_REMEDIAL_RETRIEVAL_ENABLED", default=False),
+        wiki_runtime_enabled=_get_env_bool("AGENT_RUNTIME_WIKI_MODE_ENABLED", default=True),
+        wiki_prompt_template_id=_get_env("AGENT_RUNTIME_WIKI_PROMPT_TEMPLATE_ID", default="wiki_rag_agent"),
+        wiki_context_template_id=_get_env("AGENT_RUNTIME_WIKI_CONTEXT_TEMPLATE_ID", default="default_context"),
+        wiki_enabled_tools=_get_env_csv(
+            "AGENT_RUNTIME_WIKI_ENABLED_TOOLS",
+            (
+                "thinking",
+                "todo_write",
+                "wiki_search",
+                "wiki_read_page",
+                "wiki_read_source_doc",
+                "wiki_flag_issue",
+                "grep_chunks",
+                "list_knowledge_chunks",
+                "get_document_info",
+            ),
+        ),
+        wiki_max_iterations=_get_env_int("AGENT_RUNTIME_WIKI_MAX_ITERATIONS", default=5),
+        wiki_max_empty_retries=_get_env_int("AGENT_RUNTIME_WIKI_MAX_EMPTY_RETRIES", default=1),
+        wiki_max_repeated_responses=_get_env_int("AGENT_RUNTIME_WIKI_MAX_REPEATED_RESPONSES", default=1),
+        wiki_preload_retrieval=_get_env_bool("AGENT_RUNTIME_WIKI_PRELOAD_RETRIEVAL", default=False),
         tool_timeout_seconds=_get_env_float("AGENT_RUNTIME_TOOL_TIMEOUT_SECONDS", default=20.0),
         web_search_enabled=_get_env_bool("AGENT_RUNTIME_WEB_SEARCH_ENABLED", default=False),
         web_search_endpoint=_get_env("AGENT_RUNTIME_WEB_SEARCH_URL", default=""),
@@ -687,12 +750,15 @@ def build_rag_service() -> RAGService:
         data_analysis_enabled=_get_env_bool("AGENT_RUNTIME_DATA_ANALYSIS_ENABLED", default=False),
         database_query_enabled=_get_env_bool("AGENT_RUNTIME_DATABASE_QUERY_ENABLED", default=False),
         database_allowed_sources=_get_env_mapping("AGENT_RUNTIME_DATABASE_SOURCES"),
+        wiki_tools_enabled=_get_env_bool("AGENT_RUNTIME_WIKI_TOOLS_ENABLED", default=_get_env_bool("AGENT_RUNTIME_WIKI_MODE_ENABLED", default=True)),
+        wiki_maintenance_tools_enabled=_get_env_bool("AGENT_RUNTIME_WIKI_MAINTENANCE_TOOLS_ENABLED", default=False),
         fallback_to_deterministic=_get_env_bool("AGENT_RUNTIME_FALLBACK_TO_DETERMINISTIC", default=True),
     )
     rag_service.agent_runtime_enabled = agent_runtime_config.enabled
     rag_service.unified_chat_runtime_enabled = agent_runtime_config.unified_chat_runtime_enabled
     rag_service.quick_runtime_enabled = agent_runtime_config.quick_runtime_enabled
-    if agent_runtime_config.enabled or agent_runtime_config.quick_runtime_enabled:
+    rag_service.wiki_runtime_enabled = agent_runtime_config.wiki_runtime_enabled
+    if agent_runtime_config.enabled or agent_runtime_config.quick_runtime_enabled or agent_runtime_config.wiki_runtime_enabled:
         skills_manager = RuntimeSkillsManager(
             agent_runtime_config.skills_path,
             enabled=agent_runtime_config.skills_enabled,
@@ -716,6 +782,8 @@ def build_rag_service() -> RAGService:
                 data_analysis_enabled=agent_runtime_config.data_analysis_enabled,
                 database_query_enabled=agent_runtime_config.database_query_enabled,
                 database_allowed_sources=agent_runtime_config.database_allowed_sources,
+                wiki_tools_enabled=agent_runtime_config.wiki_tools_enabled,
+                wiki_maintenance_tools_enabled=agent_runtime_config.wiki_maintenance_tools_enabled,
             ),
             config=agent_runtime_config,
             skills_manager=skills_manager,
@@ -723,15 +791,42 @@ def build_rag_service() -> RAGService:
             span_repository=AgentRuntimeSpanRepository(metadata_db_path, defaults=knowledge_base_defaults),
         )
     worker_config_defaults = rag_config.get("processing_worker", {})
+    processing_task_repository = ProcessingTaskRepository(metadata_db_path, defaults=knowledge_base_defaults)
+    wiki_ingest_service = WikiIngestService(
+        repository=wiki_repository,
+        page_service=wiki_page_service,
+        processing_repository=processing_task_repository,
+        llm_client=client,
+        model=chat_model,
+        prompt_catalog=prompt_template_catalog,
+        config=WikiIngestConfig(
+            enabled=_get_env_bool("WIKI_INGEST_ENABLED", default=True),
+            debounce_seconds=_get_env_int("WIKI_INGEST_DEBOUNCE_SECONDS", default=30),
+            followup_seconds=_get_env_int("WIKI_FINALIZE_DEBOUNCE_SECONDS", default=5),
+            batch_size=_get_env_int("WIKI_INGEST_BATCH_SIZE", default=5),
+            map_concurrency=_get_env_int("WIKI_MAP_CONCURRENCY", default=4),
+            reduce_concurrency=_get_env_int("WIKI_REDUCE_CONCURRENCY", default=4),
+            max_source_chunks=_get_env_int("WIKI_MAX_SOURCE_CHUNKS", default=80),
+            max_source_chars=_get_env_int("WIKI_MAX_SOURCE_CHARS", default=32768),
+            max_candidates=_get_env_int("WIKI_MAX_CANDIDATES", default=24),
+            max_pages_per_document=_get_env_int("WIKI_MAX_PAGES_PER_DOCUMENT", default=30),
+            min_source_chars=_get_env_int("WIKI_MIN_SOURCE_CHARS", default=80),
+            timeout_seconds=_get_env_int("WIKI_TASK_TIMEOUT_SECONDS", default=3600),
+            max_attempts=_get_env_int("WIKI_TASK_MAX_ATTEMPTS", default=3),
+            language=_get_env("WIKI_LANGUAGE", default="zh-CN"),
+        ),
+        span_tracker=rag_service.processing_trace_recorder.span_tracker,
+    )
+    wiki_page_service.ingest_service = wiki_ingest_service
     rag_service.processing_worker = DocumentProcessingWorker(
-        repository=ProcessingTaskRepository(metadata_db_path, defaults=knowledge_base_defaults),
+        repository=processing_task_repository,
         rag_service=rag_service,
         config=DurableProcessingWorkerConfig.from_settings(
             {
                 "enabled": _get_env_bool(
                     "PROCESSING_WORKER_ENABLED",
                     default=bool(worker_config_defaults.get("enabled", False)),
-                ),
+                ) or wiki_ingest_service.config.enabled,
                 "poll_interval_seconds": _get_env_float(
                     "PROCESSING_WORKER_POLL_INTERVAL_SECONDS",
                     default=float(worker_config_defaults.get("poll_interval_seconds", 1.0)),
@@ -755,6 +850,7 @@ def build_rag_service() -> RAGService:
             }
         ),
         worker_id=_get_env("PROCESSING_WORKER_ID", default="local-processing-worker"),
+        wiki_ingest_service=wiki_ingest_service,
     )
     return rag_service
 
@@ -864,6 +960,19 @@ def _resolve_request_scope(knowledge_base_ids: list[str] | None = None, document
     )
 
 
+def _wiki_service() -> WikiPageService:
+    service = getattr(rag_service, "wiki_page_service", None)
+    if service is None:
+        raise HTTPException(status_code=503, detail="Wiki service is unavailable")
+    return service
+
+
+def _payload_dict(payload, *, exclude_unset: bool = False) -> dict:
+    if hasattr(payload, "model_dump"):
+        return payload.model_dump(exclude_unset=exclude_unset)
+    return payload.dict(exclude_unset=exclude_unset)
+
+
 @app.get("/workspaces/default", response_model=WorkspaceResponse)
 def get_default_workspace() -> WorkspaceResponse:
     service = _knowledge_base_service()
@@ -892,6 +1001,7 @@ def create_knowledge_base(payload: KnowledgeBaseCreateRequest) -> KnowledgeBaseR
             name=payload.name,
             description=payload.description,
             knowledge_base_type=payload.type,
+            is_default=payload.is_default,
             workspace_id=payload.workspace_id,
             indexing_strategy=payload.indexing_strategy,
             provider_config=payload.provider_config,
@@ -919,6 +1029,7 @@ def update_knowledge_base(
             knowledge_base_id,
             name=payload.name,
             description=payload.description,
+            is_default=payload.is_default,
             indexing_strategy=payload.indexing_strategy,
             provider_config=payload.provider_config,
         )
@@ -945,6 +1056,381 @@ def restore_knowledge_base(knowledge_base_id: str) -> KnowledgeBaseResponse:
         return KnowledgeBaseResponse(**_knowledge_base_service().restore(knowledge_base_id).to_dict())
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Knowledge base not found") from exc
+
+
+@app.get("/knowledge-bases/{knowledge_base_id}/wiki/pages", response_model=WikiPagesResponse)
+def list_wiki_pages(
+    knowledge_base_id: str,
+    q: str = Query(default=""),
+    status: str = Query(default=""),
+    page_type: str = Query(default=""),
+    folder_id: str = Query(default=""),
+    limit: int = Query(default=50, ge=1, le=100),
+    cursor: str = Query(default="", max_length=300),
+) -> WikiPagesResponse:
+    try:
+        scope = _resolve_request_scope([knowledge_base_id])
+        result = _wiki_service().list_pages(
+            scope,
+            q=q,
+            status=status,
+            page_type=page_type,
+            folder_id=folder_id,
+            limit=limit,
+            cursor=cursor,
+        )
+        return WikiPagesResponse(**result)
+    except WikiValidationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/knowledge-bases/{knowledge_base_id}/wiki/pages", response_model=WikiPageResponse, status_code=201)
+def create_wiki_page(knowledge_base_id: str, payload: WikiPageCreateRequest) -> WikiPageResponse:
+    try:
+        scope = _resolve_request_scope([knowledge_base_id])
+        page = _wiki_service().create_page(scope, _payload_dict(payload))
+        return WikiPageResponse(**page.to_dict())
+    except WikiValidationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/knowledge-bases/{knowledge_base_id}/wiki/folders", response_model=WikiFoldersResponse)
+def list_wiki_folders(
+    knowledge_base_id: str,
+    parent_id: str = Query(default=""),
+) -> WikiFoldersResponse:
+    try:
+        scope = _resolve_request_scope([knowledge_base_id])
+        return WikiFoldersResponse(items=[WikiFolderResponse(**item) for item in _wiki_service().list_folders(scope, parent_id)])
+    except WikiValidationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/knowledge-bases/{knowledge_base_id}/wiki/folders", response_model=WikiFolderResponse, status_code=201)
+def create_wiki_folder(knowledge_base_id: str, payload: WikiFolderCreateRequest) -> WikiFolderResponse:
+    try:
+        scope = _resolve_request_scope([knowledge_base_id])
+        return WikiFolderResponse(**_wiki_service().create_folder(scope, _payload_dict(payload)).to_dict())
+    except WikiValidationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.patch("/knowledge-bases/{knowledge_base_id}/wiki/folders/{folder_id}", response_model=WikiFolderResponse)
+def update_wiki_folder(knowledge_base_id: str, folder_id: str, payload: WikiFolderUpdateRequest) -> WikiFolderResponse:
+    try:
+        scope = _resolve_request_scope([knowledge_base_id])
+        return WikiFolderResponse(**_wiki_service().update_folder(scope, folder_id, _payload_dict(payload, exclude_unset=True)).to_dict())
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Wiki folder not found") from exc
+    except WikiValidationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.delete("/knowledge-bases/{knowledge_base_id}/wiki/folders/{folder_id}", status_code=204)
+def delete_wiki_folder(knowledge_base_id: str, folder_id: str) -> None:
+    try:
+        scope = _resolve_request_scope([knowledge_base_id])
+        _wiki_service().delete_empty_folder(scope, folder_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Wiki folder not found") from exc
+    except WikiValidationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.get("/knowledge-bases/{knowledge_base_id}/wiki/graph", response_model=WikiGraphResponse)
+def get_wiki_graph(
+    knowledge_base_id: str,
+    center_slug: str = Query(default=""),
+    limit: int = Query(default=80, ge=1, le=200),
+) -> WikiGraphResponse:
+    try:
+        scope = _resolve_request_scope([knowledge_base_id])
+        return WikiGraphResponse(**_wiki_service().graph(scope, center_slug=center_slug, limit=limit))
+    except WikiValidationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/knowledge-bases/{knowledge_base_id}/wiki/source-doc")
+def read_wiki_source_doc(knowledge_base_id: str, payload: WikiSourceDocRequest) -> dict:
+    try:
+        scope = _resolve_request_scope([knowledge_base_id])
+        return _wiki_service().read_source_doc(scope, **_payload_dict(payload))
+    except WikiValidationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.get("/knowledge-bases/{knowledge_base_id}/wiki/generation-tasks", response_model=WikiGenerationTasksResponse)
+def list_wiki_generation_tasks(
+    knowledge_base_id: str,
+    doc_id: str = Query(default=""),
+    limit: int = Query(default=20, ge=1, le=100),
+) -> WikiGenerationTasksResponse:
+    try:
+        scope = _resolve_request_scope([knowledge_base_id])
+        items = _wiki_service().list_generation_tasks(scope, doc_id=doc_id, limit=limit)
+        return WikiGenerationTasksResponse(items=[WikiGenerationTaskResponse(**item) for item in items])
+    except WikiValidationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.get("/knowledge-bases/{knowledge_base_id}/wiki/overview", response_model=WikiOverviewResponse)
+def get_wiki_overview(knowledge_base_id: str) -> WikiOverviewResponse:
+    try:
+        scope = _resolve_request_scope([knowledge_base_id])
+        return WikiOverviewResponse(**_wiki_service().overview(scope))
+    except WikiValidationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.get("/knowledge-bases/{knowledge_base_id}/wiki/logs", response_model=WikiLogsResponse)
+def list_wiki_logs(
+    knowledge_base_id: str,
+    limit: int = Query(default=30, ge=1, le=100),
+    cursor: int = Query(default=0, ge=0),
+) -> WikiLogsResponse:
+    try:
+        scope = _resolve_request_scope([knowledge_base_id])
+        result = _wiki_service().list_logs(scope, limit=limit, cursor=cursor)
+        return WikiLogsResponse(
+            items=[WikiLogResponse(**item) for item in result["items"]],
+            next_cursor=result["next_cursor"],
+        )
+    except WikiValidationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.get("/knowledge-bases/{knowledge_base_id}/wiki/processing-tasks", response_model=WikiProcessingTasksResponse)
+def list_wiki_processing_tasks(knowledge_base_id: str, status: str = Query(default="")) -> WikiProcessingTasksResponse:
+    try:
+        scope = _resolve_request_scope([knowledge_base_id])
+        statuses = {item.strip() for item in status.split(",") if item.strip()} or None
+        items = _wiki_service().list_processing_tasks(scope, statuses=statuses)
+        return WikiProcessingTasksResponse(items=[WikiProcessingTaskResponse(**item) for item in items])
+    except WikiValidationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/knowledge-bases/{knowledge_base_id}/wiki/processing-tasks/{task_id}/retry", response_model=WikiProcessingTaskResponse)
+def retry_wiki_processing_task(knowledge_base_id: str, task_id: str) -> WikiProcessingTaskResponse:
+    try:
+        scope = _resolve_request_scope([knowledge_base_id])
+        return WikiProcessingTaskResponse(**_wiki_service().retry_processing_task(scope, task_id))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Wiki processing task not found or not retryable") from exc
+    except WikiValidationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.get("/knowledge-bases/{knowledge_base_id}/wiki/processing-tasks/{task_id}", response_model=WikiProcessingTaskResponse)
+def get_wiki_processing_task(knowledge_base_id: str, task_id: str) -> WikiProcessingTaskResponse:
+    try:
+        scope = _resolve_request_scope([knowledge_base_id])
+        return WikiProcessingTaskResponse(**_wiki_service().get_processing_task(scope, task_id))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Wiki processing task not found") from exc
+    except WikiValidationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/knowledge-bases/{knowledge_base_id}/wiki/processing-tasks/{task_id}/cancel", response_model=WikiProcessingTaskResponse)
+def cancel_wiki_processing_task(knowledge_base_id: str, task_id: str) -> WikiProcessingTaskResponse:
+    try:
+        scope = _resolve_request_scope([knowledge_base_id])
+        return WikiProcessingTaskResponse(**_wiki_service().cancel_processing_task(scope, task_id))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Wiki processing task not found") from exc
+    except WikiValidationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/knowledge-bases/{knowledge_base_id}/wiki/generate", response_model=WikiGenerationResponse)
+def generate_wiki_page(knowledge_base_id: str, payload: WikiGenerationRequest) -> WikiGenerationResponse:
+    try:
+        scope = _resolve_request_scope([knowledge_base_id])
+        wiki_service = _wiki_service()
+        ingest_service = getattr(wiki_service, "ingest_service", None)
+        result = (
+            ingest_service.enqueue_document(scope, payload.doc_id, debounce_seconds=0)
+            if ingest_service is not None
+            else wiki_service.generate_draft_for_document(
+                scope,
+                payload.doc_id,
+                auto_publish=payload.auto_publish,
+                max_source_chunks=payload.max_source_chunks,
+            )
+        )
+        return WikiGenerationResponse(**result)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Document not found") from exc
+    except WikiValidationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.get("/knowledge-bases/{knowledge_base_id}/wiki/issues", response_model=WikiIssuesResponse)
+def list_wiki_issues(
+    knowledge_base_id: str,
+    slug: str = Query(default=""),
+    status: str = Query(default="open"),
+    issue_type: str = Query(default=""),
+    limit: int = Query(default=50, ge=1, le=100),
+) -> WikiIssuesResponse:
+    try:
+        scope = _resolve_request_scope([knowledge_base_id])
+        return WikiIssuesResponse(items=[WikiIssueResponse(**item) for item in _wiki_service().list_issues(scope, slug=slug, status=status, issue_type=issue_type, limit=limit)])
+    except WikiValidationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/knowledge-bases/{knowledge_base_id}/wiki/issues", response_model=WikiIssueResponse, status_code=201)
+def create_wiki_issue(knowledge_base_id: str, payload: WikiIssueCreateRequest) -> WikiIssueResponse:
+    try:
+        scope = _resolve_request_scope([knowledge_base_id])
+        return WikiIssueResponse(**_wiki_service().create_issue(scope, _payload_dict(payload)).to_dict())
+    except WikiValidationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.get("/knowledge-bases/{knowledge_base_id}/wiki/issues/{issue_id}", response_model=WikiIssueResponse)
+def get_wiki_issue(knowledge_base_id: str, issue_id: str) -> WikiIssueResponse:
+    try:
+        scope = _resolve_request_scope([knowledge_base_id])
+        return WikiIssueResponse(**_wiki_service().get_issue(scope, issue_id).to_dict())
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Wiki issue not found") from exc
+    except WikiValidationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.patch("/knowledge-bases/{knowledge_base_id}/wiki/issues/{issue_id}", response_model=WikiIssueResponse)
+def update_wiki_issue(knowledge_base_id: str, issue_id: str, payload: WikiIssueUpdateRequest) -> WikiIssueResponse:
+    try:
+        scope = _resolve_request_scope([knowledge_base_id])
+        return WikiIssueResponse(**_wiki_service().update_issue_status(scope, issue_id, payload.status).to_dict())
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Wiki issue not found") from exc
+    except WikiValidationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/knowledge-bases/{knowledge_base_id}/wiki/issues/{issue_id}/cleanup")
+def cleanup_wiki_issue(knowledge_base_id: str, issue_id: str) -> dict:
+    try:
+        scope = _resolve_request_scope([knowledge_base_id])
+        return _wiki_service().cleanup_issue(scope, issue_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Wiki issue or page not found") from exc
+    except WikiValidationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.get("/knowledge-bases/{knowledge_base_id}/wiki/proposals", response_model=WikiProposalsResponse)
+def list_wiki_proposals(
+    knowledge_base_id: str,
+    slug: str = Query(default=""),
+    status: str = Query(default="pending"),
+    limit: int = Query(default=50, ge=1, le=100),
+) -> WikiProposalsResponse:
+    try:
+        scope = _resolve_request_scope([knowledge_base_id])
+        return WikiProposalsResponse(items=[WikiProposalResponse(**item) for item in _wiki_service().list_proposals(scope, slug=slug, status=status, limit=limit)])
+    except WikiValidationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/knowledge-bases/{knowledge_base_id}/wiki/proposals", response_model=WikiProposalResponse, status_code=201)
+def create_wiki_proposal(knowledge_base_id: str, payload: WikiProposalCreateRequest) -> WikiProposalResponse:
+    try:
+        scope = _resolve_request_scope([knowledge_base_id])
+        return WikiProposalResponse(**_wiki_service().create_proposal(scope, _payload_dict(payload)).to_dict())
+    except WikiValidationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.get("/knowledge-bases/{knowledge_base_id}/wiki/proposals/{proposal_id}", response_model=WikiProposalResponse)
+def get_wiki_proposal(knowledge_base_id: str, proposal_id: str) -> WikiProposalResponse:
+    try:
+        scope = _resolve_request_scope([knowledge_base_id])
+        return WikiProposalResponse(**_wiki_service().get_proposal(scope, proposal_id).to_dict())
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Wiki proposal not found") from exc
+    except WikiValidationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/knowledge-bases/{knowledge_base_id}/wiki/proposals/{proposal_id}/apply", response_model=WikiProposalApplyResponse)
+def apply_wiki_proposal(knowledge_base_id: str, proposal_id: str) -> WikiProposalApplyResponse:
+    try:
+        scope = _resolve_request_scope([knowledge_base_id])
+        return WikiProposalApplyResponse(**_wiki_service().apply_proposal(scope, proposal_id))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Wiki proposal not found") from exc
+    except WikiValidationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/knowledge-bases/{knowledge_base_id}/wiki/proposals/{proposal_id}/reject", response_model=WikiProposalResponse)
+def reject_wiki_proposal(knowledge_base_id: str, proposal_id: str) -> WikiProposalResponse:
+    try:
+        scope = _resolve_request_scope([knowledge_base_id])
+        return WikiProposalResponse(**_wiki_service().reject_proposal(scope, proposal_id).to_dict())
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Wiki proposal not found") from exc
+    except WikiValidationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.get("/knowledge-bases/{knowledge_base_id}/wiki/pages/{slug:path}", response_model=WikiPageResponse)
+def get_wiki_page(knowledge_base_id: str, slug: str) -> WikiPageResponse:
+    try:
+        scope = _resolve_request_scope([knowledge_base_id])
+        return WikiPageResponse(**_wiki_service().get_page(scope, slug).to_dict())
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Wiki page not found") from exc
+    except WikiValidationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.patch("/knowledge-bases/{knowledge_base_id}/wiki/pages/{slug:path}", response_model=WikiPageResponse)
+def update_wiki_page(knowledge_base_id: str, slug: str, payload: WikiPageUpdateRequest) -> WikiPageResponse:
+    try:
+        scope = _resolve_request_scope([knowledge_base_id])
+        return WikiPageResponse(**_wiki_service().update_page(scope, slug, _payload_dict(payload, exclude_unset=True)).to_dict())
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Wiki page not found") from exc
+    except WikiValidationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/knowledge-bases/{knowledge_base_id}/wiki/pages/{slug:path}/move", response_model=WikiPageResponse)
+def move_wiki_page(knowledge_base_id: str, slug: str, payload: WikiPageMoveRequest) -> WikiPageResponse:
+    try:
+        scope = _resolve_request_scope([knowledge_base_id])
+        return WikiPageResponse(**_wiki_service().move_page(scope, slug, folder_id=payload.folder_id, category_path=payload.category_path).to_dict())
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Wiki page not found") from exc
+    except WikiValidationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.delete("/knowledge-bases/{knowledge_base_id}/wiki/pages/{slug:path}", response_model=WikiPageResponse)
+def archive_wiki_page(knowledge_base_id: str, slug: str) -> WikiPageResponse:
+    try:
+        scope = _resolve_request_scope([knowledge_base_id])
+        return WikiPageResponse(**_wiki_service().archive_page(scope, slug).to_dict())
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Wiki page not found") from exc
+    except WikiValidationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @app.post("/eval/runs", response_model=EvalRunResponse)
@@ -1238,10 +1724,27 @@ def chat_stream(payload: ChatRequest) -> StreamingResponse:
                 and bool(getattr(rag_service, "quick_runtime_enabled", False))
                 and getattr(rag_service, "agent_runtime", None) is not None
             )
+            wiki_runtime_available = (
+                bool(getattr(rag_service, "wiki_runtime_enabled", False))
+                and getattr(rag_service, "agent_runtime", None) is not None
+            )
             agentic_available = getattr(rag_service, "agentic_workflow", None) is not None
+            if chat_mode == "wiki" and not wiki_runtime_available:
+                raise ValueError("Wiki 问答模式暂不可用，请确认 Wiki runtime 已启用")
             if chat_mode == "reasoning" and not (runtime_available or agentic_available):
                 raise ValueError("智能推理暂不可用，请切换为快速问答后重试")
-            if chat_mode == "reasoning" and runtime_available:
+            if chat_mode == "wiki":
+                yield from _stream_agent_runtime_chat_events(
+                    question,
+                    conversation_context,
+                    memory_context,
+                    answer_parts,
+                    stream_state,
+                    scope,
+                    temporary_sources,
+                    mode="wiki",
+                )
+            elif chat_mode == "reasoning" and runtime_available:
                 yield from _stream_agent_runtime_chat_events(
                     question,
                     conversation_context,

@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 from uuid import uuid4
 
 from app.models.knowledge_base import KnowledgeBaseScope
@@ -19,6 +19,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 UPLOAD_FILE_TASK = "upload_file.process"
+WIKI_INGEST_TASK = "wiki.ingest"
+WIKI_FINALIZE_TASK = "wiki.finalize"
 
 
 class DocumentProcessingWorker:
@@ -29,11 +31,19 @@ class DocumentProcessingWorker:
         rag_service: "RAGService",
         config: DurableProcessingWorkerConfig | None = None,
         worker_id: str | None = None,
+        wiki_ingest_service: Any | None = None,
     ):
         self.repository = repository
         self.rag_service = rag_service
         self.config = config or DurableProcessingWorkerConfig()
         self.worker_id = worker_id or f"worker-{uuid4().hex[:12]}"
+        self.wiki_ingest_service = wiki_ingest_service
+        self._handlers: dict[str, Callable[[dict[str, Any]], None]] = {
+            UPLOAD_FILE_TASK: self._process_upload_file_task,
+        }
+        if wiki_ingest_service is not None:
+            self._handlers[WIKI_INGEST_TASK] = wiki_ingest_service.process_ingest_task
+            self._handlers[WIKI_FINALIZE_TASK] = wiki_ingest_service.process_finalize_task
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -86,6 +96,12 @@ class DocumentProcessingWorker:
         self._thread.start()
         logger.info("processing_worker.start", extra={"worker_id": self.worker_id})
 
+    def register_handler(self, task_type: str, handler: Callable[[dict[str, Any]], None]) -> None:
+        clean_type = str(task_type or "").strip()
+        if not clean_type:
+            raise ValueError("task_type cannot be empty")
+        self._handlers[clean_type] = handler
+
     def stop(self, timeout: float = 5.0) -> None:
         self._stop_event.set()
         if self._thread is not None:
@@ -102,7 +118,7 @@ class DocumentProcessingWorker:
         task = self.repository.claim_next(
             self.worker_id,
             lease_seconds=self.config.lease_timeout_seconds,
-            task_types={UPLOAD_FILE_TASK},
+            task_types=set(self._handlers),
         )
         if task is None:
             return False
@@ -123,17 +139,23 @@ class DocumentProcessingWorker:
                     },
                 )
                 try:
-                    if task["task_type"] == UPLOAD_FILE_TASK:
-                        self._process_upload_file_task(task)
-                    else:
+                    handler = self._handlers.get(str(task.get("task_type") or ""))
+                    if handler is None:
                         raise ValueError(f"Unsupported processing task type: {task['task_type']}")
+                    handler(task)
                     self.repository.complete(str(task["id"]), worker_id=self.worker_id)
                     logger.info("processing_worker.task.completed", extra={"worker_id": self.worker_id, "task_id": task.get("id")})
                 except ProcessingTaskCanceled as exc:
                     self.repository.cancel_task(str(task["id"]), reason=str(exc))
                     logger.info("processing_worker.task.canceled", extra={"worker_id": self.worker_id, "task_id": task.get("id")})
                 except Exception as exc:
-                    self._handle_task_failure(task, exc)
+                    if exc.__class__.__name__ == "WikiSupersededError":
+                        self.repository.cancel_task(str(task["id"]), reason=str(exc))
+                        if self.wiki_ingest_service is not None:
+                            self.wiki_ingest_service.reconcile_cancelled(task, str(exc))
+                        logger.info("processing_worker.task.superseded", extra={"worker_id": self.worker_id, "task_id": task.get("id")})
+                    else:
+                        self._handle_task_failure(task, exc)
 
     def _process_upload_file_task(self, task: dict[str, Any]) -> None:
         scope = KnowledgeBaseScope(
@@ -172,7 +194,7 @@ class DocumentProcessingWorker:
         error_code = exc.__class__.__name__
         error_message = str(exc)
         if attempt < max_attempts:
-            delay = self.config.retry_delay_for_attempt(attempt)
+            delay = _retry_delay_seconds(exc, self.config.retry_delay_for_attempt(attempt))
             self.repository.retry(
                 task_id,
                 error_code=error_code,
@@ -194,7 +216,10 @@ class DocumentProcessingWorker:
             )
             return
         self.repository.dead_letter(task_id, error_code=error_code, error_message=error_message, worker_id=self.worker_id)
-        self._reconcile_failed_upload_task(task, error_message)
+        if task.get("task_type") == UPLOAD_FILE_TASK:
+            self._reconcile_failed_upload_task(task, error_message)
+        elif self.wiki_ingest_service is not None:
+            self.wiki_ingest_service.reconcile_terminal_failure(task, error_message)
         logger.exception(
             "processing_worker.task.dead_lettered",
             extra={
@@ -231,6 +256,27 @@ class DocumentProcessingWorker:
 
 class ProcessingTaskCanceled(RuntimeError):
     pass
+
+
+def _retry_delay_seconds(exc: Exception, configured_delay: int) -> int:
+    candidates: list[Any] = [
+        getattr(exc, "retry_after_seconds", None),
+        getattr(exc, "retry_after", None),
+    ]
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None)
+    if headers is not None:
+        try:
+            candidates.append(headers.get("retry-after"))
+        except Exception:
+            pass
+    retry_after = 0
+    for value in candidates:
+        try:
+            retry_after = max(retry_after, int(float(value)))
+        except (TypeError, ValueError):
+            continue
+    return min(3600, max(0, int(configured_delay), retry_after))
 
 
 def drain_worker(worker: DocumentProcessingWorker, *, limit: int = 100) -> int:

@@ -15,6 +15,16 @@ DEFAULT_AGENT_RUNTIME_TOOLS = (
     "list_knowledge_chunks",
     "get_document_info",
     "query_knowledge_graph",
+    "wiki_search",
+    "wiki_read_page",
+    "wiki_read_source_doc",
+    "wiki_flag_issue",
+    "wiki_read_issue",
+    "wiki_update_issue",
+    "wiki_write_page",
+    "wiki_replace_text",
+    "wiki_rename_page",
+    "wiki_delete_page",
     "read_skill",
 )
 
@@ -84,6 +94,24 @@ class AgentRuntimeConfig:
     quick_max_repeated_responses: int = 0
     quick_preload_retrieval: bool = True
     quick_remedial_retrieval_enabled: bool = False
+    wiki_runtime_enabled: bool = True
+    wiki_prompt_template_id: str = "wiki_rag_agent"
+    wiki_context_template_id: str = "default_context"
+    wiki_enabled_tools: tuple[str, ...] = (
+        "thinking",
+        "todo_write",
+        "wiki_search",
+        "wiki_read_page",
+        "wiki_read_source_doc",
+        "wiki_flag_issue",
+        "grep_chunks",
+        "list_knowledge_chunks",
+        "get_document_info",
+    )
+    wiki_max_iterations: int = 5
+    wiki_max_empty_retries: int = 1
+    wiki_max_repeated_responses: int = 1
+    wiki_preload_retrieval: bool = False
     tool_timeout_seconds: float = 20.0
     web_search_enabled: bool = False
     web_search_endpoint: str = ""
@@ -92,6 +120,8 @@ class AgentRuntimeConfig:
     data_analysis_enabled: bool = False
     database_query_enabled: bool = False
     database_allowed_sources: dict[str, str] = field(default_factory=dict)
+    wiki_tools_enabled: bool = False
+    wiki_maintenance_tools_enabled: bool = False
     fallback_to_deterministic: bool = True
 
 
@@ -151,6 +181,31 @@ def resolve_chat_runtime_policy(mode: str, config: AgentRuntimeConfig) -> ChatRu
             require_deep_read=False,
             grep_first_enabled=bool(config.quick_grep_first_enabled),
             emit_initial_thought=False,
+        )
+    if normalized == "wiki":
+        return ChatRuntimePolicy(
+            mode="wiki",
+            prompt_template_id=config.wiki_prompt_template_id,
+            context_template_id=config.wiki_context_template_id,
+            enabled_tools=tuple(config.wiki_enabled_tools or ()),
+            max_iterations=max(1, int(config.wiki_max_iterations or 5)),
+            max_empty_retries=max(0, int(config.wiki_max_empty_retries or 1)),
+            max_repeated_responses=max(0, int(config.wiki_max_repeated_responses or 1)),
+            max_repeated_tool_batches=max(1, int(config.max_repeated_tool_batches or 1)),
+            max_llm_calls=max(1, int(config.max_llm_calls or 6)),
+            max_tool_calls=max(1, int(config.max_tool_calls or 16)),
+            max_wall_clock_seconds=max(1.0, float(config.max_wall_clock_seconds or 120.0)),
+            max_parallel_workers=max(1, int(config.max_parallel_workers or 1)),
+            local_concurrency_enabled=bool(config.local_concurrency_enabled),
+            parallel_tool_calls_mode=_capability_mode(config.parallel_tool_calls_mode),
+            terminal_streaming_mode=_capability_mode(config.terminal_streaming_mode),
+            max_remedial_retrieval_attempts=0,
+            tool_choice="auto" if config.wiki_enabled_tools else "none",
+            preload_retrieval=bool(config.wiki_preload_retrieval),
+            remedial_retrieval_enabled=False,
+            require_deep_read=True,
+            grep_first_enabled=False,
+            emit_initial_thought=True,
         )
     return ChatRuntimePolicy(
         mode="reasoning",

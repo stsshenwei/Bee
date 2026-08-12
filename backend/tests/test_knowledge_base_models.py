@@ -57,6 +57,16 @@ class KnowledgeBaseModelTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "knowledge_base_id"):
             KnowledgeBaseScope(workspace_id="ws-1", selected_knowledge_base_ids=())
 
+    def test_wiki_default_strategy_retains_chunks_without_retrieval_indexes(self):
+        strategy = IndexingStrategy.default_for_type("wiki")
+
+        self.assertTrue(strategy.wiki_enabled)
+        self.assertFalse(strategy.dense_enabled)
+        self.assertFalse(strategy.keyword_enabled)
+        self.assertFalse(strategy.graph_enabled)
+        self.assertFalse(strategy.needs_embedding)
+        self.assertTrue(strategy.needs_chunks)
+
 
 if __name__ == "__main__":
     unittest.main()

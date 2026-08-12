@@ -1,0 +1,317 @@
+{
+  "doc_id": "61124a8cf56508ab81e7989bfff0696d",
+  "duration_ms": 11842,
+  "ended_at": "2026-08-02T15:27:13.333Z",
+  "error": null,
+  "file_name": "DH-P7004.txt",
+  "metadata": {
+    "effective_processing": {
+      "caption_enabled": false,
+      "caption_provider": "disabled",
+      "child_chunk_overlap_chars": 76,
+      "child_chunk_size_chars": 384,
+      "chunk_strategy": "auto",
+      "dense_enabled": true,
+      "embedding_token_limit": 0,
+      "graph_enabled": false,
+      "inactive_overrides": [],
+      "keyword_enabled": true,
+      "max_protected_span_chars": 7500,
+      "media_max_bytes": 26214400,
+      "media_storage_dir": "vector_db\\media",
+      "media_storage_provider": "local",
+      "ocr_enabled": false,
+      "ocr_min_confidence": 0.6,
+      "ocr_provider": "disabled",
+      "parent_child_enabled": true,
+      "parent_chunk_size_chars": 4096,
+      "parser_engine": "builtin",
+      "pdf_force_scanned": false,
+      "pdf_jpeg_quality": 90,
+      "pdf_max_image_edge_px": 2400,
+      "pdf_max_pages": 1000,
+      "pdf_render_concurrency": 2,
+      "pdf_render_dpi": 200,
+      "preview_max_chunks": 50,
+      "preview_max_file_bytes": 10485760,
+      "preview_max_pages": 20,
+      "preview_timeout_seconds": 5.0,
+      "processing_version": "weknora-adaptive-v1",
+      "question_generation_enabled": false,
+      "size_unit": "chars",
+      "warnings": []
+    },
+    "extension": ".txt",
+    "file_size": 3302,
+    "requested_processing": {
+      "caption_enabled": false,
+      "caption_provider": "disabled",
+      "child_chunk_overlap_chars": 76,
+      "child_chunk_size_chars": 384,
+      "chunk_strategy": "auto",
+      "dense_enabled": true,
+      "embedding_token_limit": 0,
+      "graph_enabled": false,
+      "keyword_enabled": true,
+      "max_protected_span_chars": 7500,
+      "media_max_bytes": 26214400,
+      "media_storage_dir": "./vector_db/media",
+      "media_storage_provider": "local",
+      "ocr_enabled": false,
+      "ocr_min_confidence": 0.6,
+      "ocr_provider": "docling",
+      "parent_child_enabled": true,
+      "parent_chunk_size_chars": 4096,
+      "parser_engine": "builtin",
+      "pdf_force_scanned": false,
+      "pdf_jpeg_quality": 90,
+      "pdf_max_image_edge_px": 2400,
+      "pdf_max_pages": 1000,
+      "pdf_render_concurrency": 2,
+      "pdf_render_dpi": 200,
+      "preview_max_chunks": 50,
+      "preview_max_file_bytes": 10485760,
+      "preview_max_pages": 20,
+      "preview_timeout_seconds": 5.0,
+      "question_generation_enabled": false,
+      "size_unit": "chars"
+    }
+  },
+  "name": "document_processing",
+  "schema_version": "20260718_processing_trace_v1",
+  "scope": {
+    "compatibility_default": false,
+    "document_ids": [],
+    "knowledge_base_ids": [
+      "2394106ae7554c3fb06c13dbd9539a9f"
+    ],
+    "workspace_id": "default-workspace"
+  },
+  "source": "uploads/2394106ae7554c3fb06c13dbd9539a9f/upload-30b9dc75e54b4588957fd66be527ac43/DH-P7004.txt",
+  "spans": [
+    {
+      "_db_span_id": "abf32a54694a40e08d1f94c5299aa6b3",
+      "duration_ms": 104,
+      "ended_at": "2026-08-02T15:27:01.684Z",
+      "error": null,
+      "input": {
+        "file_name": "DH-P7004.txt",
+        "file_type": "txt",
+        "parser_engine": "builtin",
+        "size": 3302,
+        "source": "uploads/2394106ae7554c3fb06c13dbd9539a9f/upload-30b9dc75e54b4588957fd66be527ac43/DH-P7004.txt"
+      },
+      "name": "load",
+      "output": {
+        "characters": 1844,
+        "doc_id": "61124a8cf56508ab81e7989bfff0696d",
+        "document_metadata": {},
+        "elements": 170,
+        "file_type": "txt",
+        "images": 0,
+        "parsed_markdown_file": "parsed.md",
+        "parser_diagnostics": {
+          "effective_engine": "builtin",
+          "fallback_reason": "",
+          "parse_duration_ms": 14,
+          "parser_name": "BuiltinMarkdownParser",
+          "requested_engine": "builtin",
+          "warnings": []
+        }
+      },
+      "span_id": "9a22e45e63b049258353d1356b524edd",
+      "started_at": "2026-08-02T15:27:01.579Z",
+      "status": "completed"
+    },
+    {
+      "_db_span_id": "6ac3fa752df54ce5ac521ab2d13e62a1",
+      "duration_ms": 82,
+      "ended_at": "2026-08-02T15:27:01.782Z",
+      "error": null,
+      "input": {
+        "child_chunk_overlap_chars": 76,
+        "child_chunk_size_chars": 384,
+        "effective_strategy": "auto",
+        "parent_chunk_size_chars": 4096,
+        "requested_strategy": "auto"
+      },
+      "name": "chunk_strategy",
+      "output": {
+        "by_strategy": {
+          "legacy": 6
+        },
+        "by_type": {
+          "child": 5,
+          "parent": 1
+        },
+        "chunk_count": 6,
+        "chunks_file": "chunks.jsonl",
+        "lengths": {
+          "average": 610.0,
+          "maximum": 1830,
+          "minimum": 328,
+          "oversize_count": 1,
+          "tiny_count": 0
+        },
+        "processing_version": "weknora-adaptive-v1",
+        "tier_chains": [
+          [
+            "legacy"
+          ]
+        ]
+      },
+      "span_id": "10d325228b08479fb1de6e50f2e705bc",
+      "started_at": "2026-08-02T15:27:01.700Z",
+      "status": "completed"
+    },
+    {
+      "_db_span_id": "c5793820f1cc41ceac2e9234f874be80",
+      "duration_ms": 11111,
+      "ended_at": "2026-08-02T15:27:12.907Z",
+      "error": null,
+      "input": {
+        "by_strategy": {
+          "legacy": 6
+        },
+        "by_type": {
+          "child": 5,
+          "parent": 1
+        },
+        "chunk_count": 6,
+        "dense_enabled": false,
+        "doc_id": "61124a8cf56508ab81e7989bfff0696d",
+        "keyword_enabled": false,
+        "lengths": {
+          "average": 610.0,
+          "maximum": 1830,
+          "minimum": 328,
+          "oversize_count": 1,
+          "tiny_count": 0
+        },
+        "tier_chains": [
+          [
+            "legacy"
+          ]
+        ]
+      },
+      "name": "index",
+      "output": {
+        "skip_reason": "dense_and_keyword_disabled",
+        "sqlite_chunks": 6,
+        "vector_chunks": 0
+      },
+      "span_id": "3e1354322111440caf995d34f8a17ff0",
+      "started_at": "2026-08-02T15:27:01.796Z",
+      "status": "skipped"
+    },
+    {
+      "_db_span_id": "3fe65e2aa8804c4eb2003aa4042e23b5",
+      "duration_ms": 78,
+      "ended_at": "2026-08-02T15:27:13.000Z",
+      "error": null,
+      "input": {
+        "caption_enabled": false,
+        "image_count": 0,
+        "ocr_enabled": false
+      },
+      "name": "multimodal",
+      "output": {
+        "image_errors": [],
+        "image_operations": 0,
+        "image_resources": 0,
+        "multimodal": {
+          "canceled": 0,
+          "completed": 0,
+          "errors": [],
+          "failed": 0,
+          "skipped": 0,
+          "total": 0
+        }
+      },
+      "span_id": "caae224c6f0540aaa9225e9aeb0b99ee",
+      "started_at": "2026-08-02T15:27:12.922Z",
+      "status": "completed"
+    },
+    {
+      "_db_span_id": "832f4de042b74fb3a9045aa673d8f42c",
+      "duration_ms": 299,
+      "ended_at": "2026-08-02T15:27:13.315Z",
+      "error": null,
+      "input": {
+        "kg_enabled": false,
+        "wiki_enabled": true
+      },
+      "name": "postprocess",
+      "output": {
+        "enrichment_queued": true,
+        "kg_attempted": false,
+        "wiki_generation": {
+          "page": null,
+          "processing_task": {
+            "attempt": 0,
+            "created_at": "2026-08-02T23:27:13",
+            "document_id": "61124a8cf56508ab81e7989bfff0696d",
+            "finished_at": null,
+            "id": "processing-759852625634ac21526e18b1400556f7",
+            "idempotency_key": "wiki-ingest:2394106ae7554c3fb06c13dbd9539a9f:61124a8cf56508ab81e7989bfff0696d:17aa18a6a11747ca9a9dd9706af9c65d:weknora-adaptive-v1:6",
+            "knowledge_base_id": "2394106ae7554c3fb06c13dbd9539a9f",
+            "last_error_code": "",
+            "last_error_message": "",
+            "lease_expires_at": null,
+            "lease_owner": "",
+            "max_attempts": 3,
+            "next_run_at": "2026-08-02T15:27:43+00:00",
+            "parent_trace_id": "d17406eb02b44effbdedcce7855abfa4",
+            "payload": {
+              "document_id": "61124a8cf56508ab81e7989bfff0696d",
+              "document_revision": "17aa18a6a11747ca9a9dd9706af9c65d:weknora-adaptive-v1:6",
+              "generation_run_id": "wiki-run-e9576033cb4949268dfb5728b709a7eb",
+              "generation_task_id": "wiki-gen-7b4cda3014534abca13c559fb446d98a",
+              "root_trace_id": "d17406eb02b44effbdedcce7855abfa4",
+              "schema_version": 1
+            },
+            "payload_schema_version": 1,
+            "source_revision": "17aa18a6a11747ca9a9dd9706af9c65d:weknora-adaptive-v1:6",
+            "started_at": null,
+            "status": "pending",
+            "task_type": "wiki.ingest",
+            "trace_id": "d17406eb02b44effbdedcce7855abfa4",
+            "updated_at": "2026-08-02T23:27:13",
+            "upload_batch_id": "wiki-run-e9576033cb4949268dfb5728b709a7eb",
+            "upload_file_id": "",
+            "workspace_id": "default-workspace"
+          },
+          "proposal": null,
+          "task": {
+            "attempts": 0,
+            "config": {
+              "document_revision": "17aa18a6a11747ca9a9dd9706af9c65d:weknora-adaptive-v1:6",
+              "enabled": true,
+              "generation_run_id": "wiki-run-e9576033cb4949268dfb5728b709a7eb",
+              "model": "qwen3.5-plus",
+              "pipeline": "map_reduce_v1"
+            },
+            "created_at": "2026-08-02T15:27:13Z",
+            "doc_id": "61124a8cf56508ab81e7989bfff0696d",
+            "error_message": "",
+            "finished_at": "",
+            "id": "wiki-gen-7b4cda3014534abca13c559fb446d98a",
+            "knowledge_base_id": "2394106ae7554c3fb06c13dbd9539a9f",
+            "page_slug": "",
+            "started_at": "",
+            "status": "queued",
+            "updated_at": "2026-08-02T15:27:13Z",
+            "workspace_id": "default-workspace"
+          }
+        }
+      },
+      "span_id": "131f76856902445fa560124a2967a428",
+      "started_at": "2026-08-02T15:27:13.016Z",
+      "status": "completed"
+    }
+  ],
+  "started_at": "2026-08-02T15:27:01.490Z",
+  "status": "completed",
+  "trace_dir": "data\\processing_traces\\20260802\\DH-P7004-17aa18a6a117",
+  "trace_id": "17aa18a6a11747ca9a9dd9706af9c65d"
+}

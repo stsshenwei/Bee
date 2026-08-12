@@ -1,0 +1,123 @@
+{
+  "doc_id": "bc27c2647438a4b64e5ef8097b541a48",
+  "duration_ms": 262,
+  "ended_at": "2026-08-02T15:27:01.149Z",
+  "error": {
+    "message": "database is locked",
+    "traceback": "Traceback (most recent call last):\n  File \"D:\\python_project\\new-rag-project\\backend\\app\\services\\retrieval\\rag_service.py\", line 507, in parse_and_index_document\n    self.document_repository.upsert_document(\n  File \"D:\\python_project\\new-rag-project\\backend\\app\\services\\documents\\document_repository.py\", line 61, in upsert_document\n    conn.execute(\nsqlite3.OperationalError: database is locked\n",
+    "type": "OperationalError"
+  },
+  "file_name": "DH-P7008.txt",
+  "metadata": {
+    "effective_processing": {
+      "caption_enabled": false,
+      "caption_provider": "disabled",
+      "child_chunk_overlap_chars": 76,
+      "child_chunk_size_chars": 384,
+      "chunk_strategy": "auto",
+      "dense_enabled": true,
+      "embedding_token_limit": 0,
+      "graph_enabled": false,
+      "inactive_overrides": [],
+      "keyword_enabled": true,
+      "max_protected_span_chars": 7500,
+      "media_max_bytes": 26214400,
+      "media_storage_dir": "vector_db\\media",
+      "media_storage_provider": "local",
+      "ocr_enabled": false,
+      "ocr_min_confidence": 0.6,
+      "ocr_provider": "disabled",
+      "parent_child_enabled": true,
+      "parent_chunk_size_chars": 4096,
+      "parser_engine": "builtin",
+      "pdf_force_scanned": false,
+      "pdf_jpeg_quality": 90,
+      "pdf_max_image_edge_px": 2400,
+      "pdf_max_pages": 1000,
+      "pdf_render_concurrency": 2,
+      "pdf_render_dpi": 200,
+      "preview_max_chunks": 50,
+      "preview_max_file_bytes": 10485760,
+      "preview_max_pages": 20,
+      "preview_timeout_seconds": 5.0,
+      "processing_version": "weknora-adaptive-v1",
+      "question_generation_enabled": false,
+      "size_unit": "chars",
+      "warnings": []
+    },
+    "extension": ".txt",
+    "file_size": 3332,
+    "requested_processing": {
+      "caption_enabled": false,
+      "caption_provider": "disabled",
+      "child_chunk_overlap_chars": 76,
+      "child_chunk_size_chars": 384,
+      "chunk_strategy": "auto",
+      "dense_enabled": true,
+      "embedding_token_limit": 0,
+      "graph_enabled": false,
+      "keyword_enabled": true,
+      "max_protected_span_chars": 7500,
+      "media_max_bytes": 26214400,
+      "media_storage_dir": "./vector_db/media",
+      "media_storage_provider": "local",
+      "ocr_enabled": false,
+      "ocr_min_confidence": 0.6,
+      "ocr_provider": "docling",
+      "parent_child_enabled": true,
+      "parent_chunk_size_chars": 4096,
+      "parser_engine": "builtin",
+      "pdf_force_scanned": false,
+      "pdf_jpeg_quality": 90,
+      "pdf_max_image_edge_px": 2400,
+      "pdf_max_pages": 1000,
+      "pdf_render_concurrency": 2,
+      "pdf_render_dpi": 200,
+      "preview_max_chunks": 50,
+      "preview_max_file_bytes": 10485760,
+      "preview_max_pages": 20,
+      "preview_timeout_seconds": 5.0,
+      "question_generation_enabled": false,
+      "size_unit": "chars"
+    }
+  },
+  "name": "document_processing",
+  "schema_version": "20260718_processing_trace_v1",
+  "scope": {
+    "compatibility_default": false,
+    "document_ids": [],
+    "knowledge_base_ids": [
+      "2394106ae7554c3fb06c13dbd9539a9f"
+    ],
+    "workspace_id": "default-workspace"
+  },
+  "source": "uploads/2394106ae7554c3fb06c13dbd9539a9f/upload-30b9dc75e54b4588957fd66be527ac43/DH-P7008.txt",
+  "spans": [
+    {
+      "_db_span_id": "6732bad2affc41e8b3a6c7196ff35747",
+      "duration_ms": 54,
+      "ended_at": "2026-08-02T15:27:01.071Z",
+      "error": {
+        "message": "database is locked",
+        "traceback": "Traceback (most recent call last):\n  File \"D:\\python_project\\new-rag-project\\backend\\app\\services\\processing\\processing_trace.py\", line 225, in span\n    yield span\n  File \"D:\\python_project\\new-rag-project\\backend\\app\\services\\retrieval\\rag_service.py\", line 507, in parse_and_index_document\n    self.document_repository.upsert_document(\n  File \"D:\\python_project\\new-rag-project\\backend\\app\\services\\documents\\document_repository.py\", line 61, in upsert_document\n    conn.execute(\nsqlite3.OperationalError: database is locked\n",
+        "type": "OperationalError"
+      },
+      "input": {
+        "file_name": "DH-P7008.txt",
+        "file_type": "txt",
+        "parser_engine": "builtin",
+        "size": 3332,
+        "source": "uploads/2394106ae7554c3fb06c13dbd9539a9f/upload-30b9dc75e54b4588957fd66be527ac43/DH-P7008.txt"
+      },
+      "name": "load",
+      "output": {},
+      "span_id": "a8674c1731dc4b589c3490b93a4f6164",
+      "started_at": "2026-08-02T15:27:01.016Z",
+      "status": "failed"
+    }
+  ],
+  "started_at": "2026-08-02T15:27:00.890Z",
+  "status": "failed",
+  "trace_dir": "data\\processing_traces\\20260802\\DH-P7008-44cdd55e2530",
+  "trace_id": "44cdd55e25304a4b9d6334796f10e592"
+}

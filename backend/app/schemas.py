@@ -10,7 +10,7 @@ class ChatRequest(BaseModel):
     temporary: bool = False
     knowledge_base_id: str | None = None
     knowledge_base_ids: list[str] | None = None
-    chat_mode: Literal["quick", "reasoning"] | None = None
+    chat_mode: Literal["quick", "reasoning", "wiki"] | None = None
     attachment_ids: list[str] | None = None
 
 
@@ -38,6 +38,7 @@ class KnowledgeBaseCreateRequest(BaseModel):
     name: str
     description: str = ""
     type: str = "document"
+    is_default: bool = False
     workspace_id: str | None = None
     indexing_strategy: dict = Field(default_factory=dict)
     provider_config: dict = Field(default_factory=dict)
@@ -46,6 +47,7 @@ class KnowledgeBaseCreateRequest(BaseModel):
 class KnowledgeBaseUpdateRequest(BaseModel):
     name: str | None = None
     description: str | None = None
+    is_default: bool | None = None
     indexing_strategy: dict | None = None
     provider_config: dict | None = None
 
@@ -56,6 +58,7 @@ class KnowledgeBaseResponse(BaseModel):
     name: str
     description: str = ""
     type: str = "document"
+    is_default: bool = False
     status: str = "active"
     indexing_strategy: dict = Field(default_factory=dict)
     provider_config: dict = Field(default_factory=dict)
@@ -66,6 +69,279 @@ class KnowledgeBaseResponse(BaseModel):
 
 class KnowledgeBasesResponse(BaseModel):
     items: list[KnowledgeBaseResponse] = Field(default_factory=list)
+
+
+class WikiSourceRefPayload(BaseModel):
+    doc_id: str
+    chunk_id: str = ""
+    title: str = ""
+
+
+class WikiPageCreateRequest(BaseModel):
+    slug: str = ""
+    title: str
+    page_type: str = "summary"
+    status: str = "draft"
+    content_markdown: str = ""
+    summary: str = ""
+    parent_slug: str = ""
+    folder_id: str = ""
+    category_path: list[str] = Field(default_factory=list)
+    sort_order: int = 0
+    source_refs: list[WikiSourceRefPayload] = Field(default_factory=list)
+    chunk_refs: list[str] = Field(default_factory=list)
+    aliases: list[str] = Field(default_factory=list)
+    metadata: dict = Field(default_factory=dict)
+
+
+class WikiPageUpdateRequest(BaseModel):
+    slug: str | None = None
+    title: str | None = None
+    page_type: str | None = None
+    status: str | None = None
+    content_markdown: str | None = None
+    summary: str | None = None
+    parent_slug: str | None = None
+    folder_id: str | None = None
+    category_path: list[str] | None = None
+    sort_order: int | None = None
+    source_refs: list[WikiSourceRefPayload] | None = None
+    chunk_refs: list[str] | None = None
+    aliases: list[str] | None = None
+    metadata: dict | None = None
+
+
+class WikiPageMoveRequest(BaseModel):
+    folder_id: str = ""
+    category_path: list[str] = Field(default_factory=list)
+
+
+class WikiPageResponse(BaseModel):
+    id: str
+    workspace_id: str
+    knowledge_base_id: str
+    slug: str
+    title: str
+    page_type: str = "summary"
+    status: str = "draft"
+    content_markdown: str = ""
+    summary: str = ""
+    parent_slug: str = ""
+    folder_id: str = ""
+    category_path: list[str] = Field(default_factory=list)
+    wiki_path: str = ""
+    depth: int = 0
+    sort_order: int = 0
+    source_refs: list[dict] = Field(default_factory=list)
+    chunk_refs: list[str] = Field(default_factory=list)
+    in_links: list[str] = Field(default_factory=list)
+    out_links: list[str] = Field(default_factory=list)
+    aliases: list[str] = Field(default_factory=list)
+    metadata: dict = Field(default_factory=dict)
+    version: int = 1
+    created_at: str = ""
+    updated_at: str = ""
+
+
+class WikiPagesResponse(BaseModel):
+    items: list[WikiPageResponse] = Field(default_factory=list)
+    next_cursor: str | None = None
+
+
+class WikiFolderCreateRequest(BaseModel):
+    name: str
+    parent_id: str = ""
+    sort_order: int = 0
+
+
+class WikiFolderUpdateRequest(BaseModel):
+    name: str | None = None
+    parent_id: str | None = None
+    sort_order: int | None = None
+
+
+class WikiFolderResponse(BaseModel):
+    id: str
+    workspace_id: str
+    knowledge_base_id: str
+    parent_id: str = ""
+    name: str
+    path: str
+    depth: int = 0
+    sort_order: int = 0
+    page_count: int = 0
+    created_at: str = ""
+    updated_at: str = ""
+
+
+class WikiFoldersResponse(BaseModel):
+    items: list[WikiFolderResponse] = Field(default_factory=list)
+
+
+class WikiIssueCreateRequest(BaseModel):
+    slug: str
+    issue_type: str = "other"
+    description: str = ""
+    suspected_doc_ids: list[str] = Field(default_factory=list)
+    suspected_chunk_ids: list[str] = Field(default_factory=list)
+    reported_by: str = "user"
+
+
+class WikiIssueUpdateRequest(BaseModel):
+    status: str
+
+
+class WikiIssueResponse(BaseModel):
+    id: str
+    workspace_id: str
+    knowledge_base_id: str
+    slug: str
+    issue_type: str = "other"
+    description: str = ""
+    suspected_doc_ids: list[str] = Field(default_factory=list)
+    suspected_chunk_ids: list[str] = Field(default_factory=list)
+    status: str = "open"
+    reported_by: str = "user"
+    created_at: str = ""
+    updated_at: str = ""
+
+
+class WikiIssuesResponse(BaseModel):
+    items: list[WikiIssueResponse] = Field(default_factory=list)
+
+
+class WikiProposalCreateRequest(BaseModel):
+    action: str
+    slug: str
+    title: str = ""
+    content_markdown: str = ""
+    payload: dict = Field(default_factory=dict)
+    source_refs: list[WikiSourceRefPayload] = Field(default_factory=list)
+    chunk_refs: list[str] = Field(default_factory=list)
+    reason: str = ""
+    created_by: str = "user"
+
+
+class WikiProposalResponse(BaseModel):
+    id: str
+    workspace_id: str
+    knowledge_base_id: str
+    action: str
+    slug: str
+    status: str = "pending"
+    title: str = ""
+    content_markdown: str = ""
+    payload: dict = Field(default_factory=dict)
+    source_refs: list[dict] = Field(default_factory=list)
+    chunk_refs: list[str] = Field(default_factory=list)
+    reason: str = ""
+    created_by: str = "agent"
+    created_at: str = ""
+    updated_at: str = ""
+    applied_at: str = ""
+    rejected_at: str = ""
+
+
+class WikiProposalsResponse(BaseModel):
+    items: list[WikiProposalResponse] = Field(default_factory=list)
+
+
+class WikiProposalApplyResponse(BaseModel):
+    proposal: WikiProposalResponse
+    page: WikiPageResponse | None = None
+
+
+class WikiGenerationRequest(BaseModel):
+    doc_id: str
+    auto_publish: bool | None = None
+    max_source_chunks: int | None = Field(default=None, ge=1, le=20)
+
+
+class WikiGenerationTaskResponse(BaseModel):
+    id: str
+    workspace_id: str
+    knowledge_base_id: str
+    doc_id: str
+    status: str
+    page_slug: str = ""
+    error_message: str = ""
+    config: dict = Field(default_factory=dict)
+    attempts: int = 0
+    created_at: str = ""
+    updated_at: str = ""
+    started_at: str | None = None
+    finished_at: str | None = None
+
+
+class WikiGenerationResponse(BaseModel):
+    task: WikiGenerationTaskResponse
+    page: WikiPageResponse | None = None
+    proposal: WikiProposalResponse | None = None
+
+
+class WikiGenerationTasksResponse(BaseModel):
+    items: list[WikiGenerationTaskResponse] = Field(default_factory=list)
+
+
+class WikiOverviewResponse(BaseModel):
+    page_counts: dict[str, int] = Field(default_factory=dict)
+    system_pages: list[WikiPageResponse] = Field(default_factory=list)
+    open_issue_count: int = 0
+    active_task_count: int = 0
+    task_states: dict[str, int] = Field(default_factory=dict)
+
+
+class WikiLogResponse(BaseModel):
+    id: str
+    event_type: str
+    document_id: str = ""
+    page_slugs: list[str] = Field(default_factory=list)
+    outcome: str = "completed"
+    message: str = ""
+    metadata: dict = Field(default_factory=dict)
+    created_at: str = ""
+
+
+class WikiLogsResponse(BaseModel):
+    items: list[WikiLogResponse] = Field(default_factory=list)
+    next_cursor: int | None = None
+
+
+class WikiProcessingTaskResponse(BaseModel):
+    id: str
+    task_type: str
+    workspace_id: str
+    knowledge_base_id: str
+    document_id: str = ""
+    status: str
+    attempt: int = 0
+    max_attempts: int = 0
+    next_run_at: str = ""
+    last_error_code: str = ""
+    last_error_message: str = ""
+    trace_id: str = ""
+    source_revision: str = ""
+    created_at: str = ""
+    updated_at: str = ""
+    started_at: str | None = None
+    finished_at: str | None = None
+    attempt_history: list[dict] = Field(default_factory=list)
+
+
+class WikiProcessingTasksResponse(BaseModel):
+    items: list[WikiProcessingTaskResponse] = Field(default_factory=list)
+
+
+class WikiGraphResponse(BaseModel):
+    nodes: list[dict] = Field(default_factory=list)
+    edges: list[dict] = Field(default_factory=list)
+    meta: dict = Field(default_factory=dict)
+
+
+class WikiSourceDocRequest(BaseModel):
+    doc_id: str = ""
+    chunk_ids: list[str] = Field(default_factory=list)
+    limit: int = 8
 
 
 class IngestResponse(BaseModel):

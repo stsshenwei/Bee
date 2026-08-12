@@ -132,6 +132,7 @@ class ProcessingTrace:
         self._db_root: ProcessingSpan | None = None
         self._db_attempt = 0
         self._db_stage_by_file_span: dict[str, ProcessingSpan] = {}
+        self._skipped_db_span_ids: set[str] = set()
 
     @classmethod
     def disabled(cls) -> "ProcessingTrace":
@@ -234,11 +235,15 @@ class ProcessingTrace:
                 self.flush()
             raise
         else:
-            span["status"] = "completed"
+            skipped = span.get("status") == "skipped"
+            span["status"] = "skipped" if skipped else "completed"
             span["ended_at"] = _utc_now()
             span["duration_ms"] = int((perf_counter() - clock) * 1000)
             if self.recorder is not None:
-                self.recorder.span_tracker.end_span(db_span, span["output"])
+                if skipped:
+                    self.recorder.span_tracker.skip_span(db_span, span["output"])
+                else:
+                    self.recorder.span_tracker.end_span(db_span, span["output"])
             self._finish_langfuse_span(langfuse_span, output=span["output"], error=None)
             if self.enabled:
                 self.flush()
@@ -253,6 +258,31 @@ class ProcessingTrace:
                 span["output"],
             )
         self.flush()
+
+    def mark_skipped(self, span: dict[str, Any], *, reason: str, output: dict[str, Any] | None = None) -> None:
+        if not self.enabled:
+            return
+        span["status"] = "skipped"
+        span["output"] = _jsonable({"skip_reason": reason, **(output or {})})
+        if self.recorder is not None:
+            self.recorder.span_tracker.update_output(
+                self._db_stage_by_file_span.get(str(span.get("span_id") or "")),
+                span["output"],
+            )
+        self.flush()
+
+    def mark_db_subspan_skipped(
+        self,
+        span: ProcessingSpan | None,
+        *,
+        reason: str,
+        output: dict[str, Any] | None = None,
+    ) -> None:
+        if span is None or self.recorder is None:
+            return
+        payload = {"skip_reason": reason, **(output or {})}
+        self._skipped_db_span_ids.add(span.span_id)
+        self.recorder.span_tracker.skip_span(span, payload)
 
     @contextmanager
     def db_subspan(
@@ -282,7 +312,10 @@ class ProcessingTrace:
             raise
         else:
             if self.recorder is not None:
-                self.recorder.span_tracker.end_span(db_span)
+                if db_span is None or db_span.span_id not in self._skipped_db_span_ids:
+                    self.recorder.span_tracker.end_span(db_span)
+                elif db_span is not None:
+                    self._skipped_db_span_ids.discard(db_span.span_id)
 
     def write_text(self, filename: str, text: str) -> str:
         if not self.enabled:

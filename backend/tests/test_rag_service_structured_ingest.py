@@ -158,6 +158,11 @@ class FakeVectorStore:
     def reset_collection(self):
         self.indexed = []
 
+    def delete_document(self, doc_id, scope=None):
+        self.replaced_doc_ids.append(doc_id)
+        self.replace_scopes.append(scope)
+        self.indexed = [chunk for chunk in self.indexed if chunk.doc_id != doc_id]
+
     def query(self, question, top_k):
         return []
 
@@ -262,6 +267,15 @@ class ScopeCapturingEnrichmentService:
         self.calls.append({"doc_id": doc_id, "chunks": list(chunks), "scope": scope})
 
 
+class ScopeCapturingWikiService:
+    def __init__(self):
+        self.calls = []
+
+    def generate_draft_for_document(self, scope, doc_id):
+        self.calls.append({"doc_id": doc_id, "scope": scope})
+        return {"task": {"status": "completed"}, "page": None, "proposal": None}
+
+
 def make_service(
     tmp,
     repo,
@@ -339,6 +353,69 @@ class RAGServiceStructuredIngestTests(unittest.TestCase):
             self.assertEqual("child", vector.indexed[0].chunk_type)
             self.assertEqual(["doc-1"], vector.replaced_doc_ids)
 
+    def test_wiki_only_processing_persists_chunks_and_skips_vector_index(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "rag.sqlite3"
+            repo = DocumentRepository(db_path)
+            knowledge_bases = KnowledgeBaseService(KnowledgeBaseRepository(db_path))
+            wiki = knowledge_bases.create("Wiki KB", knowledge_base_type="wiki")
+            scope = knowledge_bases.resolve_scope([wiki.id])
+            vector = FakeVectorStore(Path(tmp) / "vector")
+            service = make_service(tmp, repo, vector, FakeParser(), knowledge_base_service=knowledge_bases)
+            file_path = Path(tmp) / "manual.md"
+            file_path.write_text("# Manual\nBody", encoding="utf-8")
+
+            result = service.parse_and_index_document(file_path, scope=scope)
+
+            self.assertEqual(0, result["indexed_chunks"])
+            self.assertGreater(result["persisted_chunks"], 0)
+            self.assertEqual("parent", repo.get_chunk("p1", scope)["chunk_type"])
+            self.assertEqual([], vector.indexed)
+            trace = json.loads((Path(result["processing_trace_dir"]) / "trace.json").read_text(encoding="utf-8"))
+            embedding = next(span for span in trace["spans"] if span["name"] == "index")
+            self.assertEqual("skipped", embedding["status"])
+            self.assertEqual("dense_and_keyword_disabled", embedding["output"]["skip_reason"])
+
+    def test_processing_stages_follow_each_indexing_strategy_combination(self):
+        cases = {
+            "wiki-only": ({"dense_enabled": False, "keyword_enabled": False, "graph_enabled": False, "wiki_enabled": True}, False, False, True),
+            "vector-only": ({"dense_enabled": True, "keyword_enabled": False, "graph_enabled": False, "wiki_enabled": False}, True, False, False),
+            "keyword-only": ({"dense_enabled": False, "keyword_enabled": True, "graph_enabled": False, "wiki_enabled": False}, True, False, False),
+            "graph-only": ({"dense_enabled": False, "keyword_enabled": False, "graph_enabled": True, "wiki_enabled": False}, False, True, False),
+            "combined": ({"dense_enabled": True, "keyword_enabled": True, "graph_enabled": True, "wiki_enabled": True}, True, True, True),
+        }
+
+        for name, (strategy, expects_vectors, expects_graph, expects_wiki) in cases.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                db_path = Path(tmp) / "rag.sqlite3"
+                repo = DocumentRepository(db_path)
+                knowledge_bases = KnowledgeBaseService(KnowledgeBaseRepository(db_path))
+                knowledge_base = knowledge_bases.create(name, indexing_strategy=strategy)
+                scope = knowledge_bases.resolve_scope([knowledge_base.id])
+                vector = FakeVectorStore(Path(tmp) / "vector")
+                graph = ScopeCapturingKGService()
+                wiki = ScopeCapturingWikiService()
+                service = make_service(
+                    tmp,
+                    repo,
+                    vector,
+                    FakeParser(),
+                    knowledge_base_service=knowledge_bases,
+                    kg_service=graph,
+                    kg_enabled=False,
+                )
+                service.wiki_page_service = wiki
+                file_path = Path(tmp) / "manual.md"
+                file_path.write_text("# Manual\nBody", encoding="utf-8")
+
+                result = service.parse_and_index_document(file_path, scope=scope)
+
+                self.assertEqual(expects_vectors, bool(vector.indexed))
+                self.assertEqual(expects_vectors, result["indexed_chunks"] > 0)
+                self.assertEqual(expects_graph, bool(graph.calls))
+                self.assertEqual(expects_wiki, bool(wiki.calls))
+                self.assertGreater(result["persisted_chunks"], 0)
+
     def test_parse_and_index_document_writes_processing_trace_files(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = DocumentRepository(Path(tmp) / "rag.sqlite3")
@@ -400,7 +477,12 @@ class RAGServiceStructuredIngestTests(unittest.TestCase):
             self.assertEqual(["chunk_strategy_attempt"], [span["name"] for span in stages["chunking"]["children"]])
             self.assertEqual(["embedding_batch"], [span["name"] for span in stages["embedding"]["children"]])
             self.assertEqual(["multimodal_provider_calls"], [span["name"] for span in stages["multimodal"]["children"]])
-            self.assertEqual(["graph_extraction"], [span["name"] for span in stages["postprocess"]["children"]])
+            postprocess_children = {span["name"]: span for span in stages["postprocess"]["children"]}
+            self.assertEqual({"graph_extraction", "wiki_enqueue"}, set(postprocess_children))
+            self.assertEqual("skipped", postprocess_children["graph_extraction"]["status"])
+            self.assertEqual("graph_disabled_by_strategy", postprocess_children["graph_extraction"]["output"]["skip_reason"])
+            self.assertEqual("skipped", postprocess_children["wiki_enqueue"]["status"])
+            self.assertEqual("wiki_disabled_by_strategy", postprocess_children["wiki_enqueue"]["output"]["skip_reason"])
 
     def test_parse_failure_writes_processing_traceback(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -993,7 +1075,7 @@ class RAGServiceStructuredIngestTests(unittest.TestCase):
             db_path = Path(tmp) / "rag.sqlite3"
             repo = DocumentRepository(db_path)
             knowledge_bases = KnowledgeBaseService(KnowledgeBaseRepository(db_path))
-            custom = knowledge_bases.create("Scoped KB")
+            custom = knowledge_bases.create("Scoped KB", indexing_strategy={"graph_enabled": True})
             custom_scope = knowledge_bases.resolve_scope([custom.id])
             vector = FakeVectorStore(Path(tmp) / "vector")
             kg_service = ScopeCapturingKGService()

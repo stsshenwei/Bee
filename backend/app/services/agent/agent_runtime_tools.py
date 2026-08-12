@@ -594,6 +594,362 @@ class QueryKnowledgeGraphTool:
         )
 
 
+class WikiSearchTool:
+    name = "wiki_search"
+    execution_class = ToolExecutionClass.PARALLEL_SAFE
+    description = "Search LLM Wiki pages in the selected knowledge base. Use wiki_read_page before relying on a Wiki result."
+    parameters = {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string"},
+            "top_k": {"type": "integer", "minimum": 1, "maximum": 20},
+            "status": {"type": "string", "enum": ["published", "draft", "stale", ""]},
+        },
+        "required": ["query"],
+        "additionalProperties": False,
+    }
+
+    def __init__(self, *, enabled: bool = False):
+        self.enabled = enabled
+
+    def execute(self, arguments: dict[str, Any], context: RuntimeToolContext) -> RuntimeToolResult:
+        service = _wiki_service_from_context(context, self.name, self.enabled)
+        if not service:
+            return _unavailable(self.name, "Wiki tools are disabled or the Wiki service is unavailable.")
+        query = str(arguments.get("query") or context.question).strip()
+        top_k = min(20, max(1, int(arguments.get("top_k") or 8)))
+        status = str(arguments.get("status") if arguments.get("status") is not None else "published")
+        items = service.search_pages(context.scope, query, limit=top_k, status=status)
+        page_ids = [str(item.get("page_id") or "") for item in items if item.get("page_id")]
+        titles = [str(item.get("title") or item.get("slug") or "") for item in items if item.get("title") or item.get("slug")]
+        return RuntimeToolResult(
+            success=True,
+            output=json.dumps({"query": query, "results": items}, ensure_ascii=False),
+            observation=f"Wiki search returned {len(items)} pages.",
+            metadata={"result_count": len(items), "query": query, "status_filter": status},
+            candidate_ids=page_ids,
+            source_titles=titles,
+            state_delta=RuntimeStateDelta(
+                candidate_ids=page_ids,
+                source_titles=titles,
+                flags={"wiki_search_performed": True},
+            ),
+        )
+
+
+class WikiReadPageTool:
+    name = "wiki_read_page"
+    execution_class = ToolExecutionClass.PARALLEL_SAFE
+    description = "Deep-read a Wiki page by slug, including Markdown, links, source refs, chunk refs, and optional bounded index."
+    parameters = {
+        "type": "object",
+        "properties": {
+            "slug": {"type": "string"},
+            "include_index": {"type": "boolean"},
+            "index_limit": {"type": "integer", "minimum": 1, "maximum": 50},
+        },
+        "required": ["slug"],
+        "additionalProperties": False,
+    }
+
+    def __init__(self, *, enabled: bool = False):
+        self.enabled = enabled
+
+    def execute(self, arguments: dict[str, Any], context: RuntimeToolContext) -> RuntimeToolResult:
+        service = _wiki_service_from_context(context, self.name, self.enabled)
+        if not service:
+            return _unavailable(self.name, "Wiki tools are disabled or the Wiki service is unavailable.")
+        slug = str(arguments.get("slug") or "").strip()
+        page = service.get_page(context.scope, slug).to_dict()
+        payload: dict[str, Any] = {"page": page}
+        if bool(arguments.get("include_index")):
+            payload["index"] = service.list_pages(context.scope, limit=int(arguments.get("index_limit") or 20))["items"]
+        source_ids = [str(ref.get("chunk_id") or ref.get("doc_id") or "") for ref in page.get("source_refs", []) if ref]
+        source_ids.extend(page.get("chunk_refs") or [])
+        source_ids.append(str(page.get("id") or ""))
+        return RuntimeToolResult(
+            success=True,
+            output=json.dumps(payload, ensure_ascii=False),
+            observation=f"Read Wiki page: {page.get('title') or slug}",
+            metadata={
+                "slug": page.get("slug"),
+                "status": page.get("status"),
+                "version": page.get("version"),
+                "source_ref_count": len(page.get("source_refs") or []),
+            },
+            source_chunk_ids=list(dict.fromkeys(item for item in source_ids if item)),
+            source_titles=[str(page.get("title") or page.get("slug") or "")],
+            deep_read=True,
+            state_delta=RuntimeStateDelta(
+                deep_read_ids=[str(page.get("id") or page.get("slug") or "")],
+                source_titles=[str(page.get("title") or page.get("slug") or "")],
+                flags={"wiki_page_read": True},
+            ),
+        )
+
+
+class WikiReadSourceDocTool:
+    name = "wiki_read_source_doc"
+    execution_class = ToolExecutionClass.PARALLEL_SAFE
+    description = "Deep-read raw source document chunks referenced by Wiki pages. Prefer this for exact quotes, numbers, code, and tables."
+    parameters = {
+        "type": "object",
+        "properties": {
+            "doc_id": {"type": "string"},
+            "chunk_ids": {"type": "array", "items": {"type": "string"}},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+        },
+        "additionalProperties": False,
+    }
+
+    def __init__(self, *, enabled: bool = False):
+        self.enabled = enabled
+
+    def execute(self, arguments: dict[str, Any], context: RuntimeToolContext) -> RuntimeToolResult:
+        service = _wiki_service_from_context(context, self.name, self.enabled)
+        if not service:
+            return _unavailable(self.name, "Wiki tools are disabled or the Wiki service is unavailable.")
+        payload = service.read_source_doc(
+            context.scope,
+            doc_id=str(arguments.get("doc_id") or ""),
+            chunk_ids=_string_list(arguments.get("chunk_ids")),
+            limit=min(20, max(1, int(arguments.get("limit") or 8))),
+        )
+        chunk_ids = [str(item.get("chunk_id") or "") for item in payload.get("chunks", []) if item.get("chunk_id")]
+        doc = payload.get("document") or {}
+        titles = [str(doc.get("name") or doc.get("storage_path") or "")] if doc else []
+        return RuntimeToolResult(
+            success=True,
+            output=json.dumps(payload, ensure_ascii=False),
+            observation=f"Read {len(payload.get('chunks', []) or [])} raw source chunks for Wiki.",
+            metadata={"chunk_count": len(payload.get("chunks", []) or []), "doc_id": arguments.get("doc_id") or ""},
+            source_chunk_ids=chunk_ids,
+            source_titles=[title for title in titles if title],
+            deep_read=bool(chunk_ids),
+            state_delta=RuntimeStateDelta(deep_read_ids=chunk_ids, source_titles=[title for title in titles if title]),
+        )
+
+
+class WikiFlagIssueTool:
+    name = "wiki_flag_issue"
+    execution_class = ToolExecutionClass.SERIAL
+    description = "Flag a Wiki page issue such as missing source, outdated content, contradiction, or incorrect summary."
+    parameters = {
+        "type": "object",
+        "properties": {
+            "slug": {"type": "string"},
+            "issue_type": {"type": "string", "enum": ["incorrect", "outdated", "missing_source", "conflict", "other"]},
+            "description": {"type": "string"},
+            "suspected_doc_ids": {"type": "array", "items": {"type": "string"}},
+            "suspected_chunk_ids": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["slug", "description"],
+        "additionalProperties": False,
+    }
+
+    def __init__(self, *, enabled: bool = False):
+        self.enabled = enabled
+
+    def execute(self, arguments: dict[str, Any], context: RuntimeToolContext) -> RuntimeToolResult:
+        service = _wiki_service_from_context(context, self.name, self.enabled)
+        if not service:
+            return _unavailable(self.name, "Wiki tools are disabled or the Wiki service is unavailable.")
+        issue = service.create_issue(context.scope, {**arguments, "reported_by": "agent"}).to_dict()
+        return RuntimeToolResult(
+            success=True,
+            output=json.dumps({"issue": issue}, ensure_ascii=False),
+            observation=f"Flagged Wiki issue {issue['id']} for {issue['slug']}.",
+            metadata={"issue_id": issue["id"], "slug": issue["slug"], "status": issue["status"]},
+        )
+
+
+class WikiReadIssueTool:
+    name = "wiki_read_issue"
+    execution_class = ToolExecutionClass.PARALLEL_SAFE
+    description = "Read one Wiki issue by id, or list bounded issues by slug/status."
+    parameters = {
+        "type": "object",
+        "properties": {
+            "issue_id": {"type": "string"},
+            "slug": {"type": "string"},
+            "status": {"type": "string", "enum": ["open", "resolved", "wontfix", ""]},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+        },
+        "additionalProperties": False,
+    }
+
+    def __init__(self, *, enabled: bool = False):
+        self.enabled = enabled
+
+    def execute(self, arguments: dict[str, Any], context: RuntimeToolContext) -> RuntimeToolResult:
+        service = _wiki_service_from_context(context, self.name, self.enabled)
+        if not service:
+            return _unavailable(self.name, "Wiki tools are disabled or the Wiki service is unavailable.")
+        issue_id = str(arguments.get("issue_id") or "").strip()
+        if issue_id:
+            payload = {"issue": service.get_issue(context.scope, issue_id).to_dict()}
+        else:
+            payload = {
+                "issues": service.list_issues(
+                    context.scope,
+                    slug=str(arguments.get("slug") or ""),
+                    status=str(arguments.get("status") if arguments.get("status") is not None else "open"),
+                    limit=int(arguments.get("limit") or 20),
+                )
+            }
+        count = 1 if "issue" in payload else len(payload.get("issues", []))
+        return RuntimeToolResult(
+            success=True,
+            output=json.dumps(payload, ensure_ascii=False),
+            observation=f"Read {count} Wiki issue records.",
+            metadata={"issue_count": count},
+        )
+
+
+class WikiUpdateIssueTool:
+    name = "wiki_update_issue"
+    execution_class = ToolExecutionClass.SERIAL
+    description = "Update a Wiki issue status after it has been resolved or rejected."
+    parameters = {
+        "type": "object",
+        "properties": {
+            "issue_id": {"type": "string"},
+            "status": {"type": "string", "enum": ["open", "resolved", "wontfix"]},
+        },
+        "required": ["issue_id", "status"],
+        "additionalProperties": False,
+    }
+
+    def __init__(self, *, enabled: bool = False):
+        self.enabled = enabled
+
+    def execute(self, arguments: dict[str, Any], context: RuntimeToolContext) -> RuntimeToolResult:
+        service = _wiki_service_from_context(context, self.name, self.enabled)
+        if not service:
+            return _unavailable(self.name, "Wiki maintenance tools are disabled or the Wiki service is unavailable.")
+        issue = service.update_issue_status(context.scope, str(arguments.get("issue_id") or ""), str(arguments.get("status") or "")).to_dict()
+        return RuntimeToolResult(
+            success=True,
+            output=json.dumps({"issue": issue}, ensure_ascii=False),
+            observation=f"Updated Wiki issue {issue['id']} to {issue['status']}.",
+            metadata={"issue_id": issue["id"], "status": issue["status"]},
+        )
+
+
+class WikiProposalTool:
+    execution_class = ToolExecutionClass.SERIAL
+    action = "write_page"
+
+    def __init__(self, *, enabled: bool = False):
+        self.enabled = enabled
+
+    def _create(self, arguments: dict[str, Any], context: RuntimeToolContext) -> RuntimeToolResult:
+        service = _wiki_service_from_context(context, self.name, self.enabled)
+        if not service:
+            return _unavailable(self.name, "Wiki maintenance tools are disabled or the Wiki service is unavailable.")
+        proposal = service.create_proposal(
+            context.scope,
+            {
+                **arguments,
+                "action": self.action,
+                "created_by": "agent",
+                "payload": self._payload(arguments),
+            },
+        ).to_dict()
+        return RuntimeToolResult(
+            success=True,
+            output=json.dumps({"proposal": proposal}, ensure_ascii=False),
+            observation=f"Created Wiki proposal {proposal['id']} ({proposal['action']}).",
+            metadata={"proposal_id": proposal["id"], "action": proposal["action"], "status": proposal["status"]},
+        )
+
+    def _payload(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        return dict(arguments)
+
+
+class WikiWritePageTool(WikiProposalTool):
+    name = "wiki_write_page"
+    action = "write_page"
+    description = "Create a proposal to write or update a Wiki page. Does not directly modify published Wiki content."
+    parameters = {
+        "type": "object",
+        "properties": {
+            "slug": {"type": "string"},
+            "title": {"type": "string"},
+            "content_markdown": {"type": "string"},
+            "summary": {"type": "string"},
+            "page_type": {"type": "string", "enum": ["summary", "entity", "concept", "synthesis", "manual"]},
+            "status": {"type": "string", "enum": ["draft", "published", "stale"]},
+            "source_refs": {"type": "array", "items": {"type": "object"}},
+            "chunk_refs": {"type": "array", "items": {"type": "string"}},
+            "reason": {"type": "string"},
+        },
+        "required": ["slug", "title", "content_markdown"],
+        "additionalProperties": False,
+    }
+
+    def execute(self, arguments: dict[str, Any], context: RuntimeToolContext) -> RuntimeToolResult:
+        return self._create(arguments, context)
+
+
+class WikiReplaceTextTool(WikiProposalTool):
+    name = "wiki_replace_text"
+    action = "replace_text"
+    description = "Create a proposal to replace exact text in a Wiki page. Does not directly mutate the page."
+    parameters = {
+        "type": "object",
+        "properties": {
+            "slug": {"type": "string"},
+            "old_text": {"type": "string"},
+            "new_text": {"type": "string"},
+            "reason": {"type": "string"},
+        },
+        "required": ["slug", "old_text", "new_text"],
+        "additionalProperties": False,
+    }
+
+    def execute(self, arguments: dict[str, Any], context: RuntimeToolContext) -> RuntimeToolResult:
+        return self._create(arguments, context)
+
+
+class WikiRenamePageTool(WikiProposalTool):
+    name = "wiki_rename_page"
+    action = "rename_page"
+    description = "Create a proposal to rename a Wiki page slug and/or title."
+    parameters = {
+        "type": "object",
+        "properties": {
+            "slug": {"type": "string"},
+            "new_slug": {"type": "string"},
+            "title": {"type": "string"},
+            "reason": {"type": "string"},
+        },
+        "required": ["slug", "new_slug"],
+        "additionalProperties": False,
+    }
+
+    def execute(self, arguments: dict[str, Any], context: RuntimeToolContext) -> RuntimeToolResult:
+        return self._create(arguments, context)
+
+
+class WikiDeletePageTool(WikiProposalTool):
+    name = "wiki_delete_page"
+    action = "delete_page"
+    description = "Create a proposal to archive/delete a Wiki page."
+    parameters = {
+        "type": "object",
+        "properties": {
+            "slug": {"type": "string"},
+            "reason": {"type": "string"},
+        },
+        "required": ["slug"],
+        "additionalProperties": False,
+    }
+
+    def execute(self, arguments: dict[str, Any], context: RuntimeToolContext) -> RuntimeToolResult:
+        return self._create(arguments, context)
+
+
 class ReadSkillTool:
     name = "read_skill"
     execution_class = ToolExecutionClass.PARALLEL_SAFE
@@ -874,6 +1230,8 @@ def build_default_tool_registry(
     data_analysis_enabled: bool = False,
     database_query_enabled: bool = False,
     database_allowed_sources: dict[str, str] | None = None,
+    wiki_tools_enabled: bool = False,
+    wiki_maintenance_tools_enabled: bool = False,
 ) -> ToolRegistry:
     registry = ToolRegistry(max_output_chars=max_output_chars)
     available: dict[str, RuntimeTool] = {
@@ -900,6 +1258,16 @@ def build_default_tool_registry(
             enabled=database_query_enabled,
             allowed_sources=database_allowed_sources,
         ),
+        "wiki_search": WikiSearchTool(enabled=wiki_tools_enabled),
+        "wiki_read_page": WikiReadPageTool(enabled=wiki_tools_enabled),
+        "wiki_read_source_doc": WikiReadSourceDocTool(enabled=wiki_tools_enabled),
+        "wiki_flag_issue": WikiFlagIssueTool(enabled=wiki_tools_enabled),
+        "wiki_read_issue": WikiReadIssueTool(enabled=wiki_tools_enabled),
+        "wiki_update_issue": WikiUpdateIssueTool(enabled=wiki_maintenance_tools_enabled),
+        "wiki_write_page": WikiWritePageTool(enabled=wiki_maintenance_tools_enabled),
+        "wiki_replace_text": WikiReplaceTextTool(enabled=wiki_maintenance_tools_enabled),
+        "wiki_rename_page": WikiRenamePageTool(enabled=wiki_maintenance_tools_enabled),
+        "wiki_delete_page": WikiDeletePageTool(enabled=wiki_maintenance_tools_enabled),
         "execute_skill": ExecuteSkillTool(),
     }
     if skills_enabled:
@@ -918,6 +1286,16 @@ def _unavailable(tool_name: str, reason: str) -> RuntimeToolResult:
         observation=reason,
         metadata={"tool": tool_name, "status": "unavailable", "reason": reason},
     )
+
+
+def _wiki_service_from_context(context: RuntimeToolContext, tool_name: str, enabled: bool):
+    if not enabled:
+        return None
+    service = getattr(context.rag_service, "wiki_page_service", None)
+    if service is None:
+        logger.info("agent_runtime.wiki_tool.unavailable", extra={"tool": tool_name, "trace_id": get_trace_id()})
+        return None
+    return service
 
 
 def _host_allowed(host: str, allowed_domains: tuple[str, ...]) -> bool:

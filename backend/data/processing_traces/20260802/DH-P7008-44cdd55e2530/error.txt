@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "D:\python_project\new-rag-project\backend\app\services\retrieval\rag_service.py", line 507, in parse_and_index_document
+    self.document_repository.upsert_document(
+  File "D:\python_project\new-rag-project\backend\app\services\documents\document_repository.py", line 61, in upsert_document
+    conn.execute(
+sqlite3.OperationalError: database is locked

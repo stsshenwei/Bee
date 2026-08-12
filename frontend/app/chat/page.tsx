@@ -11,7 +11,7 @@ import { API_BASE, listKnowledgeBaseDocuments, listKnowledgeBases, uploadChatAtt
 import { buildAgentTimeline, deriveAgentRunSummary, deriveSearchSummary, normalizeAgentPayload } from "../lib/agent-stream";
 import type { AgentStreamEvent, ChatAttachment, ChatMessage, FeedbackState, KnowledgeBase, MemoryRecord, MemoryUpdate, ReasoningSummary, SourceItem } from "../lib/types";
 
-type ChatMode = "quick" | "reasoning";
+type ChatMode = "quick" | "reasoning" | "wiki";
 
 export default function ChatPage() {
   const endRef = useRef<HTMLDivElement | null>(null);
@@ -505,7 +505,6 @@ export default function ChatPage() {
           const canFeedback = message.role === "assistant" && message.content.trim().length > 0 && Boolean(message.agentCompleted) && !isStreamingAssistant;
           return (
             <article key={index} className={`message-row ${message.role}`}>
-              {message.role === "assistant" ? <span className="message-avatar bot">B</span> : null}
               <div className="message-content">
                 {message.agentEvents?.length ? (
                   <AgentTimeline message={message} streaming={loading && index === messages.length - 1 && !message.agentCompleted} />
@@ -521,7 +520,7 @@ export default function ChatPage() {
 
                 {message.role === "user" && (message.chatMode || message.attachments?.length) ? (
                   <div className="message-meta-row">
-                    {message.chatMode ? <span>{message.chatMode === "reasoning" ? "智能推理" : "快速问答"}</span> : null}
+                    {message.chatMode ? <span>{chatModeLabel(message.chatMode)}</span> : null}
                     {message.attachments?.map((attachment) => (
                       <span key={attachment.id}>附件：{attachment.filename}</span>
                     ))}
@@ -581,7 +580,6 @@ export default function ChatPage() {
                   </section>
                 ) : null}
               </div>
-              {message.role === "user" ? <span className="message-avatar user">我</span> : null}
             </article>
           );
         })}
@@ -625,7 +623,7 @@ export default function ChatPage() {
               aria-label="回答模式"
               onClick={() => setModeMenuOpen((open) => !open)}
             >
-              {chatMode === "reasoning" ? "智能推理" : "快速问答"}
+              {chatModeLabel(chatMode)}
             </button>
             {modeMenuOpen ? (
               <div className="composer-mode-menu" role="menu">
@@ -652,6 +650,18 @@ export default function ChatPage() {
                   }}
                 >
                   智能推理
+                </button>
+                <button
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={chatMode === "wiki"}
+                  className={chatMode === "wiki" ? "active" : ""}
+                  onClick={() => {
+                    setChatMode("wiki");
+                    setModeMenuOpen(false);
+                  }}
+                >
+                  Wiki 问答
                 </button>
               </div>
             ) : null}
@@ -775,7 +785,20 @@ function summaryIcon(status: ReturnType<typeof deriveSearchSummary>["status"]): 
   return "✓";
 }
 
+function chatModeLabel(mode: ChatMode): string {
+  if (mode === "reasoning") return "智能推理";
+  if (mode === "wiki") return "Wiki 问答";
+  return "快速问答";
+}
+
 const markdownComponents: Components = {
+  table({ children }) {
+    return (
+      <div className="markdown-table-wrap">
+        <table>{children}</table>
+      </div>
+    );
+  },
   code({ className, children, ...props }) {
     const code = String(children).replace(/\n$/, "");
     const language = /language-(\w+)/.exec(className || "")?.[1];

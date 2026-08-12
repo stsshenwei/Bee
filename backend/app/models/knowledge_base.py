@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 WorkspaceStatus = Literal["active", "archived"]
 KnowledgeBaseStatus = Literal["active", "archived"]
-KnowledgeBaseType = Literal["document"]
+KnowledgeBaseType = Literal["document", "faq", "wiki"]
 
 
 @dataclass(frozen=True)
@@ -28,6 +28,17 @@ class IndexingStrategy:
     dense_enabled: bool = True
     keyword_enabled: bool = True
     graph_enabled: bool = False
+    wiki_enabled: bool = False
+    wiki_generation_enabled: bool = True
+    wiki_auto_publish_enabled: bool = False
+
+    @property
+    def needs_embedding(self) -> bool:
+        return self.dense_enabled or self.keyword_enabled
+
+    @property
+    def needs_chunks(self) -> bool:
+        return self.needs_embedding or self.graph_enabled or self.wiki_enabled
 
     def to_dict(self) -> dict[str, bool]:
         return asdict(self)
@@ -39,7 +50,23 @@ class IndexingStrategy:
             dense_enabled=bool(value.get("dense_enabled", True)),
             keyword_enabled=bool(value.get("keyword_enabled", True)),
             graph_enabled=bool(value.get("graph_enabled", False)),
+            wiki_enabled=bool(value.get("wiki_enabled", False)),
+            wiki_generation_enabled=bool(value.get("wiki_generation_enabled", True)),
+            wiki_auto_publish_enabled=bool(value.get("wiki_auto_publish_enabled", False)),
         )
+
+    @classmethod
+    def default_for_type(cls, knowledge_base_type: str) -> IndexingStrategy:
+        if str(knowledge_base_type or "").strip().lower() == "wiki":
+            return cls(
+                dense_enabled=False,
+                keyword_enabled=False,
+                graph_enabled=False,
+                wiki_enabled=True,
+                wiki_generation_enabled=True,
+                wiki_auto_publish_enabled=False,
+            )
+        return cls()
 
 
 @dataclass(frozen=True)
@@ -79,6 +106,8 @@ class KnowledgeBaseAggregate:
     indexed_chunk_count: int = 0
     processing_count: int = 0
     failed_count: int = 0
+    wiki_page_count: int = 0
+    wiki_issue_count: int = 0
     reset_required: bool = False
 
     def to_dict(self) -> dict[str, Any]:
@@ -92,6 +121,7 @@ class KnowledgeBase:
     name: str
     description: str = ""
     type: KnowledgeBaseType = "document"
+    is_default: bool = False
     status: KnowledgeBaseStatus = "active"
     indexing_strategy: IndexingStrategy = field(default_factory=IndexingStrategy)
     provider_config: EffectiveKnowledgeBaseConfig = field(default_factory=EffectiveKnowledgeBaseConfig)
@@ -106,6 +136,7 @@ class KnowledgeBase:
             "name": self.name,
             "description": self.description,
             "type": self.type,
+            "is_default": self.is_default,
             "status": self.status,
             "indexing_strategy": self.indexing_strategy.to_dict(),
             "provider_config": self.provider_config.to_dict(),

@@ -22,6 +22,7 @@ class KnowledgeBaseRepositoryTests(unittest.TestCase):
 
             self.assertEqual("default-workspace", workspace.id)
             self.assertEqual("default-knowledge-base", knowledge_base.id)
+            self.assertTrue(knowledge_base.is_default)
             self.assertEqual(1, len(second.list_knowledge_bases("default-workspace")))
             with sqlite3.connect(path) as conn:
                 versions = conn.execute(
@@ -141,11 +142,12 @@ class KnowledgeBaseRepositoryTests(unittest.TestCase):
             self.assertIsNone(default_workspace)
             self.assertIsNone(schema)
 
-    def test_service_rejects_duplicate_empty_and_unsupported_type(self):
+    def test_service_rejects_duplicate_empty_and_unknown_type(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "metadata.sqlite3"
             DocumentRepository(path)
             service = KnowledgeBaseService(KnowledgeBaseRepository(path))
+            faq = service.create("FAQ", knowledge_base_type="faq")
             service.create("研发")
 
             with self.assertRaises(KnowledgeBaseValidationError):
@@ -153,7 +155,72 @@ class KnowledgeBaseRepositoryTests(unittest.TestCase):
             with self.assertRaises(KnowledgeBaseValidationError):
                 service.create("  ")
             with self.assertRaises(KnowledgeBaseValidationError):
-                service.create("FAQ", knowledge_base_type="faq")
+                service.create("Future", knowledge_base_type="future")
+            self.assertEqual("faq", faq.type)
+
+    def test_wiki_creation_uses_preset_but_preserves_explicit_combined_strategy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "metadata.sqlite3"
+            service = KnowledgeBaseService(KnowledgeBaseRepository(path))
+
+            wiki_only = service.create("Wiki only", knowledge_base_type="wiki")
+            combined = service.create(
+                "Combined Wiki",
+                knowledge_base_type="wiki",
+                indexing_strategy={"wiki_enabled": True, "dense_enabled": True, "keyword_enabled": False},
+            )
+
+            self.assertTrue(wiki_only.indexing_strategy.wiki_enabled)
+            self.assertFalse(wiki_only.indexing_strategy.needs_embedding)
+            self.assertTrue(combined.indexing_strategy.dense_enabled)
+            self.assertFalse(combined.indexing_strategy.keyword_enabled)
+
+    def test_wiki_migration_repairs_flag_without_disabling_existing_indexes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "metadata.sqlite3"
+            service = KnowledgeBaseService(KnowledgeBaseRepository(path))
+            wiki = service.create(
+                "Legacy Wiki",
+                knowledge_base_type="wiki",
+                indexing_strategy={"wiki_enabled": True, "dense_enabled": True, "keyword_enabled": True, "graph_enabled": True},
+            )
+            conn = sqlite3.connect(path)
+            try:
+                conn.execute(
+                    "update knowledge_base set indexing_strategy_json = ? where id = ?",
+                    (json.dumps({"wiki_enabled": False, "dense_enabled": True, "keyword_enabled": True, "graph_enabled": True}), wiki.id),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            migrated = KnowledgeBaseRepository(path).get_knowledge_base(wiki.id)
+
+            self.assertTrue(migrated.indexing_strategy.wiki_enabled)
+            self.assertTrue(migrated.indexing_strategy.dense_enabled)
+            self.assertTrue(migrated.indexing_strategy.keyword_enabled)
+            self.assertTrue(migrated.indexing_strategy.graph_enabled)
+
+    def test_service_tracks_one_default_knowledge_base_per_workspace(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "metadata.sqlite3"
+            DocumentRepository(path)
+            service = KnowledgeBaseService(KnowledgeBaseRepository(path))
+            original_scope = service.resolve_scope()
+
+            new_default = service.create("new-default", is_default=True)
+            current_scope = service.resolve_scope()
+            original = service.get("default-knowledge-base")
+
+            self.assertEqual(("default-knowledge-base",), original_scope.selected_knowledge_base_ids)
+            self.assertEqual((new_default.id,), current_scope.selected_knowledge_base_ids)
+            self.assertTrue(service.get(new_default.id).is_default)
+            self.assertFalse(original.is_default)
+            with self.assertRaises(KnowledgeBaseValidationError):
+                service.archive(new_default.id)
+
+            service.update("default-knowledge-base", is_default=True)
+            self.assertEqual(("default-knowledge-base",), service.resolve_scope().selected_knowledge_base_ids)
+            self.assertFalse(service.get(new_default.id).is_default)
 
     def test_chunk_write_rejects_cross_knowledge_base_identity(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -42,11 +42,16 @@ def initialize_metadata_database(
         if not _table_exists(conn, "storage_schema"):
             _create_metadata_schema(conn, defaults or DefaultKnowledgeBaseSettings())
         else:
+            _ensure_wiki_schema(conn)
+            _ensure_processing_task_schema(conn)
             _validate_required_tables(conn, _METADATA_TABLES, "metadata")
+            _ensure_knowledge_base_metadata_schema(conn, defaults or DefaultKnowledgeBaseSettings())
             _ensure_processing_span_schema(conn)
             _ensure_processing_task_schema(conn)
             _ensure_default_entities(conn, defaults or DefaultKnowledgeBaseSettings())
+        _ensure_wiki_schema(conn)
         _ensure_processing_task_schema(conn)
+        _repair_wiki_indexing_strategies(conn)
         _ensure_agent_runtime_span_schema(conn)
         conn.commit()
     except Exception:
@@ -138,7 +143,8 @@ def _create_metadata_schema(conn: sqlite3.Connection, defaults: DefaultKnowledge
             workspace_id text not null,
             name text not null collate nocase,
             description text not null default '',
-            type text not null default 'document' check(type = 'document'),
+            type text not null default 'document' check(type in ('document', 'faq', 'wiki')),
+            is_default integer not null default 0 check(is_default in (0, 1)),
             status text not null default 'active' check(status in ('active', 'archived')),
             indexing_strategy_json text not null default '{}',
             provider_config_json text not null default '{}',
@@ -485,6 +491,7 @@ def _create_metadata_schema(conn: sqlite3.Connection, defaults: DefaultKnowledge
         );
 
         create index idx_knowledge_base_workspace_status on knowledge_base(workspace_id, status, updated_at);
+        create unique index idx_knowledge_base_workspace_default on knowledge_base(workspace_id) where is_default = 1;
         create index idx_document_kb_updated on document(workspace_id, knowledge_base_id, updated_at);
         create index idx_document_kb_status on document(workspace_id, knowledge_base_id, parse_status);
         create index idx_document_chunk_kb_doc on document_chunk(workspace_id, knowledge_base_id, doc_id, chunk_type);
@@ -527,6 +534,7 @@ def _create_metadata_schema(conn: sqlite3.Connection, defaults: DefaultKnowledge
         "insert into storage_schema(component, version, initialized_at) values ('primary', ?, ?)",
         (METADATA_SCHEMA_VERSION, now),
     )
+    _ensure_wiki_schema(conn)
     _ensure_default_entities(conn, defaults, now=now)
 
 
@@ -606,19 +614,118 @@ def _ensure_default_entities(
         """
         insert or ignore into knowledge_base(
             id, workspace_id, name, description, type, status,
-            indexing_strategy_json, provider_config_json, reset_required, created_at, updated_at
-        ) values (?, ?, ?, '', 'document', 'active', ?, ?, 0, ?, ?)
+            is_default, indexing_strategy_json, provider_config_json, reset_required, created_at, updated_at
+        ) values (?, ?, ?, '', 'document', 'active', 0, ?, ?, 0, ?, ?)
         """,
         (
             settings.knowledge_base_id,
             settings.workspace_id,
             settings.knowledge_base_name,
-            json.dumps({"dense_enabled": True, "keyword_enabled": True, "graph_enabled": False}),
+            json.dumps({"dense_enabled": True, "keyword_enabled": True, "graph_enabled": False, "wiki_enabled": False}),
             json.dumps({"requested": {}, "effective": {}, "inactive_overrides": []}),
             now,
             now,
         ),
     )
+    _normalize_default_knowledge_bases(conn, settings)
+
+
+def _ensure_knowledge_base_metadata_schema(
+    conn: sqlite3.Connection,
+    settings: DefaultKnowledgeBaseSettings,
+) -> None:
+    columns = {row[1] for row in conn.execute("pragma table_info(knowledge_base)").fetchall()}
+    if "is_default" not in columns:
+        conn.execute(
+            "alter table knowledge_base add column "
+            "is_default integer not null default 0 check(is_default in (0, 1))"
+        )
+    _relax_knowledge_base_type_constraint(conn)
+    _normalize_default_knowledge_bases(conn, settings)
+    conn.execute(
+        "create unique index if not exists idx_knowledge_base_workspace_default "
+        "on knowledge_base(workspace_id) where is_default = 1"
+    )
+
+
+def _relax_knowledge_base_type_constraint(conn: sqlite3.Connection) -> None:
+    row = conn.execute(
+        "select sql from sqlite_schema where type = 'table' and name = 'knowledge_base'"
+    ).fetchone()
+    sql = str(row[0] or "") if row else ""
+    old = "type text not null default 'document' check(type = 'document')"
+    new = "type text not null default 'document' check(type in ('document', 'faq', 'wiki'))"
+    if old not in sql:
+        return
+    conn.execute("pragma writable_schema = on")
+    try:
+        conn.execute(
+            """
+            update sqlite_schema
+            set sql = replace(sql, ?, ?)
+            where type = 'table' and name = 'knowledge_base'
+            """,
+            (old, new),
+        )
+        version = int(conn.execute("pragma schema_version").fetchone()[0])
+        conn.execute(f"pragma schema_version = {version + 1}")
+    finally:
+        conn.execute("pragma writable_schema = off")
+
+
+def _normalize_default_knowledge_bases(
+    conn: sqlite3.Connection,
+    settings: DefaultKnowledgeBaseSettings,
+) -> None:
+    columns = {row[1] for row in conn.execute("pragma table_info(knowledge_base)").fetchall()}
+    if "is_default" not in columns:
+        return
+    conn.execute("update knowledge_base set is_default = 0 where status != 'active' and is_default = 1")
+    workspace_ids = [
+        str(row[0])
+        for row in conn.execute("select id from workspace order by id").fetchall()
+    ]
+    for workspace_id in workspace_ids:
+        rows = conn.execute(
+            """
+            select id
+            from knowledge_base
+            where workspace_id = ? and status = 'active' and is_default = 1
+            order by case when id = ? then 0 else 1 end, updated_at desc, created_at desc, id
+            """,
+            (workspace_id, settings.knowledge_base_id),
+        ).fetchall()
+        if rows:
+            keep_id = str(rows[0][0])
+            conn.execute(
+                "update knowledge_base set is_default = case when id = ? then 1 else 0 end where workspace_id = ?",
+                (keep_id, workspace_id),
+            )
+            continue
+        target = conn.execute(
+            """
+            select id
+            from knowledge_base
+            where workspace_id = ? and status = 'active' and id = ?
+            """,
+            (workspace_id, settings.knowledge_base_id),
+        ).fetchone()
+        if target is None:
+            target = conn.execute(
+                """
+                select id
+                from knowledge_base
+                where workspace_id = ? and status = 'active'
+                order by updated_at desc, created_at desc, id
+                limit 1
+                """,
+                (workspace_id,),
+            ).fetchone()
+        if target is not None:
+            conn.execute(
+                "update knowledge_base set is_default = case when id = ? then 1 else 0 end where workspace_id = ?",
+                (str(target[0]), workspace_id),
+            )
 
 
 def _validate_required_tables(conn: sqlite3.Connection, required: set[str], label: str) -> None:
@@ -703,12 +810,385 @@ def _ensure_processing_task_schema(conn: sqlite3.Connection) -> None:
             trace_id text not null default '',
             created_at text not null
         );
+        create table if not exists document_processing_task_attempt (
+            id text primary key,
+            task_id text not null,
+            attempt integer not null,
+            worker_id text not null default '',
+            status text not null,
+            error_code text not null default '',
+            error_message text not null default '',
+            started_at text not null,
+            finished_at text,
+            created_at text not null,
+            foreign key(task_id) references document_processing_task(id) on delete cascade
+        );
         create index if not exists idx_processing_task_runnable on document_processing_task(status, next_run_at, lease_expires_at);
         create index if not exists idx_processing_task_scope_doc on document_processing_task(workspace_id, knowledge_base_id, document_id, status);
         create index if not exists idx_processing_task_upload on document_processing_task(workspace_id, knowledge_base_id, upload_batch_id, upload_file_id);
         create index if not exists idx_processing_dead_letter_scope on document_processing_dead_letter(workspace_id, knowledge_base_id, created_at);
+        create index if not exists idx_processing_task_attempt_task on document_processing_task_attempt(task_id, created_at, id);
         """
     )
+    _ensure_columns(
+        conn,
+        "document_processing_task",
+        {
+            "payload_schema_version": "integer not null default 1",
+            "idempotency_key": "text not null default ''",
+            "source_revision": "text not null default ''",
+            "parent_trace_id": "text not null default ''",
+        },
+    )
+    conn.execute(
+        "create index if not exists idx_processing_task_idempotency "
+        "on document_processing_task(workspace_id, knowledge_base_id, task_type, idempotency_key)"
+    )
+
+
+def _ensure_wiki_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        create table if not exists wiki_folder (
+            id text primary key,
+            workspace_id text not null,
+            knowledge_base_id text not null,
+            parent_id text not null default '',
+            name text not null,
+            path text not null,
+            depth integer not null default 0,
+            sort_order integer not null default 0,
+            created_at text not null,
+            updated_at text not null,
+            unique(workspace_id, knowledge_base_id, path),
+            foreign key(workspace_id, knowledge_base_id)
+                references knowledge_base(workspace_id, id) on delete cascade
+        );
+
+        create table if not exists wiki_page (
+            id text primary key,
+            workspace_id text not null,
+            knowledge_base_id text not null,
+            slug text not null,
+            title text not null,
+            page_type text not null default 'summary' check(page_type in ('summary', 'entity', 'concept', 'synthesis', 'manual')),
+            status text not null default 'draft' check(status in ('draft', 'published', 'stale', 'archived')),
+            content_markdown text not null default '',
+            summary text not null default '',
+            parent_slug text not null default '',
+            folder_id text not null default '',
+            category_path_json text not null default '[]',
+            wiki_path text not null default '',
+            depth integer not null default 0,
+            sort_order integer not null default 0,
+            source_refs_json text not null default '[]',
+            chunk_refs_json text not null default '[]',
+            in_links_json text not null default '[]',
+            out_links_json text not null default '[]',
+            aliases_json text not null default '[]',
+            metadata_json text not null default '{}',
+            version integer not null default 1,
+            created_at text not null,
+            updated_at text not null,
+            unique(workspace_id, knowledge_base_id, id),
+            foreign key(workspace_id, knowledge_base_id)
+                references knowledge_base(workspace_id, id) on delete cascade
+        );
+
+        create table if not exists wiki_page_source_ref (
+            page_id text not null,
+            workspace_id text not null,
+            knowledge_base_id text not null,
+            doc_id text not null,
+            chunk_id text not null default '',
+            created_at text not null,
+            primary key(page_id, doc_id, chunk_id),
+            foreign key(workspace_id, knowledge_base_id, page_id)
+                references wiki_page(workspace_id, knowledge_base_id, id) on delete cascade
+        );
+
+        create table if not exists wiki_page_issue (
+            id text primary key,
+            workspace_id text not null,
+            knowledge_base_id text not null,
+            slug text not null,
+            issue_type text not null default 'other' check(issue_type in ('incorrect', 'outdated', 'missing_source', 'conflict', 'other')),
+            description text not null default '',
+            suspected_doc_ids_json text not null default '[]',
+            suspected_chunk_ids_json text not null default '[]',
+            status text not null default 'open' check(status in ('open', 'resolved', 'wontfix')),
+            reported_by text not null default 'user',
+            created_at text not null,
+            updated_at text not null,
+            foreign key(workspace_id, knowledge_base_id)
+                references knowledge_base(workspace_id, id) on delete cascade
+        );
+
+        create table if not exists wiki_page_proposal (
+            id text primary key,
+            workspace_id text not null,
+            knowledge_base_id text not null,
+            action text not null check(action in ('write_page', 'replace_text', 'rename_page', 'delete_page')),
+            slug text not null,
+            status text not null default 'pending' check(status in ('pending', 'applied', 'rejected')),
+            title text not null default '',
+            content_markdown text not null default '',
+            payload_json text not null default '{}',
+            source_refs_json text not null default '[]',
+            chunk_refs_json text not null default '[]',
+            reason text not null default '',
+            created_by text not null default 'agent',
+            created_at text not null,
+            updated_at text not null,
+            applied_at text not null default '',
+            rejected_at text not null default '',
+            foreign key(workspace_id, knowledge_base_id)
+                references knowledge_base(workspace_id, id) on delete cascade
+        );
+
+        create table if not exists wiki_generation_task (
+            id text primary key,
+            workspace_id text not null,
+            knowledge_base_id text not null,
+            doc_id text not null,
+            status text not null default 'pending' check(status in ('pending', 'running', 'completed', 'failed', 'skipped')),
+            page_slug text not null default '',
+            error_message text not null default '',
+            config_json text not null default '{}',
+            attempts integer not null default 0,
+            created_at text not null,
+            updated_at text not null,
+            started_at text not null default '',
+            finished_at text not null default '',
+            foreign key(workspace_id, knowledge_base_id)
+                references knowledge_base(workspace_id, id) on delete cascade
+        );
+
+        create unique index if not exists idx_wiki_page_active_slug
+            on wiki_page(workspace_id, knowledge_base_id, slug)
+            where status != 'archived';
+        create index if not exists idx_wiki_page_kb_status_type
+            on wiki_page(workspace_id, knowledge_base_id, status, page_type, updated_at);
+        create index if not exists idx_wiki_page_folder_sort
+            on wiki_page(workspace_id, knowledge_base_id, folder_id, sort_order, title);
+        create index if not exists idx_wiki_page_path
+            on wiki_page(workspace_id, knowledge_base_id, wiki_path);
+        create index if not exists idx_wiki_folder_tree
+            on wiki_folder(workspace_id, knowledge_base_id, parent_id, sort_order, name);
+        create index if not exists idx_wiki_source_ref_doc
+            on wiki_page_source_ref(workspace_id, knowledge_base_id, doc_id, chunk_id);
+        create index if not exists idx_wiki_issue_status
+            on wiki_page_issue(workspace_id, knowledge_base_id, status, updated_at);
+        create index if not exists idx_wiki_issue_slug
+            on wiki_page_issue(workspace_id, knowledge_base_id, slug, status);
+        create index if not exists idx_wiki_proposal_status
+            on wiki_page_proposal(workspace_id, knowledge_base_id, status, updated_at);
+        create index if not exists idx_wiki_proposal_slug
+            on wiki_page_proposal(workspace_id, knowledge_base_id, slug, status);
+        create index if not exists idx_wiki_generation_task_doc
+            on wiki_generation_task(workspace_id, knowledge_base_id, doc_id, updated_at);
+        create index if not exists idx_wiki_generation_task_status
+            on wiki_generation_task(workspace_id, knowledge_base_id, status, updated_at);
+
+        create table if not exists wiki_document_contribution (
+            id text primary key,
+            workspace_id text not null,
+            knowledge_base_id text not null,
+            document_id text not null,
+            document_revision text not null,
+            page_slug text not null,
+            page_type text not null,
+            contribution_json text not null default '{}',
+            source_chunk_ids_json text not null default '[]',
+            generation_run_id text not null,
+            content_hash text not null,
+            active integer not null default 1 check(active in (0, 1)),
+            created_at text not null,
+            updated_at text not null,
+            unique(workspace_id, knowledge_base_id, document_id, document_revision, page_slug, page_type),
+            foreign key(workspace_id, knowledge_base_id)
+                references knowledge_base(workspace_id, id) on delete cascade
+        );
+
+        create table if not exists wiki_ingest_pending (
+            id text primary key,
+            workspace_id text not null,
+            knowledge_base_id text not null,
+            document_id text not null,
+            document_revision text not null,
+            operation text not null default 'upsert',
+            status text not null default 'pending',
+            task_id text not null default '',
+            available_at text not null,
+            last_error text not null default '',
+            created_at text not null,
+            updated_at text not null,
+            unique(workspace_id, knowledge_base_id, document_id, document_revision, operation),
+            foreign key(workspace_id, knowledge_base_id)
+                references knowledge_base(workspace_id, id) on delete cascade
+        );
+
+        create table if not exists wiki_log_entry (
+            id text primary key,
+            workspace_id text not null,
+            knowledge_base_id text not null,
+            idempotency_key text not null,
+            event_type text not null,
+            document_id text not null default '',
+            page_slugs_json text not null default '[]',
+            outcome text not null default 'completed',
+            message text not null default '',
+            metadata_json text not null default '{}',
+            created_at text not null,
+            unique(workspace_id, knowledge_base_id, idempotency_key),
+            foreign key(workspace_id, knowledge_base_id)
+                references knowledge_base(workspace_id, id) on delete cascade
+        );
+        create table if not exists wiki_page_commit (
+            id text primary key,
+            workspace_id text not null,
+            knowledge_base_id text not null,
+            idempotency_key text not null,
+            page_slug text not null,
+            page_version integer not null,
+            generation_run_id text not null default '',
+            affected_slug text not null default '',
+            created_at text not null,
+            unique(workspace_id, knowledge_base_id, idempotency_key),
+            foreign key(workspace_id, knowledge_base_id)
+                references knowledge_base(workspace_id, id) on delete cascade
+        );
+        create table if not exists wiki_ingest_commit (
+            id text primary key,
+            workspace_id text not null,
+            knowledge_base_id text not null,
+            idempotency_key text not null,
+            document_id text not null,
+            document_revision text not null,
+            generation_run_id text not null,
+            affected_slugs_json text not null default '[]',
+            created_at text not null,
+            unique(workspace_id, knowledge_base_id, idempotency_key),
+            foreign key(workspace_id, knowledge_base_id)
+                references knowledge_base(workspace_id, id) on delete cascade
+        );
+
+        create index if not exists idx_wiki_contribution_doc
+            on wiki_document_contribution(workspace_id, knowledge_base_id, document_id, active, updated_at);
+        create index if not exists idx_wiki_contribution_slug
+            on wiki_document_contribution(workspace_id, knowledge_base_id, page_slug, active, updated_at);
+        create index if not exists idx_wiki_ingest_pending_runnable
+            on wiki_ingest_pending(status, available_at, workspace_id, knowledge_base_id);
+        create index if not exists idx_wiki_log_scope_created
+            on wiki_log_entry(workspace_id, knowledge_base_id, created_at, id);
+        create index if not exists idx_wiki_page_commit_slug
+            on wiki_page_commit(workspace_id, knowledge_base_id, page_slug, page_version);
+        create index if not exists idx_wiki_ingest_commit_document
+            on wiki_ingest_commit(workspace_id, knowledge_base_id, document_id, document_revision);
+        """
+    )
+    _relax_check_constraint(
+        conn,
+        "wiki_page",
+        "check(page_type in ('summary', 'entity', 'concept', 'synthesis', 'manual'))",
+        "check(page_type in ('summary', 'entity', 'concept', 'synthesis', 'manual', 'index', 'log'))",
+    )
+    _relax_check_constraint(
+        conn,
+        "wiki_page_issue",
+        "check(issue_type in ('incorrect', 'outdated', 'missing_source', 'conflict', 'other'))",
+        "check(issue_type in ('incorrect', 'outdated', 'missing_source', 'conflict', 'dead_link', 'duplicate_page', 'ungrounded_content', 'taxonomy', 'other'))",
+    )
+    _relax_check_constraint(
+        conn,
+        "wiki_generation_task",
+        "check(status in ('pending', 'running', 'completed', 'failed', 'skipped'))",
+        "check(status in ('pending', 'queued', 'running', 'retrying', 'finalizing', 'completed', 'failed', 'cancelled', 'dead_lettered', 'skipped'))",
+    )
+    _relax_check_constraint(
+        conn,
+        "wiki_page_proposal",
+        "check(action in ('write_page', 'replace_text', 'rename_page', 'delete_page'))",
+        "check(action in ('write_page', 'replace_text', 'rename_page', 'delete_page', 'merge_pages'))",
+    )
+    _ensure_wiki_fts(conn)
+
+
+def _ensure_wiki_fts(conn: sqlite3.Connection) -> None:
+    try:
+        conn.executescript(
+            """
+            create virtual table if not exists wiki_page_fts using fts5(
+                page_id unindexed, workspace_id unindexed, knowledge_base_id unindexed,
+                title, slug, aliases, summary, content
+            );
+            create trigger if not exists wiki_page_fts_insert after insert on wiki_page begin
+                insert into wiki_page_fts(page_id, workspace_id, knowledge_base_id, title, slug, aliases, summary, content)
+                values (new.id, new.workspace_id, new.knowledge_base_id, new.title, new.slug, new.aliases_json, new.summary, new.content_markdown);
+            end;
+            create trigger if not exists wiki_page_fts_update after update on wiki_page begin
+                delete from wiki_page_fts where page_id = old.id;
+                insert into wiki_page_fts(page_id, workspace_id, knowledge_base_id, title, slug, aliases, summary, content)
+                values (new.id, new.workspace_id, new.knowledge_base_id, new.title, new.slug, new.aliases_json, new.summary, new.content_markdown);
+            end;
+            create trigger if not exists wiki_page_fts_delete after delete on wiki_page begin
+                delete from wiki_page_fts where page_id = old.id;
+            end;
+            insert into wiki_page_fts(page_id, workspace_id, knowledge_base_id, title, slug, aliases, summary, content)
+            select p.id, p.workspace_id, p.knowledge_base_id, p.title, p.slug, p.aliases_json, p.summary, p.content_markdown
+            from wiki_page p where not exists(select 1 from wiki_page_fts f where f.page_id = p.id);
+            """
+        )
+    except sqlite3.OperationalError:
+        # FTS5 is optional in SQLite builds; repository search retains a bounded LIKE fallback.
+        return
+
+
+def _ensure_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
+    existing = {str(row[1]) for row in conn.execute(f"pragma table_info({table})").fetchall()}
+    for name, declaration in columns.items():
+        if name not in existing:
+            conn.execute(f"alter table {table} add column {name} {declaration}")
+
+
+def _relax_check_constraint(conn: sqlite3.Connection, table: str, old: str, new: str) -> None:
+    row = conn.execute("select sql from sqlite_schema where type = 'table' and name = ?", (table,)).fetchone()
+    sql = str(row[0] or "") if row else ""
+    if old not in sql:
+        return
+    conn.execute("pragma writable_schema = on")
+    try:
+        conn.execute(
+            "update sqlite_schema set sql = replace(sql, ?, ?) where type = 'table' and name = ?",
+            (old, new, table),
+        )
+        version = int(conn.execute("pragma schema_version").fetchone()[0])
+        conn.execute(f"pragma schema_version = {version + 1}")
+    finally:
+        conn.execute("pragma writable_schema = off")
+
+
+def _repair_wiki_indexing_strategies(conn: sqlite3.Connection) -> None:
+    if not _table_exists(conn, "knowledge_base"):
+        return
+    rows = conn.execute(
+        "select id, indexing_strategy_json from knowledge_base where type = 'wiki'"
+    ).fetchall()
+    for row in rows:
+        try:
+            strategy = json.loads(str(row[1] or "{}"))
+        except json.JSONDecodeError:
+            strategy = {}
+        if not isinstance(strategy, dict):
+            strategy = {}
+        if strategy.get("wiki_enabled") is True:
+            continue
+        strategy["wiki_enabled"] = True
+        strategy.setdefault("wiki_generation_enabled", True)
+        conn.execute(
+            "update knowledge_base set indexing_strategy_json = ? where id = ?",
+            (json.dumps(strategy, ensure_ascii=False, sort_keys=True), str(row[0])),
+        )
 
 
 def _ensure_agent_runtime_span_schema(conn: sqlite3.Connection) -> None:
@@ -771,6 +1251,18 @@ _METADATA_TABLES = {
     "knowledge_upload_file",
     "document_processing_task",
     "document_processing_dead_letter",
+    "document_processing_task_attempt",
+    "wiki_folder",
+    "wiki_page",
+    "wiki_page_source_ref",
+    "wiki_page_issue",
+    "wiki_page_proposal",
+    "wiki_generation_task",
+    "wiki_document_contribution",
+    "wiki_ingest_pending",
+    "wiki_log_entry",
+    "wiki_page_commit",
+    "wiki_ingest_commit",
 }
 
 _EVALUATION_TABLES = {"storage_schema", "eval_run", "eval_result"}

@@ -14,6 +14,8 @@ from app.models.knowledge_base import KnowledgeBaseScope
 from app.services.knowledge.knowledge_base_repository import KnowledgeBaseRepository
 from app.services.knowledge.knowledge_base_service import KnowledgeBaseService
 from app.services.documents.temporary_attachment_repository import TemporaryAttachmentRepository
+from app.services.wiki.wiki_repository import WikiRepository
+from app.services.wiki.wiki_service import WikiPageService
 
 
 class FakeCollection:
@@ -461,7 +463,7 @@ class RagApiRouteTests(unittest.TestCase):
                 archived = client.delete(f"/knowledge-bases/{knowledge_base_id}")
                 active_after_archive = client.get("/knowledge-bases")
                 restored = client.post(f"/knowledge-bases/{knowledge_base_id}/restore")
-                unsupported = client.post("/knowledge-bases", json={"name": "FAQ", "type": "faq"})
+                unsupported = client.post("/knowledge-bases", json={"name": "Future", "type": "future"})
 
         self.assertEqual(200, workspace.status_code)
         self.assertEqual("default-workspace", workspace.json()["id"])
@@ -474,6 +476,61 @@ class RagApiRouteTests(unittest.TestCase):
         self.assertNotIn(knowledge_base_id, [item["id"] for item in active_after_archive.json()["items"]])
         self.assertEqual("active", restored.json()["status"])
         self.assertEqual(400, unsupported.status_code)
+
+    def test_wiki_routes_are_scoped_and_reviewable(self):
+        module = self.import_main()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "metadata.sqlite3"
+            kb_service = KnowledgeBaseService(KnowledgeBaseRepository(path))
+            wiki_service = WikiPageService(WikiRepository(path), kb_service)
+            kb = kb_service.create("Wiki KB", knowledge_base_type="wiki")
+            other_kb = kb_service.create("Other Wiki", knowledge_base_type="wiki")
+            module.rag_service = SimpleNamespace(
+                knowledge_base_service=kb_service,
+                wiki_page_service=wiki_service,
+                resolve_scope=kb_service.resolve_scope,
+                needs_reingest=lambda: False,
+            )
+
+            with TestClient(module.app) as client:
+                created = client.post(
+                    f"/knowledge-bases/{kb.id}/wiki/pages",
+                    json={"slug": "redis", "title": "Redis", "aliases": ["cache"], "status": "published", "content_markdown": "Cache page"},
+                )
+                client.post(f"/knowledge-bases/{kb.id}/wiki/pages", json={"slug": "gpon", "title": "GPON", "status": "published"})
+                first_page = client.get(f"/knowledge-bases/{kb.id}/wiki/pages?status=published&limit=1")
+                second_page = client.get(f"/knowledge-bases/{kb.id}/wiki/pages?status=published&limit=1&cursor={first_page.json()['next_cursor']}")
+                alias_search = client.get(f"/knowledge-bases/{kb.id}/wiki/pages?q=cache&status=published")
+                read = client.get(f"/knowledge-bases/{kb.id}/wiki/pages/redis")
+                graph = client.get(f"/knowledge-bases/{kb.id}/wiki/graph?limit=1")
+                cross_scope = client.get(f"/knowledge-bases/{other_kb.id}/wiki/pages/redis")
+                issue = client.post(
+                    f"/knowledge-bases/{kb.id}/wiki/issues",
+                    json={"slug": "redis", "description": "Needs source"},
+                )
+                proposal = client.post(
+                    f"/knowledge-bases/{kb.id}/wiki/proposals",
+                    json={
+                        "action": "replace_text",
+                        "slug": "redis",
+                        "payload": {"old_text": "Cache", "new_text": "Caching"},
+                    },
+                )
+                applied = client.post(
+                    f"/knowledge-bases/{kb.id}/wiki/proposals/{proposal.json()['id']}/apply"
+                )
+                missing_cleanup = client.post(f"/knowledge-bases/{kb.id}/wiki/issues/missing/cleanup")
+
+        self.assertEqual(201, created.status_code)
+        self.assertEqual("redis", read.json()["slug"])
+        self.assertEqual(1, graph.json()["meta"]["node_count"])
+        self.assertNotEqual(first_page.json()["items"][0]["id"], second_page.json()["items"][0]["id"])
+        self.assertEqual(["redis"], [item["slug"] for item in alias_search.json()["items"]])
+        self.assertEqual(404, cross_scope.status_code)
+        self.assertEqual(404, missing_cleanup.status_code)
+        self.assertEqual("open", issue.json()["status"])
+        self.assertEqual("applied", applied.json()["proposal"]["status"])
+        self.assertIn("Caching", applied.json()["page"]["content_markdown"])
 
     def test_document_upload_route_passes_folder_metadata(self):
         module = self.import_main()

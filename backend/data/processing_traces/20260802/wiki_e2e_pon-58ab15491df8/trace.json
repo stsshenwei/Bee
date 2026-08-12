@@ -1,0 +1,317 @@
+{
+  "doc_id": "275cc95ab2ea0e044064f3855b0f3533",
+  "duration_ms": 2046,
+  "ended_at": "2026-08-02T13:31:45.810Z",
+  "error": null,
+  "file_name": "wiki_e2e_pon.txt",
+  "metadata": {
+    "effective_processing": {
+      "caption_enabled": false,
+      "caption_provider": "disabled",
+      "child_chunk_overlap_chars": 76,
+      "child_chunk_size_chars": 384,
+      "chunk_strategy": "auto",
+      "dense_enabled": true,
+      "embedding_token_limit": 0,
+      "graph_enabled": false,
+      "inactive_overrides": [],
+      "keyword_enabled": true,
+      "max_protected_span_chars": 7500,
+      "media_max_bytes": 26214400,
+      "media_storage_dir": "vector_db\\media",
+      "media_storage_provider": "local",
+      "ocr_enabled": true,
+      "ocr_min_confidence": 0.6,
+      "ocr_provider": "docling",
+      "parent_child_enabled": true,
+      "parent_chunk_size_chars": 4096,
+      "parser_engine": "builtin",
+      "pdf_force_scanned": false,
+      "pdf_jpeg_quality": 90,
+      "pdf_max_image_edge_px": 2400,
+      "pdf_max_pages": 1000,
+      "pdf_render_concurrency": 2,
+      "pdf_render_dpi": 200,
+      "preview_max_chunks": 50,
+      "preview_max_file_bytes": 10485760,
+      "preview_max_pages": 20,
+      "preview_timeout_seconds": 5.0,
+      "processing_version": "weknora-adaptive-v1",
+      "question_generation_enabled": false,
+      "size_unit": "chars",
+      "warnings": []
+    },
+    "extension": ".txt",
+    "file_size": 594,
+    "requested_processing": {
+      "caption_enabled": false,
+      "caption_provider": "disabled",
+      "child_chunk_overlap_chars": 76,
+      "child_chunk_size_chars": 384,
+      "chunk_strategy": "auto",
+      "dense_enabled": true,
+      "embedding_token_limit": 0,
+      "graph_enabled": false,
+      "keyword_enabled": true,
+      "max_protected_span_chars": 7500,
+      "media_max_bytes": 26214400,
+      "media_storage_dir": "./vector_db/media",
+      "media_storage_provider": "local",
+      "ocr_enabled": true,
+      "ocr_min_confidence": 0.6,
+      "ocr_provider": "docling",
+      "parent_child_enabled": true,
+      "parent_chunk_size_chars": 4096,
+      "parser_engine": "builtin",
+      "pdf_force_scanned": false,
+      "pdf_jpeg_quality": 90,
+      "pdf_max_image_edge_px": 2400,
+      "pdf_max_pages": 1000,
+      "pdf_render_concurrency": 2,
+      "pdf_render_dpi": 200,
+      "preview_max_chunks": 50,
+      "preview_max_file_bytes": 10485760,
+      "preview_max_pages": 20,
+      "preview_timeout_seconds": 5.0,
+      "question_generation_enabled": false,
+      "size_unit": "chars"
+    }
+  },
+  "name": "document_processing",
+  "schema_version": "20260718_processing_trace_v1",
+  "scope": {
+    "compatibility_default": false,
+    "document_ids": [],
+    "knowledge_base_ids": [
+      "d0e199aa1d05400db29ed35dc06e9e2a"
+    ],
+    "workspace_id": "default-workspace"
+  },
+  "source": "uploads/d0e199aa1d05400db29ed35dc06e9e2a/upload-0cca6d3682ae49d1bd44806d27c09ab8/wiki_e2e_pon.txt",
+  "spans": [
+    {
+      "_db_span_id": "66c471e6776d4d6cbd87a2e0d208622a",
+      "duration_ms": 69,
+      "ended_at": "2026-08-02T13:31:43.907Z",
+      "error": null,
+      "input": {
+        "file_name": "wiki_e2e_pon.txt",
+        "file_type": "txt",
+        "parser_engine": "builtin",
+        "size": 594,
+        "source": "uploads/d0e199aa1d05400db29ed35dc06e9e2a/upload-0cca6d3682ae49d1bd44806d27c09ab8/wiki_e2e_pon.txt"
+      },
+      "name": "load",
+      "output": {
+        "characters": 291,
+        "doc_id": "275cc95ab2ea0e044064f3855b0f3533",
+        "document_metadata": {},
+        "elements": 6,
+        "file_type": "txt",
+        "images": 0,
+        "parsed_markdown_file": "parsed.md",
+        "parser_diagnostics": {
+          "effective_engine": "builtin",
+          "fallback_reason": "",
+          "parse_duration_ms": 4,
+          "parser_name": "BuiltinMarkdownParser",
+          "requested_engine": "builtin",
+          "warnings": []
+        }
+      },
+      "span_id": "b9b3825a6b584715ae3d41b29277c4e4",
+      "started_at": "2026-08-02T13:31:43.837Z",
+      "status": "completed"
+    },
+    {
+      "_db_span_id": "6550061d19d7499d8f08d88788d473b9",
+      "duration_ms": 62,
+      "ended_at": "2026-08-02T13:31:43.981Z",
+      "error": null,
+      "input": {
+        "child_chunk_overlap_chars": 76,
+        "child_chunk_size_chars": 384,
+        "effective_strategy": "auto",
+        "parent_chunk_size_chars": 4096,
+        "requested_strategy": "auto"
+      },
+      "name": "chunk_strategy",
+      "output": {
+        "by_strategy": {
+          "legacy": 2
+        },
+        "by_type": {
+          "child": 1,
+          "parent": 1
+        },
+        "chunk_count": 2,
+        "chunks_file": "chunks.jsonl",
+        "lengths": {
+          "average": 291.0,
+          "maximum": 291,
+          "minimum": 291,
+          "oversize_count": 0,
+          "tiny_count": 0
+        },
+        "processing_version": "weknora-adaptive-v1",
+        "tier_chains": [
+          [
+            "legacy"
+          ]
+        ]
+      },
+      "span_id": "fab65dbd9e504c368198fdaecda60422",
+      "started_at": "2026-08-02T13:31:43.918Z",
+      "status": "completed"
+    },
+    {
+      "_db_span_id": "2a48834ded98437abdb8889df14778fe",
+      "duration_ms": 1471,
+      "ended_at": "2026-08-02T13:31:45.467Z",
+      "error": null,
+      "input": {
+        "by_strategy": {
+          "legacy": 2
+        },
+        "by_type": {
+          "child": 1,
+          "parent": 1
+        },
+        "chunk_count": 2,
+        "dense_enabled": false,
+        "doc_id": "275cc95ab2ea0e044064f3855b0f3533",
+        "keyword_enabled": false,
+        "lengths": {
+          "average": 291.0,
+          "maximum": 291,
+          "minimum": 291,
+          "oversize_count": 0,
+          "tiny_count": 0
+        },
+        "tier_chains": [
+          [
+            "legacy"
+          ]
+        ]
+      },
+      "name": "index",
+      "output": {
+        "skip_reason": "dense_and_keyword_disabled",
+        "sqlite_chunks": 2,
+        "vector_chunks": 0
+      },
+      "span_id": "441231fba9074a20a02df5663afcf4e9",
+      "started_at": "2026-08-02T13:31:43.996Z",
+      "status": "skipped"
+    },
+    {
+      "_db_span_id": "c2cfe981bc094516a3c3b7bfaebf8f4a",
+      "duration_ms": 54,
+      "ended_at": "2026-08-02T13:31:45.532Z",
+      "error": null,
+      "input": {
+        "caption_enabled": false,
+        "image_count": 0,
+        "ocr_enabled": true
+      },
+      "name": "multimodal",
+      "output": {
+        "image_errors": [],
+        "image_operations": 0,
+        "image_resources": 0,
+        "multimodal": {
+          "canceled": 0,
+          "completed": 0,
+          "errors": [],
+          "failed": 0,
+          "skipped": 0,
+          "total": 0
+        }
+      },
+      "span_id": "9dab63b8847f459eb8d01f367dc3e7e3",
+      "started_at": "2026-08-02T13:31:45.478Z",
+      "status": "completed"
+    },
+    {
+      "_db_span_id": "b52f736417f54350a30405240a4c10b8",
+      "duration_ms": 251,
+      "ended_at": "2026-08-02T13:31:45.795Z",
+      "error": null,
+      "input": {
+        "kg_enabled": false,
+        "wiki_enabled": true
+      },
+      "name": "postprocess",
+      "output": {
+        "enrichment_queued": true,
+        "kg_attempted": false,
+        "wiki_generation": {
+          "page": null,
+          "processing_task": {
+            "attempt": 0,
+            "created_at": "2026-08-02T21:31:45",
+            "document_id": "275cc95ab2ea0e044064f3855b0f3533",
+            "finished_at": null,
+            "id": "processing-f692a6b8e005a27ce5d100c769bff5cc",
+            "idempotency_key": "wiki-ingest:d0e199aa1d05400db29ed35dc06e9e2a:275cc95ab2ea0e044064f3855b0f3533:2026-08-02T21:31:45:weknora-adaptive-v1:2",
+            "knowledge_base_id": "d0e199aa1d05400db29ed35dc06e9e2a",
+            "last_error_code": "",
+            "last_error_message": "",
+            "lease_expires_at": null,
+            "lease_owner": "",
+            "max_attempts": 3,
+            "next_run_at": "2026-08-02T13:31:45+00:00",
+            "parent_trace_id": "b797847e89644a2986ee7996898f1732",
+            "payload": {
+              "document_id": "275cc95ab2ea0e044064f3855b0f3533",
+              "document_revision": "2026-08-02T21:31:45:weknora-adaptive-v1:2",
+              "generation_run_id": "wiki-run-e63f380a382544afb38e6e28bd669f56",
+              "generation_task_id": "wiki-gen-c8030c4776c94637899cb21072c6f779",
+              "root_trace_id": "b797847e89644a2986ee7996898f1732",
+              "schema_version": 1
+            },
+            "payload_schema_version": 1,
+            "source_revision": "2026-08-02T21:31:45:weknora-adaptive-v1:2",
+            "started_at": null,
+            "status": "pending",
+            "task_type": "wiki.ingest",
+            "trace_id": "b797847e89644a2986ee7996898f1732",
+            "updated_at": "2026-08-02T21:31:45",
+            "upload_batch_id": "wiki-run-e63f380a382544afb38e6e28bd669f56",
+            "upload_file_id": "",
+            "workspace_id": "default-workspace"
+          },
+          "proposal": null,
+          "task": {
+            "attempts": 0,
+            "config": {
+              "document_revision": "2026-08-02T21:31:45:weknora-adaptive-v1:2",
+              "enabled": true,
+              "generation_run_id": "wiki-run-e63f380a382544afb38e6e28bd669f56",
+              "model": "qwen3.5-plus",
+              "pipeline": "map_reduce_v1"
+            },
+            "created_at": "2026-08-02T13:31:45Z",
+            "doc_id": "275cc95ab2ea0e044064f3855b0f3533",
+            "error_message": "",
+            "finished_at": "",
+            "id": "wiki-gen-c8030c4776c94637899cb21072c6f779",
+            "knowledge_base_id": "d0e199aa1d05400db29ed35dc06e9e2a",
+            "page_slug": "",
+            "started_at": "",
+            "status": "queued",
+            "updated_at": "2026-08-02T13:31:45Z",
+            "workspace_id": "default-workspace"
+          }
+        }
+      },
+      "span_id": "619f95c48784472094a87ceedf234761",
+      "started_at": "2026-08-02T13:31:45.543Z",
+      "status": "completed"
+    }
+  ],
+  "started_at": "2026-08-02T13:31:43.763Z",
+  "status": "completed",
+  "trace_dir": "data\\processing_traces\\20260802\\wiki_e2e_pon-58ab15491df8",
+  "trace_id": "58ab15491df84805ac2fa2a5b1b9e811"
+}

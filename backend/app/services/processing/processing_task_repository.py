@@ -60,6 +60,10 @@ class ProcessingTaskRepository:
         max_attempts: int = 3,
         run_after: datetime | str | None = None,
         trace_id: str = "",
+        payload_schema_version: int = 1,
+        idempotency_key: str = "",
+        source_revision: str = "",
+        parent_trace_id: str = "",
     ) -> dict[str, Any]:
         task_type = _required_text(task_type, "task_type")
         payload = payload or {}
@@ -71,17 +75,32 @@ class ProcessingTaskRepository:
             upload_file_id=upload_file_id,
             payload=payload,
         )
+        clean_idempotency_key = _optional_text(idempotency_key)
         now = _now()
         next_run_at = _as_timestamp(run_after) if run_after else now
         with self._connect(immediate=True) as conn:
-            conn.execute(
+            existing = None
+            if clean_idempotency_key:
+                existing = conn.execute(
+                    """
+                    select id from document_processing_task
+                    where workspace_id = ? and knowledge_base_id = ? and task_type = ? and idempotency_key = ?
+                    order by created_at, id limit 1
+                    """,
+                    (scope.workspace_id, scope.knowledge_base_id, task_type, clean_idempotency_key),
+                ).fetchone()
+            if existing is not None:
+                task_id = str(existing["id"])
+            else:
+                conn.execute(
                 """
                 insert or ignore into document_processing_task(
                     id, task_type, workspace_id, knowledge_base_id, document_id, upload_batch_id,
                     upload_file_id, status, payload_json, attempt, max_attempts, next_run_at,
                     lease_owner, lease_expires_at, last_error_code, last_error_message,
-                    trace_id, created_at, updated_at, started_at, finished_at
-                ) values (?, ?, ?, ?, ?, ?, ?, 'pending', ?, 0, ?, ?, '', null, '', '', ?, ?, ?, null, null)
+                    trace_id, created_at, updated_at, started_at, finished_at,
+                    payload_schema_version, idempotency_key, source_revision, parent_trace_id
+                ) values (?, ?, ?, ?, ?, ?, ?, 'pending', ?, 0, ?, ?, '', null, '', '', ?, ?, ?, null, null, ?, ?, ?, ?)
                 """,
                 (
                     task_id,
@@ -97,6 +116,10 @@ class ProcessingTaskRepository:
                     _optional_text(trace_id),
                     now,
                     now,
+                    max(1, int(payload_schema_version or 1)),
+                    _optional_text(idempotency_key),
+                    _optional_text(source_revision),
+                    _optional_text(parent_trace_id),
                 ),
             )
         return self.get_task(task_id)
@@ -115,6 +138,7 @@ class ProcessingTaskRepository:
         statuses: set[str] | None = None,
         document_id: str | None = None,
         upload_batch_id: str | None = None,
+        task_types: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         clauses: list[str] = []
         params: list[Any] = []
@@ -131,6 +155,10 @@ class ProcessingTaskRepository:
         if upload_batch_id is not None:
             clauses.append("upload_batch_id = ?")
             params.append(upload_batch_id)
+        if task_types:
+            placeholders = ",".join("?" for _ in task_types)
+            clauses.append(f"task_type in ({placeholders})")
+            params.extend(sorted(task_types))
         where = f"where {' and '.join(clauses)}" if clauses else ""
         with self._connect() as conn:
             rows = conn.execute(
@@ -185,6 +213,15 @@ class ProcessingTaskRepository:
                 (worker_id, lease_expires_at, current, current, row["id"]),
             )
             claimed = conn.execute("select * from document_processing_task where id = ?", (row["id"],)).fetchone()
+            if claimed is not None:
+                conn.execute(
+                    """
+                    insert into document_processing_task_attempt(
+                        id, task_id, attempt, worker_id, status, started_at, created_at
+                    ) values (?, ?, ?, ?, 'processing', ?, ?)
+                    """,
+                    (f"attempt-{uuid4().hex}", row["id"], int(claimed["attempt"] or 0), worker_id, current, current),
+                )
         return _decode_task(claimed) if claimed else None
 
     def heartbeat(self, task_id: str, worker_id: str, *, lease_seconds: int = 60) -> dict[str, Any]:
@@ -254,6 +291,7 @@ class ProcessingTaskRepository:
                 """,
                 (next_run_at, _optional_text(error_code), _sanitize_error(error_message), now, task_id),
             )
+            self._finish_attempt(conn, task_id, TASK_RETRYING, error_code, error_message, now)
         return self.get_task(task_id)
 
     def dead_letter(
@@ -311,6 +349,7 @@ class ProcessingTaskRepository:
                 """,
                 (_optional_text(error_code), _sanitize_error(error_message), now, now, task_id),
             )
+            self._finish_attempt(conn, task_id, TASK_DEAD_LETTERED, error_code, error_message, now)
         return self.get_task(task_id)
 
     def list_dead_letters(self, scope: KnowledgeBaseScope | None = None) -> list[dict[str, Any]]:
@@ -326,6 +365,87 @@ class ProcessingTaskRepository:
                 params,
             ).fetchall()
         return [_decode_dead_letter(row) for row in rows]
+
+    def retry_dead_letter(self, task_id: str, *, delay_seconds: int = 0) -> dict[str, Any]:
+        now = _now()
+        with self._connect(immediate=True) as conn:
+            row = conn.execute("select * from document_processing_task where id = ?", (task_id,)).fetchone()
+            if row is None or str(row["status"]) != TASK_DEAD_LETTERED:
+                raise KeyError(task_id)
+            conn.execute(
+                """
+                update document_processing_task
+                set status = 'retrying', attempt = 0, next_run_at = ?, lease_owner = '',
+                    lease_expires_at = null, last_error_code = '', last_error_message = '',
+                    started_at = null, finished_at = null, updated_at = ?
+                where id = ? and status = 'dead_lettered'
+                """,
+                (_add_seconds(now, delay_seconds), now, task_id),
+                )
+        return self.get_task(task_id)
+
+    def find_by_idempotency(
+        self,
+        scope: KnowledgeBaseScope,
+        task_type: str,
+        idempotency_key: str,
+    ) -> dict[str, Any] | None:
+        clean_key = _optional_text(idempotency_key)
+        if not clean_key:
+            return None
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                select * from document_processing_task
+                where workspace_id = ? and knowledge_base_id = ? and task_type = ? and idempotency_key = ?
+                order by created_at, id limit 1
+                """,
+                (scope.workspace_id, scope.knowledge_base_id, _required_text(task_type, "task_type"), clean_key),
+            ).fetchone()
+        return _decode_task(row) if row is not None else None
+
+    def merge_runnable_task_payload(
+        self,
+        scope: KnowledgeBaseScope,
+        task_type: str,
+        payload: dict[str, Any],
+        *,
+        run_after: datetime | str | None = None,
+    ) -> dict[str, Any] | None:
+        now = _now()
+        next_run_at = _as_timestamp(run_after) if run_after else now
+        with self._connect(immediate=True) as conn:
+            row = conn.execute(
+                """
+                select * from document_processing_task
+                where workspace_id = ? and knowledge_base_id = ? and task_type = ?
+                  and status in ('pending', 'retrying')
+                order by created_at, id limit 1
+                """,
+                (scope.workspace_id, scope.knowledge_base_id, _required_text(task_type, "task_type")),
+            ).fetchone()
+            if row is None:
+                return None
+            merged = json.loads(str(row["payload_json"] or "{}"))
+            for key in {"generation_run_ids", "generation_task_ids", "document_ids", "affected_slugs"}:
+                values = [*list(merged.get(key) or []), *list(payload.get(key) or [])]
+                if key == "generation_run_ids" and payload.get("generation_run_id"):
+                    values.append(payload["generation_run_id"])
+                merged[key] = list(dict.fromkeys(str(value) for value in values if str(value)))
+            conn.execute(
+                "update document_processing_task set payload_json = ?, next_run_at = ?, updated_at = ? where id = ?",
+                (json.dumps(merged, ensure_ascii=False, sort_keys=True), next_run_at, now, str(row["id"])),
+            )
+            updated = conn.execute("select * from document_processing_task where id = ?", (str(row["id"]),)).fetchone()
+        return _decode_task(updated) if updated is not None else None
+
+    def list_attempts(self, task_id: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "select * from document_processing_task_attempt where task_id = ? order by rowid",
+                (task_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def _finish(
         self,
@@ -366,7 +486,29 @@ class ProcessingTaskRepository:
             )
             if cursor.rowcount == 0:
                 raise KeyError(task_id)
+            self._finish_attempt(conn, task_id, status, error_code, error_message, now)
         return self.get_task(task_id)
+
+    def _finish_attempt(
+        self,
+        conn: sqlite3.Connection,
+        task_id: str,
+        status: str,
+        error_code: str,
+        error_message: str,
+        finished_at: str,
+    ) -> None:
+        conn.execute(
+            """
+            update document_processing_task_attempt
+            set status = ?, error_code = ?, error_message = ?, finished_at = ?
+            where id = (
+                select id from document_processing_task_attempt
+                where task_id = ? and finished_at is null order by created_at desc, id desc limit 1
+            )
+            """,
+            (status, _optional_text(error_code), _sanitize_error(error_message), finished_at, task_id),
+        )
 
     def _cancel_where(self, scope: KnowledgeBaseScope, condition: str, condition_params: list[Any], reason: str) -> int:
         now = _now()

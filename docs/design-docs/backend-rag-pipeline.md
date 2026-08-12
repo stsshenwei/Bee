@@ -110,6 +110,22 @@ The optional reasoning runtime registers tools through `ToolRegistry`. Core read
 
 Tool spans record bounded arguments, status, duration, error class, and output summaries. Hidden reasoning, raw prompts, secrets, cookies, provider payloads, and unbounded content are not exposed to UI traces.
 
+### LLM Wiki Runtime
+
+LLM Wiki adds a curated page layer after raw chunk persistence. The implementation stores pages, folders, issues, proposals, source refs, aliases, generation tasks, contribution manifests, pending operations, logical logs, and `[[slug]]` link caches in SQLite. It does not replace raw evidence retrieval.
+
+`parse_and_index_document()` first persists current document chunks. Dense/keyword strategy controls embedding and vector writes; graph and Wiki decisions are independent. A Wiki-only knowledge base therefore records a skipped embedding span with `dense_and_keyword_disabled`, creates no vector rows, and still enqueues durable Wiki work.
+
+`wiki.ingest` reconstructs bounded parent/table/OCR/image-derived evidence with stable chunk markers, extracts entity/concept candidates, classifies exact citations and generates the document summary, plans one coherent taxonomy for the new contribution set, replaces the document contribution manifest, and writes each affected canonical page with the planned category applied on first publication. `wiki.finalize` performs strict duplicate review before refreshing the Index introduction, then maintains the logical Log, refreshes links, emits lint issues, and applies taxonomy only as a fallback for historical unclassified pages. The seven primary LLM stages are candidate extraction, chunk citation classification, document summary generation, taxonomy planning, canonical page writing, duplicate review, and Index introduction update; all are defined in `backend/config/prompt_templates/wiki_generation.yaml` and called through the same structured JSON helper with temperature `0.3` and at most three attempts. Invalid primary extraction gets one conservative combined-extraction fallback. Wiki generation reads persisted source chunks directly and does not invoke Embedding or Rerank models.
+
+Valid automatic output is published with source and chunk refs. A source revision change cancels stale work; retry exhaustion moves the typed task and generation state to dead letter without rolling back parsed chunks. Existing manual folder placement and any previously assigned category path are preserved during automatic taxonomy planning, and duplicate review creates recoverable merge proposals instead of applying destructive merges directly.
+
+The calibrated single-node defaults are: 30-second ingest debounce, 5-document claims, 4 Map workers, 4 distinct-slug Reduce workers, 5-second coalesced finalization, 3600-second task timeout, 3 attempts, and worker backoff of 10/30/120 seconds. Provider `Retry-After` is honored up to one hour. Manifest and page commit journals make replay idempotent; optimistic page versions and same-slug serialization protect conflicting commits. These settings are enabled with `WIKI_INGEST_ENABLED=true` and can be rolled back by disabling that flag without removing generated pages, evidence, or task history.
+
+Source deletion and reindexing retract prior active contributions. Pages without grounded generated content are archived or marked stale when protected manual content remains. These operations are scoped to one KB and do not roll back successful parsing.
+
+Agent Wiki read tools are gated by `AGENT_RUNTIME_WIKI_TOOLS_ENABLED` and are enabled for the dedicated Wiki Q&A mode by default through `AGENT_RUNTIME_WIKI_MODE_ENABLED=true`. They can search pages, read full Markdown, drill into raw source chunks, and flag issues. Maintenance tools are gated separately by `AGENT_RUNTIME_WIKI_MAINTENANCE_TOOLS_ENABLED`; write, replace, rename, and delete operations create pending proposals by default. For exact answers, `wiki_rag_agent` prompts prefer `wiki_read_source_doc`, `list_knowledge_chunks`, or existing raw retrieval tools over Wiki summaries.
+
 ## Retrieval Quality Controls
 
 The base retrieval path remains dense + keyword + RRF + optional rerank + parent recall. Additional Weknora-style controls are conservative and configurable:

@@ -130,7 +130,7 @@ export type MemoryUpdate = MemoryRecord & {
 export type ChatMessage = {
   role: "user" | "assistant";
   content: string;
-  chatMode?: "quick" | "reasoning";
+  chatMode?: "quick" | "reasoning" | "wiki";
   attachments?: ChatMessageAttachment[];
   sources?: SourceItem[];
   reasoning?: ReasoningSummary;
@@ -234,6 +234,8 @@ export type KnowledgeBaseAggregate = {
   indexed_chunk_count: number;
   processing_count: number;
   failed_count: number;
+  wiki_page_count?: number;
+  wiki_issue_count?: number;
   reset_required: boolean;
 };
 
@@ -263,11 +265,15 @@ export type KnowledgeCreationWizardSettings = {
   name: string;
   description: string;
   type: KnowledgeBaseType;
+  isDefault: boolean;
   activeSection: KnowledgeBaseCreationSection;
   indexingStrategy: {
     dense_enabled: boolean;
     keyword_enabled: boolean;
     graph_enabled: boolean;
+    wiki_enabled: boolean;
+    wiki_generation_enabled?: boolean;
+    wiki_auto_publish_enabled?: boolean;
   };
   parser: {
     engine: string;
@@ -295,12 +301,16 @@ export type KnowledgeBase = {
   workspace_id: string;
   name: string;
   description: string;
-  type: "document";
+  type: KnowledgeBaseType;
+  is_default: boolean;
   status: "active" | "archived";
   indexing_strategy: {
     dense_enabled: boolean;
     keyword_enabled: boolean;
     graph_enabled: boolean;
+    wiki_enabled: boolean;
+    wiki_generation_enabled?: boolean;
+    wiki_auto_publish_enabled?: boolean;
   };
   provider_config: {
     requested: Record<string, string>;
@@ -534,4 +544,157 @@ export type UploadFileTask = {
   source?: string;
   chunks?: number;
   error?: string;
+};
+
+export type WikiSourceRef = {
+  doc_id: string;
+  chunk_id?: string;
+  title?: string;
+};
+
+export type WikiPage = {
+  id: string;
+  workspace_id: string;
+  knowledge_base_id: string;
+  slug: string;
+  title: string;
+  page_type: "summary" | "entity" | "concept" | "synthesis" | "manual" | string;
+  status: "draft" | "published" | "stale" | "archived" | string;
+  content_markdown: string;
+  summary: string;
+  parent_slug: string;
+  folder_id: string;
+  category_path: string[];
+  wiki_path: string;
+  depth: number;
+  sort_order: number;
+  source_refs: WikiSourceRef[];
+  chunk_refs: string[];
+  in_links: string[];
+  out_links: string[];
+  aliases: string[];
+  metadata: Record<string, unknown>;
+  version: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type WikiFolder = {
+  id: string;
+  workspace_id: string;
+  knowledge_base_id: string;
+  parent_id: string;
+  name: string;
+  path: string;
+  depth: number;
+  sort_order: number;
+  page_count: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type WikiIssue = {
+  id: string;
+  workspace_id: string;
+  knowledge_base_id: string;
+  slug: string;
+  issue_type: "incorrect" | "outdated" | "missing_source" | "conflict" | "other" | string;
+  description: string;
+  suspected_doc_ids: string[];
+  suspected_chunk_ids: string[];
+  status: "open" | "resolved" | "wontfix" | string;
+  reported_by: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type WikiProposal = {
+  id: string;
+  workspace_id: string;
+  knowledge_base_id: string;
+  action: "write_page" | "replace_text" | "rename_page" | "delete_page" | string;
+  slug: string;
+  status: "pending" | "applied" | "rejected" | string;
+  title: string;
+  content_markdown: string;
+  payload: Record<string, unknown>;
+  source_refs: WikiSourceRef[];
+  chunk_refs: string[];
+  reason: string;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+  applied_at: string;
+  rejected_at: string;
+};
+
+export type WikiGraph = {
+  nodes: Array<Record<string, unknown>>;
+  edges: Array<Record<string, unknown>>;
+  meta: Record<string, unknown>;
+};
+
+export type WikiGenerationTask = {
+  id: string;
+  workspace_id: string;
+  knowledge_base_id: string;
+  doc_id: string;
+  status: "pending" | "running" | "completed" | "failed" | "skipped" | string;
+  page_slug: string;
+  error_message: string;
+  config: Record<string, unknown>;
+  attempts: number;
+  created_at: string;
+  updated_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  attempt_history?: Array<{
+    id: string;
+    attempt: number;
+    worker_id: string;
+    status: string;
+    error_code: string;
+    error_message: string;
+    started_at: string;
+    finished_at?: string | null;
+  }>;
+};
+
+export type WikiOverview = {
+  page_counts: Record<string, number>;
+  system_pages: WikiPage[];
+  open_issue_count: number;
+  active_task_count: number;
+  task_states: Record<string, number>;
+};
+
+export type WikiLog = {
+  id: string;
+  event_type: string;
+  document_id: string;
+  page_slugs: string[];
+  outcome: string;
+  message: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+};
+
+export type WikiProcessingTask = {
+  id: string;
+  task_type: "wiki.ingest" | "wiki.finalize" | string;
+  workspace_id: string;
+  knowledge_base_id: string;
+  document_id: string;
+  status: string;
+  attempt: number;
+  max_attempts: number;
+  next_run_at: string;
+  last_error_code: string;
+  last_error_message: string;
+  trace_id: string;
+  source_revision: string;
+  created_at: string;
+  updated_at: string;
+  started_at: string | null;
+  finished_at: string | null;
 };

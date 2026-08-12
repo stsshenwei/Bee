@@ -1,0 +1,925 @@
+2026-08-02 21:36:45.558 INFO - observability.langfuse.status langfuse={"configured": true, "enabled": true, "failed": false, "host": "http://localhost:3001", "initialized": false, "package_available": true, "reason": ""}
+2026-08-02 21:36:47.997 INFO - Started server process [28296] color_message=Started server process [[36m%d[0m]
+2026-08-02 21:36:48.000 INFO - Waiting for application startup.
+2026-08-02 21:36:48.003 INFO - processing_worker.start worker_id=local-processing-worker
+2026-08-02 21:36:48.004 INFO - Skip startup ingest because AUTO_INGEST_ON_STARTUP is disabled.
+2026-08-02 21:36:48.005 INFO - Application startup complete.
+2026-08-02 21:36:48.006 INFO - Uvicorn running on http://127.0.0.1:8011 (Press CTRL+C to quit) color_message=Uvicorn running on [1m%s://%s:%d[0m (Press CTRL+C to quit)
+2026-08-02 21:37:26.161 INFO 7bd160934c4c4127869527e6b3c6487a request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/health
+2026-08-02 21:37:26.181 INFO 7bd160934c4c4127869527e6b3c6487a langfuse.enabled host=http://localhost:3001
+2026-08-02 21:37:26.184 INFO 7bd160934c4c4127869527e6b3c6487a request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=22 method=GET path=/health response_content_type=application/json status_code=200
+2026-08-02 21:37:26.184 INFO - 127.0.0.1:60892 - "GET /health HTTP/1.1" 200
+2026-08-02 21:38:35.341 INFO cafc43f225e94b10a040818fdada4658 request.start client_ip=127.0.0.1 content_length=0 content_type=application/x-www-form-urlencoded method=POST path=/knowledge-bases/d0e199aa1d05400db29ed35dc06e9e2a/wiki/processing-tasks/processing-f692a6b8e005a27ce5d100c769bff5cc/retry
+2026-08-02 21:38:35.404 INFO cafc43f225e94b10a040818fdada4658 request.end client_ip=127.0.0.1 content_length=0 content_type=application/x-www-form-urlencoded duration_ms=63 method=POST path=/knowledge-bases/d0e199aa1d05400db29ed35dc06e9e2a/wiki/processing-tasks/processing-f692a6b8e005a27ce5d100c769bff5cc/retry response_content_type=application/json status_code=404
+2026-08-02 21:38:35.405 INFO - 127.0.0.1:65227 - "POST /knowledge-bases/d0e199aa1d05400db29ed35dc06e9e2a/wiki/processing-tasks/processing-f692a6b8e005a27ce5d100c769bff5cc/retry HTTP/1.1" 404
+2026-08-02 21:38:52.548 INFO 59a5cbe284164752b311de8f89d090c6 request.start client_ip=127.0.0.1 content_length=2 content_type=application/json method=POST path=/knowledge-bases/d0e199aa1d05400db29ed35dc06e9e2a/upload-batches
+2026-08-02 21:38:52.563 INFO 59a5cbe284164752b311de8f89d090c6 upload_batch.create.start knowledge_base_id=d0e199aa1d05400db29ed35dc06e9e2a workspace_id=default-workspace
+2026-08-02 21:38:52.591 INFO 59a5cbe284164752b311de8f89d090c6 rag_service.upload_batch.created batch_id=upload-2af0161ce9e84c8f9cd49af4cca8b92a knowledge_base_id=d0e199aa1d05400db29ed35dc06e9e2a workspace_id=default-workspace
+2026-08-02 21:38:52.592 INFO 59a5cbe284164752b311de8f89d090c6 upload_batch.create.end batch_id=upload-2af0161ce9e84c8f9cd49af4cca8b92a knowledge_base_id=d0e199aa1d05400db29ed35dc06e9e2a workspace_id=default-workspace
+2026-08-02 21:38:52.593 INFO 59a5cbe284164752b311de8f89d090c6 request.end client_ip=127.0.0.1 content_length=2 content_type=application/json duration_ms=45 method=POST path=/knowledge-bases/d0e199aa1d05400db29ed35dc06e9e2a/upload-batches response_content_type=application/json status_code=201
+2026-08-02 21:38:52.594 INFO - 127.0.0.1:54304 - "POST /knowledge-bases/d0e199aa1d05400db29ed35dc06e9e2a/upload-batches HTTP/1.1" 201
+2026-08-02 21:38:52.744 INFO c501710d068644458280fe7eaf77f288 request.start client_ip=127.0.0.1 content_length=800 content_type=multipart/form-data; boundary=------------------------V10os6TufCROSr8r3o2WTg method=POST path=/knowledge-bases/d0e199aa1d05400db29ed35dc06e9e2a/upload-batches/upload-2af0161ce9e84c8f9cd49af4cca8b92a/files
+2026-08-02 21:38:52.759 INFO c501710d068644458280fe7eaf77f288 upload_batch.file.add.start batch_id=upload-2af0161ce9e84c8f9cd49af4cca8b92a file_name=wiki_e2e_pon.txt knowledge_base_id=d0e199aa1d05400db29ed35dc06e9e2a size=594 workspace_id=default-workspace
+2026-08-02 21:38:52.793 INFO c501710d068644458280fe7eaf77f288 rag_service.upload_batch.file_added batch_id=upload-2af0161ce9e84c8f9cd49af4cca8b92a file_id=upload-file-b9837acdab754338baccb05949a06564 knowledge_base_id=d0e199aa1d05400db29ed35dc06e9e2a size=594 source=uploads/d0e199aa1d05400db29ed35dc06e9e2a/upload-2af0161ce9e84c8f9cd49af4cca8b92a/wiki_e2e_pon.txt workspace_id=default-workspace
+2026-08-02 21:38:52.809 INFO c501710d068644458280fe7eaf77f288 upload_batch.file.add.end batch_id=upload-2af0161ce9e84c8f9cd49af4cca8b92a knowledge_base_id=d0e199aa1d05400db29ed35dc06e9e2a workspace_id=default-workspace
+2026-08-02 21:38:52.810 INFO c501710d068644458280fe7eaf77f288 request.end client_ip=127.0.0.1 content_length=800 content_type=multipart/form-data; boundary=------------------------V10os6TufCROSr8r3o2WTg duration_ms=66 method=POST path=/knowledge-bases/d0e199aa1d05400db29ed35dc06e9e2a/upload-batches/upload-2af0161ce9e84c8f9cd49af4cca8b92a/files response_content_type=application/json status_code=200
+2026-08-02 21:38:52.811 INFO - 127.0.0.1:54305 - "POST /knowledge-bases/d0e199aa1d05400db29ed35dc06e9e2a/upload-batches/upload-2af0161ce9e84c8f9cd49af4cca8b92a/files HTTP/1.1" 200
+2026-08-02 21:38:52.827 INFO a4891a94fd6f4c0fa57cdc889abb7eb9 request.start client_ip=127.0.0.1 content_length=0 content_type=application/x-www-form-urlencoded method=POST path=/knowledge-bases/d0e199aa1d05400db29ed35dc06e9e2a/upload-batches/upload-2af0161ce9e84c8f9cd49af4cca8b92a/confirm
+2026-08-02 21:38:52.841 INFO a4891a94fd6f4c0fa57cdc889abb7eb9 upload_batch.confirm.start batch_id=upload-2af0161ce9e84c8f9cd49af4cca8b92a knowledge_base_id=d0e199aa1d05400db29ed35dc06e9e2a workspace_id=default-workspace
+2026-08-02 21:38:52.911 INFO a4891a94fd6f4c0fa57cdc889abb7eb9 processing_worker.enqueue_upload_batch batch_id=upload-2af0161ce9e84c8f9cd49af4cca8b92a knowledge_base_id=d0e199aa1d05400db29ed35dc06e9e2a tasks=1 workspace_id=default-workspace
+2026-08-02 21:38:52.916 INFO a4891a94fd6f4c0fa57cdc889abb7eb9 upload_batch.confirm.end batch_id=upload-2af0161ce9e84c8f9cd49af4cca8b92a knowledge_base_id=d0e199aa1d05400db29ed35dc06e9e2a workspace_id=default-workspace
+2026-08-02 21:38:52.918 INFO a4891a94fd6f4c0fa57cdc889abb7eb9 request.end client_ip=127.0.0.1 content_length=0 content_type=application/x-www-form-urlencoded duration_ms=91 method=POST path=/knowledge-bases/d0e199aa1d05400db29ed35dc06e9e2a/upload-batches/upload-2af0161ce9e84c8f9cd49af4cca8b92a/confirm response_content_type=application/json status_code=200
+2026-08-02 21:38:52.919 INFO - 127.0.0.1:54304 - "POST /knowledge-bases/d0e199aa1d05400db29ed35dc06e9e2a/upload-batches/upload-2af0161ce9e84c8f9cd49af4cca8b92a/confirm HTTP/1.1" 200
+2026-08-02 21:38:52.937 INFO a4891a94fd6f4c0fa57cdc889abb7eb9 processing_worker.task.start attempt=1 task_id=processing-79ceb65393b2dae4a14f609788a3c038 task_type=upload_file.process worker_id=local-processing-worker
+2026-08-02 21:38:52.950 INFO a4891a94fd6f4c0fa57cdc889abb7eb9 rag_service.upload_file.process.start batch_id=upload-2af0161ce9e84c8f9cd49af4cca8b92a file_id=upload-file-b9837acdab754338baccb05949a06564 knowledge_base_id=d0e199aa1d05400db29ed35dc06e9e2a storage_path=uploads/d0e199aa1d05400db29ed35dc06e9e2a/upload-2af0161ce9e84c8f9cd49af4cca8b92a/wiki_e2e_pon.txt workspace_id=default-workspace
+2026-08-02 21:38:53.098 INFO a4891a94fd6f4c0fa57cdc889abb7eb9 document.processing.start doc_id=798230fe9e2f1a769c3ce931b86ff81f file_size=594 knowledge_base_id=d0e199aa1d05400db29ed35dc06e9e2a source=uploads/d0e199aa1d05400db29ed35dc06e9e2a/upload-2af0161ce9e84c8f9cd49af4cca8b92a/wiki_e2e_pon.txt workspace_id=default-workspace
+2026-08-02 21:38:53.124 INFO a4891a94fd6f4c0fa57cdc889abb7eb9 document.processing.stage.start doc_id=798230fe9e2f1a769c3ce931b86ff81f source=uploads/d0e199aa1d05400db29ed35dc06e9e2a/upload-2af0161ce9e84c8f9cd49af4cca8b92a/wiki_e2e_pon.txt stage=parse
+2026-08-02 21:38:53.172 INFO a4891a94fd6f4c0fa57cdc889abb7eb9 document.processing.stage.end doc_id=798230fe9e2f1a769c3ce931b86ff81f elements=6 images=0 stage=parse
+2026-08-02 21:38:53.210 INFO a4891a94fd6f4c0fa57cdc889abb7eb9 document.processing.stage.start doc_id=798230fe9e2f1a769c3ce931b86ff81f stage=chunk
+2026-08-02 21:38:53.248 INFO a4891a94fd6f4c0fa57cdc889abb7eb9 document.processing.stage.end by_strategy={"legacy": 2} by_type={"child": 1, "parent": 1} chunk_count=2 doc_id=798230fe9e2f1a769c3ce931b86ff81f lengths={"average": 291.0, "maximum": 291, "minimum": 291, "oversize_count": 0, "tiny_count": 0} stage=chunk tier_chains=[["legacy"]]
+2026-08-02 21:38:53.284 INFO a4891a94fd6f4c0fa57cdc889abb7eb9 document.processing.stage.start doc_id=798230fe9e2f1a769c3ce931b86ff81f stage=index
+2026-08-02 21:38:54.067 INFO a4891a94fd6f4c0fa57cdc889abb7eb9 document.processing.stage.end chunks=2 doc_id=798230fe9e2f1a769c3ce931b86ff81f stage=index
+2026-08-02 21:38:54.103 INFO a4891a94fd6f4c0fa57cdc889abb7eb9 document.processing.stage.start doc_id=798230fe9e2f1a769c3ce931b86ff81f image_count=0 stage=multimodal
+2026-08-02 21:38:54.143 INFO a4891a94fd6f4c0fa57cdc889abb7eb9 document.processing.stage.end doc_id=798230fe9e2f1a769c3ce931b86ff81f failed=0 stage=multimodal total=0
+2026-08-02 21:38:54.180 INFO a4891a94fd6f4c0fa57cdc889abb7eb9 document.processing.stage.start doc_id=798230fe9e2f1a769c3ce931b86ff81f stage=postprocess
+2026-08-02 21:38:54.302 INFO a4891a94fd6f4c0fa57cdc889abb7eb9 document.enrichment.start doc_id=798230fe9e2f1a769c3ce931b86ff81f knowledge_base_id=d0e199aa1d05400db29ed35dc06e9e2a task_id=enrichment-f2780a3e5e244b8dbba0f266ae14b50a workspace_id=default-workspace
+2026-08-02 21:38:54.344 INFO a4891a94fd6f4c0fa57cdc889abb7eb9 document.processing.stage.end doc_id=798230fe9e2f1a769c3ce931b86ff81f enrichment_queued=True kg_enabled=False stage=postprocess wiki_generation_status=queued
+2026-08-02 21:38:54.462 INFO a4891a94fd6f4c0fa57cdc889abb7eb9 Retrying request to /chat/completions in 0.433890 seconds
+2026-08-02 21:38:54.743 INFO a4891a94fd6f4c0fa57cdc889abb7eb9 document.processing.end doc_id=798230fe9e2f1a769c3ce931b86ff81f indexed_chunks=0 knowledge_base_id=d0e199aa1d05400db29ed35dc06e9e2a status=completed workspace_id=default-workspace
+2026-08-02 21:38:54.790 INFO a4891a94fd6f4c0fa57cdc889abb7eb9 rag_service.upload_file.process.end batch_id=upload-2af0161ce9e84c8f9cd49af4cca8b92a chunks=2 document_id=798230fe9e2f1a769c3ce931b86ff81f file_id=upload-file-b9837acdab754338baccb05949a06564 knowledge_base_id=d0e199aa1d05400db29ed35dc06e9e2a workspace_id=default-workspace
+2026-08-02 21:38:54.829 INFO a4891a94fd6f4c0fa57cdc889abb7eb9 processing_worker.task.completed task_id=processing-79ceb65393b2dae4a14f609788a3c038 worker_id=local-processing-worker
+2026-08-02 21:38:54.841 INFO a4891a94fd6f4c0fa57cdc889abb7eb9 processing_worker.task.start attempt=1 task_id=processing-9b1c32a9ce774d968f311c7de30d851f task_type=wiki.ingest worker_id=local-processing-worker
+2026-08-02 21:38:54.923 INFO a4891a94fd6f4c0fa57cdc889abb7eb9 Retrying request to /chat/completions in 0.411692 seconds
+2026-08-02 21:38:54.923 INFO a4891a94fd6f4c0fa57cdc889abb7eb9 Retrying request to /chat/completions in 0.889496 seconds
+2026-08-02 21:38:55.364 INFO a4891a94fd6f4c0fa57cdc889abb7eb9 Retrying request to /chat/completions in 0.822207 seconds
+2026-08-02 21:38:55.901 ERROR a4891a94fd6f4c0fa57cdc889abb7eb9 document.enrichment.failed
+Traceback (most recent call last):
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpx\_transports\default.py", line 101, in map_httpcore_exceptions
+    yield
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpx\_transports\default.py", line 250, in handle_request
+    resp = self._pool.handle_request(req)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpcore\_sync\connection_pool.py", line 256, in handle_request
+    raise exc from None
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpcore\_sync\connection_pool.py", line 236, in handle_request
+    response = connection.handle_request(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpcore\_sync\connection.py", line 101, in handle_request
+    raise exc
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpcore\_sync\connection.py", line 78, in handle_request
+    stream = self._connect(request)
+             ^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpcore\_sync\connection.py", line 124, in _connect
+    stream = self._network_backend.connect_tcp(**kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpcore\_backends\sync.py", line 207, in connect_tcp
+    with map_exceptions(exc_map):
+  File "D:\soft\anaconda\Lib\contextlib.py", line 155, in __exit__
+    self.gen.throw(typ, value, traceback)
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpcore\_exceptions.py", line 14, in map_exceptions
+    raise to_exc(exc) from exc
+httpcore.ConnectError: [WinError 10013] “‘“ª÷÷∑√Œ »®œﬁ≤ª‘ –Ìµƒ∑Ω Ω◊ˆ¡À“ª∏ˆ∑√Œ Ã◊Ω”◊÷µƒ≥¢ ‘°£
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\openai\_base_client.py", line 955, in _request
+    response = self._client.send(
+               ^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpx\_client.py", line 914, in send
+    response = self._send_handling_auth(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpx\_client.py", line 942, in _send_handling_auth
+    response = self._send_handling_redirects(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpx\_client.py", line 979, in _send_handling_redirects
+    response = self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpx\_client.py", line 1014, in _send_single_request
+    response = transport.handle_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpx\_transports\default.py", line 249, in handle_request
+    with map_httpcore_exceptions():
+  File "D:\soft\anaconda\Lib\contextlib.py", line 155, in __exit__
+    self.gen.throw(typ, value, traceback)
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpx\_transports\default.py", line 118, in map_httpcore_exceptions
+    raise mapped_exc(message) from exc
+httpx.ConnectError: [WinError 10013] “‘“ª÷÷∑√Œ »®œﬁ≤ª‘ –Ìµƒ∑Ω Ω◊ˆ¡À“ª∏ˆ∑√Œ Ã◊Ω”◊÷µƒ≥¢ ‘°£
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "D:\python_project\new-rag-project\backend\app\services\documents\document_enrichment.py", line 210, in _run
+    self.provider.generate(
+  File "D:\python_project\new-rag-project\backend\app\services\documents\document_enrichment.py", line 111, in generate
+    response = self.client.chat.completions.create(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\openai\_utils\_utils.py", line 279, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\openai\resources\chat\completions\completions.py", line 914, in create
+    return self._post(
+           ^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\openai\_base_client.py", line 1242, in post
+    return cast(ResponseT, self.request(cast_to, opts, stream=stream, stream_cls=stream_cls))
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\openai\_base_client.py", line 919, in request
+    return self._request(
+           ^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\openai\_base_client.py", line 979, in _request
+    return self._retry_request(
+           ^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\openai\_base_client.py", line 1057, in _retry_request
+    return self._request(
+           ^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\openai\_base_client.py", line 979, in _request
+    return self._retry_request(
+           ^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\openai\_base_client.py", line 1057, in _retry_request
+    return self._request(
+           ^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\openai\_base_client.py", line 989, in _request
+    raise APIConnectionError(request=request) from err
+openai.APIConnectionError: Connection error. doc_id=798230fe9e2f1a769c3ce931b86ff81f duration_ms=1609 error_message=Connection error. error_type=APIConnectionError knowledge_base_id=d0e199aa1d05400db29ed35dc06e9e2a task_id=enrichment-f2780a3e5e244b8dbba0f266ae14b50a workspace_id=default-workspace
+2026-08-02 21:38:56.208 INFO a4891a94fd6f4c0fa57cdc889abb7eb9 Retrying request to /chat/completions in 0.495064 seconds
+2026-08-02 21:38:56.719 INFO a4891a94fd6f4c0fa57cdc889abb7eb9 Retrying request to /chat/completions in 0.851343 seconds
+2026-08-02 21:38:57.598 WARNING a4891a94fd6f4c0fa57cdc889abb7eb9 wiki.llm.invalid_response error=Connection error. template_id=wiki_extract_candidates
+2026-08-02 21:38:57.627 INFO a4891a94fd6f4c0fa57cdc889abb7eb9 Retrying request to /chat/completions in 0.396405 seconds
+2026-08-02 21:38:58.027 INFO a4891a94fd6f4c0fa57cdc889abb7eb9 Retrying request to /chat/completions in 0.961190 seconds
+2026-08-02 21:38:59.042 INFO a4891a94fd6f4c0fa57cdc889abb7eb9 Retrying request to /chat/completions in 0.417567 seconds
+2026-08-02 21:38:59.462 INFO a4891a94fd6f4c0fa57cdc889abb7eb9 Retrying request to /chat/completions in 0.954911 seconds
+2026-08-02 21:39:00.421 WARNING a4891a94fd6f4c0fa57cdc889abb7eb9 wiki.llm.invalid_response error=Connection error. template_id=wiki_combined_extract_fallback
+2026-08-02 21:39:00.471 INFO - Retrying request to /chat/completions in 0.380234 seconds
+2026-08-02 21:39:00.855 INFO - Retrying request to /chat/completions in 0.900652 seconds
+2026-08-02 21:39:01.789 INFO - Retrying request to /chat/completions in 0.426271 seconds
+2026-08-02 21:39:02.240 INFO - Retrying request to /chat/completions in 0.792979 seconds
+2026-08-02 21:39:03.037 WARNING - wiki.llm.invalid_response error=Connection error. template_id=wiki_document_summary
+2026-08-02 21:39:03.164 INFO - Retrying request to /chat/completions in 0.385926 seconds
+2026-08-02 21:39:03.554 INFO - Retrying request to /chat/completions in 0.751981 seconds
+2026-08-02 21:39:04.320 INFO - Retrying request to /chat/completions in 0.397743 seconds
+2026-08-02 21:39:04.742 INFO - Retrying request to /chat/completions in 0.966498 seconds
+2026-08-02 21:39:05.725 WARNING - wiki.llm.invalid_response error=Connection error. template_id=wiki_reduce_page
+2026-08-02 21:39:05.845 INFO a4891a94fd6f4c0fa57cdc889abb7eb9 processing_worker.task.completed task_id=processing-9b1c32a9ce774d968f311c7de30d851f worker_id=local-processing-worker
+2026-08-02 21:39:05.857 INFO a4891a94fd6f4c0fa57cdc889abb7eb9 processing_worker.task.start attempt=1 task_id=processing-eb0041421977b87d2ed513e62794d7ad task_type=wiki.finalize worker_id=local-processing-worker
+2026-08-02 21:39:05.940 INFO a4891a94fd6f4c0fa57cdc889abb7eb9 Retrying request to /chat/completions in 0.436074 seconds
+2026-08-02 21:39:06.083 INFO 96cea0e4fec94e61b3213ca82d83b994 request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/knowledge-bases/d0e199aa1d05400db29ed35dc06e9e2a/wiki/processing-tasks
+2026-08-02 21:39:06.130 INFO 96cea0e4fec94e61b3213ca82d83b994 request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=47 method=GET path=/knowledge-bases/d0e199aa1d05400db29ed35dc06e9e2a/wiki/processing-tasks response_content_type=application/json status_code=200
+2026-08-02 21:39:06.131 INFO - 127.0.0.1:54353 - "GET /knowledge-bases/d0e199aa1d05400db29ed35dc06e9e2a/wiki/processing-tasks HTTP/1.1" 200
+2026-08-02 21:39:06.379 INFO a4891a94fd6f4c0fa57cdc889abb7eb9 Retrying request to /chat/completions in 0.921882 seconds
+2026-08-02 21:39:07.333 INFO a4891a94fd6f4c0fa57cdc889abb7eb9 Retrying request to /chat/completions in 0.426735 seconds
+2026-08-02 21:39:07.762 INFO a4891a94fd6f4c0fa57cdc889abb7eb9 Retrying request to /chat/completions in 0.992638 seconds
+2026-08-02 21:39:08.758 WARNING a4891a94fd6f4c0fa57cdc889abb7eb9 wiki.llm.invalid_response error=Connection error. template_id=wiki_index_intro
+2026-08-02 21:39:08.939 INFO a4891a94fd6f4c0fa57cdc889abb7eb9 processing_worker.task.completed task_id=processing-eb0041421977b87d2ed513e62794d7ad worker_id=local-processing-worker
+2026-08-02 21:39:16.292 INFO fa24c09ac2d14265ae48e51e18c084fe request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/knowledge-bases/d0e199aa1d05400db29ed35dc06e9e2a/wiki/processing-tasks
+2026-08-02 21:39:16.331 INFO fa24c09ac2d14265ae48e51e18c084fe request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=39 method=GET path=/knowledge-bases/d0e199aa1d05400db29ed35dc06e9e2a/wiki/processing-tasks response_content_type=application/json status_code=200
+2026-08-02 21:39:16.332 INFO - 127.0.0.1:54367 - "GET /knowledge-bases/d0e199aa1d05400db29ed35dc06e9e2a/wiki/processing-tasks HTTP/1.1" 200
+2026-08-02 21:39:28.336 INFO 64388a78efca435f9ee11f7497999888 request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/knowledge-bases/d0e199aa1d05400db29ed35dc06e9e2a
+2026-08-02 21:39:28.357 INFO 64388a78efca435f9ee11f7497999888 request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=21 method=GET path=/knowledge-bases/d0e199aa1d05400db29ed35dc06e9e2a response_content_type=application/json status_code=200
+2026-08-02 21:39:28.358 INFO - 127.0.0.1:61806 - "GET /knowledge-bases/d0e199aa1d05400db29ed35dc06e9e2a HTTP/1.1" 200
+2026-08-02 21:39:28.435 INFO ada0c922cafd4dbc9504f288b17441a7 request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/knowledge-bases/d0e199aa1d05400db29ed35dc06e9e2a/wiki/overview
+2026-08-02 21:39:28.503 INFO ada0c922cafd4dbc9504f288b17441a7 request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=67 method=GET path=/knowledge-bases/d0e199aa1d05400db29ed35dc06e9e2a/wiki/overview response_content_type=application/json status_code=200
+2026-08-02 21:39:28.504 INFO - 127.0.0.1:61806 - "GET /knowledge-bases/d0e199aa1d05400db29ed35dc06e9e2a/wiki/overview HTTP/1.1" 200
+2026-08-02 21:39:28.509 INFO b4f7bcac01ac46f18f44db6bcbbd86b7 request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/knowledge-bases/d0e199aa1d05400db29ed35dc06e9e2a/wiki/pages?limit=100
+2026-08-02 21:39:28.541 INFO b4f7bcac01ac46f18f44db6bcbbd86b7 request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=32 method=GET path=/knowledge-bases/d0e199aa1d05400db29ed35dc06e9e2a/wiki/pages?limit=100 response_content_type=application/json status_code=200
+2026-08-02 21:39:28.542 INFO - 127.0.0.1:61806 - "GET /knowledge-bases/d0e199aa1d05400db29ed35dc06e9e2a/wiki/pages?limit=100 HTTP/1.1" 200
+2026-08-02 21:39:49.520 INFO e86ba87cd15540f48549951492878231 request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/documents/798230fe9e2f1a769c3ce931b86ff81f/processing-trace?knowledge_base_id=d0e199aa1d05400db29ed35dc06e9e2a
+2026-08-02 21:39:49.583 INFO e86ba87cd15540f48549951492878231 request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=62 method=GET path=/documents/798230fe9e2f1a769c3ce931b86ff81f/processing-trace?knowledge_base_id=d0e199aa1d05400db29ed35dc06e9e2a response_content_type=application/json status_code=200
+2026-08-02 21:39:49.583 INFO - 127.0.0.1:61817 - "GET /documents/798230fe9e2f1a769c3ce931b86ff81f/processing-trace?knowledge_base_id=d0e199aa1d05400db29ed35dc06e9e2a HTTP/1.1" 200
+2026-08-02 21:40:16.824 INFO 01fe728c18704ad48c7848d5158fbd40 request.start client_ip=127.0.0.1 content_length=184 content_type=application/json; charset=utf-8 method=POST path=/knowledge-bases/d0e199aa1d05400db29ed35dc06e9e2a/wiki/source-doc
+2026-08-02 21:40:16.853 INFO 01fe728c18704ad48c7848d5158fbd40 request.end client_ip=127.0.0.1 content_length=184 content_type=application/json; charset=utf-8 duration_ms=28 method=POST path=/knowledge-bases/d0e199aa1d05400db29ed35dc06e9e2a/wiki/source-doc response_content_type=application/json status_code=200
+2026-08-02 21:40:16.853 INFO - 127.0.0.1:59387 - "POST /knowledge-bases/d0e199aa1d05400db29ed35dc06e9e2a/wiki/source-doc HTTP/1.1" 200
+2026-08-02 21:41:54.974 INFO c80f50d0a0714162b0101a361edf3c48 processing_worker.task.start attempt=1 task_id=processing-e2e-retry-smoke task_type=wiki.ingest worker_id=local-processing-worker
+2026-08-02 21:41:54.987 ERROR c80f50d0a0714162b0101a361edf3c48 processing_worker.task.dead_lettered
+Traceback (most recent call last):
+  File "D:\python_project\new-rag-project\backend\app\services\processing\processing_worker.py", line 145, in _process_claimed_task
+    handler(task)
+  File "D:\python_project\new-rag-project\backend\app\services\wiki\wiki_ingest_service.py", line 292, in process_ingest_task
+    payload = WikiIngestPayload.from_task(task)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\app\services\wiki\wiki_ingest_service.py", line 62, in from_task
+    document_id = _required_payload_text(payload.get("document_id") or task.get("document_id"), "document_id")
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\app\services\wiki\wiki_ingest_service.py", line 1117, in _required_payload_text
+    raise WikiValidationError(f"Wiki task payload requires {name}")
+app.services.wiki.wiki_service.WikiValidationError: Wiki task payload requires document_id attempt=1 error_message=Wiki task payload requires document_id error_type=WikiValidationError max_attempts=1 task_id=processing-e2e-retry-smoke worker_id=local-processing-worker
+2026-08-02 21:42:07.236 INFO 35270a63195949529cc2e4cf430a2f75 request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/knowledge-bases/d0e199aa1d05400db29ed35dc06e9e2a/wiki/processing-tasks/processing-e2e-retry-smoke
+2026-08-02 21:42:07.269 INFO 35270a63195949529cc2e4cf430a2f75 request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=33 method=GET path=/knowledge-bases/d0e199aa1d05400db29ed35dc06e9e2a/wiki/processing-tasks/processing-e2e-retry-smoke response_content_type=application/json status_code=200
+2026-08-02 21:42:07.270 INFO - 127.0.0.1:55183 - "GET /knowledge-bases/d0e199aa1d05400db29ed35dc06e9e2a/wiki/processing-tasks/processing-e2e-retry-smoke HTTP/1.1" 200
+2026-08-02 21:42:17.214 INFO a42f8acd72de4d32be588e5cddf28da6 request.start client_ip=127.0.0.1 content_length=0 content_type=application/x-www-form-urlencoded method=POST path=/knowledge-bases/d0e199aa1d05400db29ed35dc06e9e2a/wiki/processing-tasks/processing-e2e-retry-smoke/retry
+2026-08-02 21:42:17.268 INFO a42f8acd72de4d32be588e5cddf28da6 request.end client_ip=127.0.0.1 content_length=0 content_type=application/x-www-form-urlencoded duration_ms=53 method=POST path=/knowledge-bases/d0e199aa1d05400db29ed35dc06e9e2a/wiki/processing-tasks/processing-e2e-retry-smoke/retry response_content_type=application/json status_code=200
+2026-08-02 21:42:17.269 INFO - 127.0.0.1:55189 - "POST /knowledge-bases/d0e199aa1d05400db29ed35dc06e9e2a/wiki/processing-tasks/processing-e2e-retry-smoke/retry HTTP/1.1" 200
+2026-08-02 21:42:17.350 INFO ab0cab8b4df84d41912cbee6cfccbfdf processing_worker.task.start attempt=1 task_id=processing-e2e-retry-smoke task_type=wiki.ingest worker_id=local-processing-worker
+2026-08-02 21:42:17.363 ERROR ab0cab8b4df84d41912cbee6cfccbfdf processing_worker.task.dead_lettered
+Traceback (most recent call last):
+  File "D:\python_project\new-rag-project\backend\app\services\processing\processing_worker.py", line 145, in _process_claimed_task
+    handler(task)
+  File "D:\python_project\new-rag-project\backend\app\services\wiki\wiki_ingest_service.py", line 292, in process_ingest_task
+    payload = WikiIngestPayload.from_task(task)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\app\services\wiki\wiki_ingest_service.py", line 62, in from_task
+    document_id = _required_payload_text(payload.get("document_id") or task.get("document_id"), "document_id")
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\app\services\wiki\wiki_ingest_service.py", line 1117, in _required_payload_text
+    raise WikiValidationError(f"Wiki task payload requires {name}")
+app.services.wiki.wiki_service.WikiValidationError: Wiki task payload requires document_id attempt=1 error_message=Wiki task payload requires document_id error_type=WikiValidationError max_attempts=1 task_id=processing-e2e-retry-smoke worker_id=local-processing-worker
+2026-08-02 21:42:17.851 INFO 2bf418074dd74c1ead7b104f0b41074b request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/knowledge-bases/d0e199aa1d05400db29ed35dc06e9e2a/wiki/processing-tasks/processing-e2e-retry-smoke
+2026-08-02 21:42:17.888 INFO 2bf418074dd74c1ead7b104f0b41074b request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=36 method=GET path=/knowledge-bases/d0e199aa1d05400db29ed35dc06e9e2a/wiki/processing-tasks/processing-e2e-retry-smoke response_content_type=application/json status_code=200
+2026-08-02 21:42:17.889 INFO - 127.0.0.1:55189 - "GET /knowledge-bases/d0e199aa1d05400db29ed35dc06e9e2a/wiki/processing-tasks/processing-e2e-retry-smoke HTTP/1.1" 200
+2026-08-02 21:42:38.546 INFO 2abcc54424d34d90896c355a9925a7c3 request.start client_ip=127.0.0.1 content_length=96 content_type=application/json method=POST path=/knowledge-bases
+2026-08-02 21:42:38.604 INFO 2abcc54424d34d90896c355a9925a7c3 request.end client_ip=127.0.0.1 content_length=96 content_type=application/json duration_ms=58 method=POST path=/knowledge-bases response_content_type=application/json status_code=201
+2026-08-02 21:42:38.605 INFO - 127.0.0.1:55210 - "POST /knowledge-bases HTTP/1.1" 201
+2026-08-02 21:42:38.615 INFO 33dea3bea80d4062886dacdb1c016bbb request.start client_ip=127.0.0.1 content_length=638 content_type=application/json method=POST path=/knowledge-bases/5cd16f89f80a40e9985e01e18ff3c24e/wiki/pages
+2026-08-02 21:42:38.684 INFO 33dea3bea80d4062886dacdb1c016bbb request.end client_ip=127.0.0.1 content_length=638 content_type=application/json duration_ms=69 method=POST path=/knowledge-bases/5cd16f89f80a40e9985e01e18ff3c24e/wiki/pages response_content_type=application/json status_code=201
+2026-08-02 21:42:38.686 INFO - 127.0.0.1:55211 - "POST /knowledge-bases/5cd16f89f80a40e9985e01e18ff3c24e/wiki/pages HTTP/1.1" 201
+2026-08-02 21:42:38.689 INFO 38d5187a57dd422cb38ad15d97c5fce4 request.start client_ip=127.0.0.1 content_length=406 content_type=application/json method=POST path=/knowledge-bases/5cd16f89f80a40e9985e01e18ff3c24e/wiki/pages
+2026-08-02 21:42:38.735 INFO 38d5187a57dd422cb38ad15d97c5fce4 request.end client_ip=127.0.0.1 content_length=406 content_type=application/json duration_ms=45 method=POST path=/knowledge-bases/5cd16f89f80a40e9985e01e18ff3c24e/wiki/pages response_content_type=application/json status_code=201
+2026-08-02 21:42:38.736 INFO - 127.0.0.1:55210 - "POST /knowledge-bases/5cd16f89f80a40e9985e01e18ff3c24e/wiki/pages HTTP/1.1" 201
+2026-08-02 21:42:38.739 INFO 2bde84f4523b47e891369b06e9544540 request.start client_ip=127.0.0.1 content_length=255 content_type=application/json method=POST path=/knowledge-bases/5cd16f89f80a40e9985e01e18ff3c24e/wiki/pages
+2026-08-02 21:42:38.795 INFO 2bde84f4523b47e891369b06e9544540 request.end client_ip=127.0.0.1 content_length=255 content_type=application/json duration_ms=56 method=POST path=/knowledge-bases/5cd16f89f80a40e9985e01e18ff3c24e/wiki/pages response_content_type=application/json status_code=201
+2026-08-02 21:42:38.797 INFO - 127.0.0.1:55211 - "POST /knowledge-bases/5cd16f89f80a40e9985e01e18ff3c24e/wiki/pages HTTP/1.1" 201
+2026-08-02 21:42:38.799 INFO 541428a129ee452b84415465a178b821 request.start client_ip=127.0.0.1 content_length=221 content_type=application/json method=POST path=/knowledge-bases/5cd16f89f80a40e9985e01e18ff3c24e/wiki/pages
+2026-08-02 21:42:38.860 INFO 541428a129ee452b84415465a178b821 request.end client_ip=127.0.0.1 content_length=221 content_type=application/json duration_ms=60 method=POST path=/knowledge-bases/5cd16f89f80a40e9985e01e18ff3c24e/wiki/pages response_content_type=application/json status_code=201
+2026-08-02 21:42:38.860 INFO - 127.0.0.1:55210 - "POST /knowledge-bases/5cd16f89f80a40e9985e01e18ff3c24e/wiki/pages HTTP/1.1" 201
+2026-08-02 21:42:38.862 INFO 9e90d7f459934f6996a48f7f3f87fc8a request.start client_ip=127.0.0.1 content_length=242 content_type=application/json method=POST path=/knowledge-bases/5cd16f89f80a40e9985e01e18ff3c24e/wiki/pages
+2026-08-02 21:42:38.940 INFO 9e90d7f459934f6996a48f7f3f87fc8a request.end client_ip=127.0.0.1 content_length=242 content_type=application/json duration_ms=77 method=POST path=/knowledge-bases/5cd16f89f80a40e9985e01e18ff3c24e/wiki/pages response_content_type=application/json status_code=201
+2026-08-02 21:42:38.942 INFO - 127.0.0.1:55211 - "POST /knowledge-bases/5cd16f89f80a40e9985e01e18ff3c24e/wiki/pages HTTP/1.1" 201
+2026-08-02 21:42:41.372 INFO a3175f8f399849eca7acece0d2a26b18 request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/knowledge-bases?include_archived=false
+2026-08-02 21:42:41.391 INFO a3175f8f399849eca7acece0d2a26b18 request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=20 method=GET path=/knowledge-bases?include_archived=false response_content_type=application/json status_code=200
+2026-08-02 21:42:41.392 INFO - 127.0.0.1:59227 - "GET /knowledge-bases?include_archived=false HTTP/1.1" 200
+2026-08-02 21:42:41.394 INFO 9850ce9d6070492786adf3d7ea264517 request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/documents?knowledge_base_id=5cd16f89f80a40e9985e01e18ff3c24e
+2026-08-02 21:42:41.416 INFO 9850ce9d6070492786adf3d7ea264517 request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=22 method=GET path=/documents?knowledge_base_id=5cd16f89f80a40e9985e01e18ff3c24e response_content_type=application/json status_code=200
+2026-08-02 21:42:41.418 INFO - 127.0.0.1:56579 - "GET /documents?knowledge_base_id=5cd16f89f80a40e9985e01e18ff3c24e HTTP/1.1" 200
+2026-08-02 21:42:42.233 INFO 5ea0c8b057ed48659563a7ff0455f539 request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/knowledge-bases/5cd16f89f80a40e9985e01e18ff3c24e/wiki/overview
+2026-08-02 21:42:42.236 INFO 4cb29ce8e3234c7fa031cfc175bebd50 request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/knowledge-bases/5cd16f89f80a40e9985e01e18ff3c24e/wiki/pages?status=published&limit=100
+2026-08-02 21:42:42.240 INFO 9e0c779fee934ea09cfef6fb3385b4e9 request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/knowledge-bases/5cd16f89f80a40e9985e01e18ff3c24e/wiki/folders
+2026-08-02 21:42:42.248 INFO aa1c8e1bb39e4b179cbee395699fc637 request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/knowledge-bases/5cd16f89f80a40e9985e01e18ff3c24e/wiki/generation-tasks?limit=20
+2026-08-02 21:42:42.250 INFO cd289f7ac8314e29938f751e13e3ea6e request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/knowledge-bases/5cd16f89f80a40e9985e01e18ff3c24e/wiki/processing-tasks
+2026-08-02 21:42:42.330 INFO aa1c8e1bb39e4b179cbee395699fc637 request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=82 method=GET path=/knowledge-bases/5cd16f89f80a40e9985e01e18ff3c24e/wiki/generation-tasks?limit=20 response_content_type=application/json status_code=200
+2026-08-02 21:42:42.331 INFO - 127.0.0.1:56141 - "GET /knowledge-bases/5cd16f89f80a40e9985e01e18ff3c24e/wiki/generation-tasks?limit=20 HTTP/1.1" 200
+2026-08-02 21:42:42.333 INFO 9e0c779fee934ea09cfef6fb3385b4e9 request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=93 method=GET path=/knowledge-bases/5cd16f89f80a40e9985e01e18ff3c24e/wiki/folders response_content_type=application/json status_code=200
+2026-08-02 21:42:42.333 INFO - 127.0.0.1:57026 - "GET /knowledge-bases/5cd16f89f80a40e9985e01e18ff3c24e/wiki/folders HTTP/1.1" 200
+2026-08-02 21:42:42.350 INFO cd289f7ac8314e29938f751e13e3ea6e request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=99 method=GET path=/knowledge-bases/5cd16f89f80a40e9985e01e18ff3c24e/wiki/processing-tasks response_content_type=application/json status_code=200
+2026-08-02 21:42:42.350 INFO - 127.0.0.1:49666 - "GET /knowledge-bases/5cd16f89f80a40e9985e01e18ff3c24e/wiki/processing-tasks HTTP/1.1" 200
+2026-08-02 21:42:42.364 INFO 4cb29ce8e3234c7fa031cfc175bebd50 request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=127 method=GET path=/knowledge-bases/5cd16f89f80a40e9985e01e18ff3c24e/wiki/pages?status=published&limit=100 response_content_type=application/json status_code=200
+2026-08-02 21:42:42.365 INFO - 127.0.0.1:59227 - "GET /knowledge-bases/5cd16f89f80a40e9985e01e18ff3c24e/wiki/pages?status=published&limit=100 HTTP/1.1" 200
+2026-08-02 21:42:42.374 INFO 5ea0c8b057ed48659563a7ff0455f539 request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=140 method=GET path=/knowledge-bases/5cd16f89f80a40e9985e01e18ff3c24e/wiki/overview response_content_type=application/json status_code=200
+2026-08-02 21:42:42.375 INFO - 127.0.0.1:56579 - "GET /knowledge-bases/5cd16f89f80a40e9985e01e18ff3c24e/wiki/overview HTTP/1.1" 200
+2026-08-02 21:42:42.378 INFO f4d28298572f4964a618b8aeae6dbdfc request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/knowledge-bases/5cd16f89f80a40e9985e01e18ff3c24e/wiki/pages/index
+2026-08-02 21:42:42.410 INFO f4d28298572f4964a618b8aeae6dbdfc request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=32 method=GET path=/knowledge-bases/5cd16f89f80a40e9985e01e18ff3c24e/wiki/pages/index response_content_type=application/json status_code=200
+2026-08-02 21:42:42.412 INFO - 127.0.0.1:56579 - "GET /knowledge-bases/5cd16f89f80a40e9985e01e18ff3c24e/wiki/pages/index HTTP/1.1" 200
+2026-08-02 21:42:43.379 INFO 5f91fc6883334061a7a039117c3e51de request.start client_ip=127.0.0.1 content_length= content_type= method=DELETE path=/knowledge-bases/5cd16f89f80a40e9985e01e18ff3c24e
+2026-08-02 21:42:43.411 INFO 5f91fc6883334061a7a039117c3e51de request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=32 method=DELETE path=/knowledge-bases/5cd16f89f80a40e9985e01e18ff3c24e response_content_type=application/json status_code=200
+2026-08-02 21:42:43.412 INFO - 127.0.0.1:49667 - "DELETE /knowledge-bases/5cd16f89f80a40e9985e01e18ff3c24e HTTP/1.1" 200
+2026-08-02 21:43:14.915 INFO e7d3937dfda24553b439a642a9dcfdb1 request.start client_ip=127.0.0.1 content_length=96 content_type=application/json method=POST path=/knowledge-bases
+2026-08-02 21:43:14.973 INFO e7d3937dfda24553b439a642a9dcfdb1 request.end client_ip=127.0.0.1 content_length=96 content_type=application/json duration_ms=58 method=POST path=/knowledge-bases response_content_type=application/json status_code=201
+2026-08-02 21:43:14.974 INFO - 127.0.0.1:49697 - "POST /knowledge-bases HTTP/1.1" 201
+2026-08-02 21:43:14.990 INFO 7c064abada6d4a4fab49b135faac08eb request.start client_ip=127.0.0.1 content_length=638 content_type=application/json method=POST path=/knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/pages
+2026-08-02 21:43:15.069 INFO 7c064abada6d4a4fab49b135faac08eb request.end client_ip=127.0.0.1 content_length=638 content_type=application/json duration_ms=79 method=POST path=/knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/pages response_content_type=application/json status_code=201
+2026-08-02 21:43:15.070 INFO - 127.0.0.1:49698 - "POST /knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/pages HTTP/1.1" 201
+2026-08-02 21:43:15.074 INFO ceebc4e10a7b4f21b92711131b03d4df request.start client_ip=127.0.0.1 content_length=406 content_type=application/json method=POST path=/knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/pages
+2026-08-02 21:43:15.129 INFO ceebc4e10a7b4f21b92711131b03d4df request.end client_ip=127.0.0.1 content_length=406 content_type=application/json duration_ms=55 method=POST path=/knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/pages response_content_type=application/json status_code=201
+2026-08-02 21:43:15.130 INFO - 127.0.0.1:49697 - "POST /knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/pages HTTP/1.1" 201
+2026-08-02 21:43:15.134 INFO b07959c47e8a43d5802eacafc1b3819c request.start client_ip=127.0.0.1 content_length=255 content_type=application/json method=POST path=/knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/pages
+2026-08-02 21:43:15.195 INFO b07959c47e8a43d5802eacafc1b3819c request.end client_ip=127.0.0.1 content_length=255 content_type=application/json duration_ms=60 method=POST path=/knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/pages response_content_type=application/json status_code=201
+2026-08-02 21:43:15.196 INFO - 127.0.0.1:49698 - "POST /knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/pages HTTP/1.1" 201
+2026-08-02 21:43:15.200 INFO 6afef84fda3e4d37913b70178cda5530 request.start client_ip=127.0.0.1 content_length=221 content_type=application/json method=POST path=/knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/pages
+2026-08-02 21:43:15.288 INFO 6afef84fda3e4d37913b70178cda5530 request.end client_ip=127.0.0.1 content_length=221 content_type=application/json duration_ms=88 method=POST path=/knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/pages response_content_type=application/json status_code=201
+2026-08-02 21:43:15.289 INFO - 127.0.0.1:49697 - "POST /knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/pages HTTP/1.1" 201
+2026-08-02 21:43:15.291 INFO db3466d38e2e4e2bb1286cd64e21b15e request.start client_ip=127.0.0.1 content_length=242 content_type=application/json method=POST path=/knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/pages
+2026-08-02 21:43:15.362 INFO db3466d38e2e4e2bb1286cd64e21b15e request.end client_ip=127.0.0.1 content_length=242 content_type=application/json duration_ms=70 method=POST path=/knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/pages response_content_type=application/json status_code=201
+2026-08-02 21:43:15.364 INFO - 127.0.0.1:49698 - "POST /knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/pages HTTP/1.1" 201
+2026-08-02 21:43:17.268 INFO 598fb79145224973ae7528c53b85c399 request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/knowledge-bases?include_archived=false
+2026-08-02 21:43:17.292 INFO 598fb79145224973ae7528c53b85c399 request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=23 method=GET path=/knowledge-bases?include_archived=false response_content_type=application/json status_code=200
+2026-08-02 21:43:17.293 INFO - 127.0.0.1:64028 - "GET /knowledge-bases?include_archived=false HTTP/1.1" 200
+2026-08-02 21:43:17.295 INFO 9e70222302ee4db1aa975cedf669d9a8 request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/documents?knowledge_base_id=c37db2a7c0ca44e4ae274a6eef4be1a9
+2026-08-02 21:43:17.317 INFO 9e70222302ee4db1aa975cedf669d9a8 request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=22 method=GET path=/documents?knowledge_base_id=c37db2a7c0ca44e4ae274a6eef4be1a9 response_content_type=application/json status_code=200
+2026-08-02 21:43:17.318 INFO - 127.0.0.1:64809 - "GET /documents?knowledge_base_id=c37db2a7c0ca44e4ae274a6eef4be1a9 HTTP/1.1" 200
+2026-08-02 21:43:18.147 INFO ce456fb9ce7c47d897423c0dc59cec8e request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/overview
+2026-08-02 21:43:18.151 INFO bce43175cc464260a9faff6094df3690 request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/pages?status=published&limit=100
+2026-08-02 21:43:18.154 INFO 0b0d3c15ee7d4f4eb36f1c5a72c93c64 request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/folders
+2026-08-02 21:43:18.158 INFO c1314adccd8743418b465c078c4eccdd request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/generation-tasks?limit=20
+2026-08-02 21:43:18.160 INFO 31dab883a255413c94e30f497105bd11 request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/processing-tasks
+2026-08-02 21:43:18.260 INFO 31dab883a255413c94e30f497105bd11 request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=100 method=GET path=/knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/processing-tasks response_content_type=application/json status_code=200
+2026-08-02 21:43:18.261 INFO - 127.0.0.1:64255 - "GET /knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/processing-tasks HTTP/1.1" 200
+2026-08-02 21:43:18.263 INFO c1314adccd8743418b465c078c4eccdd request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=105 method=GET path=/knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/generation-tasks?limit=20 response_content_type=application/json status_code=200
+2026-08-02 21:43:18.264 INFO - 127.0.0.1:58827 - "GET /knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/generation-tasks?limit=20 HTTP/1.1" 200
+2026-08-02 21:43:18.272 INFO bce43175cc464260a9faff6094df3690 request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=121 method=GET path=/knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/pages?status=published&limit=100 response_content_type=application/json status_code=200
+2026-08-02 21:43:18.273 INFO - 127.0.0.1:64028 - "GET /knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/pages?status=published&limit=100 HTTP/1.1" 200
+2026-08-02 21:43:18.275 INFO ce456fb9ce7c47d897423c0dc59cec8e request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=128 method=GET path=/knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/overview response_content_type=application/json status_code=200
+2026-08-02 21:43:18.277 INFO - 127.0.0.1:64809 - "GET /knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/overview HTTP/1.1" 200
+2026-08-02 21:43:18.277 INFO 0b0d3c15ee7d4f4eb36f1c5a72c93c64 request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=123 method=GET path=/knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/folders response_content_type=application/json status_code=200
+2026-08-02 21:43:18.278 INFO - 127.0.0.1:64546 - "GET /knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/folders HTTP/1.1" 200
+2026-08-02 21:43:18.282 INFO 01118c873e2b49e2ad81acb8f8955c05 request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/pages/index
+2026-08-02 21:43:18.315 INFO 01118c873e2b49e2ad81acb8f8955c05 request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=33 method=GET path=/knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/pages/index response_content_type=application/json status_code=200
+2026-08-02 21:43:18.316 INFO - 127.0.0.1:64546 - "GET /knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/pages/index HTTP/1.1" 200
+2026-08-02 21:43:19.021 INFO 5188371abac4485aa252ba385ae1c3a4 request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/graph?limit=160
+2026-08-02 21:43:19.059 INFO 5188371abac4485aa252ba385ae1c3a4 request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=37 method=GET path=/knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/graph?limit=160 response_content_type=application/json status_code=200
+2026-08-02 21:43:19.060 INFO - 127.0.0.1:64546 - "GET /knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/graph?limit=160 HTTP/1.1" 200
+2026-08-02 21:43:20.582 INFO 97c028820e9a415eb274f07dc5ab79c3 request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/knowledge-bases?include_archived=false
+2026-08-02 21:43:20.606 INFO b3844bb41a3e405b8e41ad001488466a request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/documents?knowledge_base_id=c37db2a7c0ca44e4ae274a6eef4be1a9
+2026-08-02 21:43:20.633 INFO b3844bb41a3e405b8e41ad001488466a request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=27 method=GET path=/documents?knowledge_base_id=c37db2a7c0ca44e4ae274a6eef4be1a9 response_content_type=application/json status_code=200
+2026-08-02 21:43:20.634 INFO - 127.0.0.1:50153 - "GET /documents?knowledge_base_id=c37db2a7c0ca44e4ae274a6eef4be1a9 HTTP/1.1" 200
+2026-08-02 21:43:20.636 INFO 97c028820e9a415eb274f07dc5ab79c3 request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=54 method=GET path=/knowledge-bases?include_archived=false response_content_type=application/json status_code=200
+2026-08-02 21:43:20.637 INFO - 127.0.0.1:49859 - "GET /knowledge-bases?include_archived=false HTTP/1.1" 200
+2026-08-02 21:43:21.417 INFO 301aa6cc4a7e4b588f3f9b50d92ec44b request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/overview
+2026-08-02 21:43:21.421 INFO 502b6c78fd244586bfbd129db3ebcb79 request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/pages?status=published&limit=100
+2026-08-02 21:43:21.425 INFO 6bd9416037394ffa9d164747f601bc57 request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/folders
+2026-08-02 21:43:21.428 INFO 0919be3873014ae6b1fee60767bc7227 request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/generation-tasks?limit=20
+2026-08-02 21:43:21.431 INFO e0e20c0d6a7c4a9b9309f5b45547fb6f request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/processing-tasks
+2026-08-02 21:43:21.552 INFO 6bd9416037394ffa9d164747f601bc57 request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=126 method=GET path=/knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/folders response_content_type=application/json status_code=200
+2026-08-02 21:43:21.553 INFO - 127.0.0.1:58942 - "GET /knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/folders HTTP/1.1" 200
+2026-08-02 21:43:21.556 INFO e0e20c0d6a7c4a9b9309f5b45547fb6f request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=125 method=GET path=/knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/processing-tasks response_content_type=application/json status_code=200
+2026-08-02 21:43:21.558 INFO - 127.0.0.1:56195 - "GET /knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/processing-tasks HTTP/1.1" 200
+2026-08-02 21:43:21.560 INFO 0919be3873014ae6b1fee60767bc7227 request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=131 method=GET path=/knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/generation-tasks?limit=20 response_content_type=application/json status_code=200
+2026-08-02 21:43:21.561 INFO - 127.0.0.1:64881 - "GET /knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/generation-tasks?limit=20 HTTP/1.1" 200
+2026-08-02 21:43:21.563 INFO 502b6c78fd244586bfbd129db3ebcb79 request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=141 method=GET path=/knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/pages?status=published&limit=100 response_content_type=application/json status_code=200
+2026-08-02 21:43:21.564 INFO - 127.0.0.1:50153 - "GET /knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/pages?status=published&limit=100 HTTP/1.1" 200
+2026-08-02 21:43:21.575 INFO 301aa6cc4a7e4b588f3f9b50d92ec44b request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=157 method=GET path=/knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/overview response_content_type=application/json status_code=200
+2026-08-02 21:43:21.576 INFO - 127.0.0.1:49859 - "GET /knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/overview HTTP/1.1" 200
+2026-08-02 21:43:21.579 INFO 021eba2b1edf4d4499dd411802fda5dd request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/pages/index
+2026-08-02 21:43:21.642 INFO 021eba2b1edf4d4499dd411802fda5dd request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=61 method=GET path=/knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/pages/index response_content_type=application/json status_code=200
+2026-08-02 21:43:21.642 INFO - 127.0.0.1:49859 - "GET /knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9/wiki/pages/index HTTP/1.1" 200
+2026-08-02 21:43:22.644 INFO 20bc404bb1274127a92c8e83d5b7eeaa request.start client_ip=127.0.0.1 content_length= content_type= method=DELETE path=/knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9
+2026-08-02 21:43:22.739 INFO 20bc404bb1274127a92c8e83d5b7eeaa request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=95 method=DELETE path=/knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9 response_content_type=application/json status_code=200
+2026-08-02 21:43:22.740 INFO - 127.0.0.1:51115 - "DELETE /knowledge-bases/c37db2a7c0ca44e4ae274a6eef4be1a9 HTTP/1.1" 200
+2026-08-02 21:51:15.270 INFO d7ff2a0b00c44f1fbe85931e433acb2f request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/health
+2026-08-02 21:51:15.275 INFO d7ff2a0b00c44f1fbe85931e433acb2f request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=5 method=GET path=/health response_content_type=application/json status_code=200
+2026-08-02 21:51:15.276 INFO - 127.0.0.1:58841 - "GET /health HTTP/1.1" 200
+2026-08-02 21:52:08.604 INFO 57efb1b6d4ec44cd986e6d419d3b68a2 request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/health
+2026-08-02 21:52:08.608 INFO 57efb1b6d4ec44cd986e6d419d3b68a2 request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=3 method=GET path=/health response_content_type=application/json status_code=200
+2026-08-02 21:52:08.608 INFO - 127.0.0.1:63652 - "GET /health HTTP/1.1" 200
+2026-08-02 23:08:54.924 INFO d130fad8555a4eb5aeb7cd16001a861d request.start client_ip=127.0.0.1 content_length=51 content_type=application/json method=POST path=/knowledge-bases
+2026-08-02 23:08:55.014 INFO d130fad8555a4eb5aeb7cd16001a861d request.end client_ip=127.0.0.1 content_length=51 content_type=application/json duration_ms=92 method=POST path=/knowledge-bases response_content_type=application/json status_code=201
+2026-08-02 23:08:55.015 INFO - 127.0.0.1:50417 - "POST /knowledge-bases HTTP/1.1" 201
+2026-08-02 23:08:57.995 INFO ac44d9831a694bce9217e2b1f01ccfb8 request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/knowledge-bases?include_archived=false
+2026-08-02 23:08:58.072 INFO ac44d9831a694bce9217e2b1f01ccfb8 request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=77 method=GET path=/knowledge-bases?include_archived=false response_content_type=application/json status_code=200
+2026-08-02 23:08:58.073 INFO - 127.0.0.1:50862 - "GET /knowledge-bases?include_archived=false HTTP/1.1" 200
+2026-08-02 23:09:49.391 INFO 3209a4dbd7534840982ad082e750bf75 request.start client_ip=127.0.0.1 content_length=0 content_type= method=DELETE path=/knowledge-bases/3e4b29b402b1444d866a799781557ad6
+2026-08-02 23:09:49.488 INFO 3209a4dbd7534840982ad082e750bf75 request.end client_ip=127.0.0.1 content_length=0 content_type= duration_ms=97 method=DELETE path=/knowledge-bases/3e4b29b402b1444d866a799781557ad6 response_content_type=application/json status_code=404
+2026-08-02 23:09:49.489 INFO - 127.0.0.1:50222 - "DELETE /knowledge-bases/3e4b29b402b1444d866a799781557ad6 HTTP/1.1" 404
+2026-08-02 23:10:03.984 INFO 0b85e04212d240f38e490258046cae03 request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/knowledge-bases
+2026-08-02 23:10:04.048 INFO 0b85e04212d240f38e490258046cae03 request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=64 method=GET path=/knowledge-bases response_content_type=application/json status_code=200
+2026-08-02 23:10:04.050 INFO - 127.0.0.1:65155 - "GET /knowledge-bases HTTP/1.1" 200
+2026-08-02 23:10:14.735 INFO c3964673f2e249f3bb93201f9bba2979 request.start client_ip=127.0.0.1 content_length=0 content_type= method=DELETE path=/knowledge-bases/421ec018d5ab4ddbb173b3230b887c4d
+2026-08-02 23:10:14.783 INFO c3964673f2e249f3bb93201f9bba2979 request.end client_ip=127.0.0.1 content_length=0 content_type= duration_ms=47 method=DELETE path=/knowledge-bases/421ec018d5ab4ddbb173b3230b887c4d response_content_type=application/json status_code=200
+2026-08-02 23:10:14.783 INFO - 127.0.0.1:60344 - "DELETE /knowledge-bases/421ec018d5ab4ddbb173b3230b887c4d HTTP/1.1" 200
+2026-08-02 23:10:33.797 INFO 61f062cc44784d7cb88261bb8ca35c06 request.start client_ip=127.0.0.1 content_length=51 content_type=application/json method=POST path=/knowledge-bases
+2026-08-02 23:10:33.826 INFO 61f062cc44784d7cb88261bb8ca35c06 request.end client_ip=127.0.0.1 content_length=51 content_type=application/json duration_ms=29 method=POST path=/knowledge-bases response_content_type=application/json status_code=201
+2026-08-02 23:10:33.827 INFO - 127.0.0.1:64247 - "POST /knowledge-bases HTTP/1.1" 201
+2026-08-02 23:10:36.135 INFO dd6a26baccc3423e929d0d85f417e556 request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/knowledge-bases?include_archived=false
+2026-08-02 23:10:36.159 INFO dd6a26baccc3423e929d0d85f417e556 request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=23 method=GET path=/knowledge-bases?include_archived=false response_content_type=application/json status_code=200
+2026-08-02 23:10:36.160 INFO - 127.0.0.1:64603 - "GET /knowledge-bases?include_archived=false HTTP/1.1" 200
+2026-08-02 23:10:36.898 INFO f96dc95552c94a769b975532b1f0c092 request.start client_ip=127.0.0.1 content_length= content_type= method=OPTIONS path=/knowledge-bases/70f7761bf5d747edbe32bbdb0ce70b4e
+2026-08-02 23:10:36.903 INFO f96dc95552c94a769b975532b1f0c092 request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=4 method=OPTIONS path=/knowledge-bases/70f7761bf5d747edbe32bbdb0ce70b4e response_content_type=text/plain; charset=utf-8 status_code=200
+2026-08-02 23:10:36.904 INFO - 127.0.0.1:64603 - "OPTIONS /knowledge-bases/70f7761bf5d747edbe32bbdb0ce70b4e HTTP/1.1" 200
+2026-08-02 23:10:36.909 INFO 5278b342b927435fba25014a8bcca9e7 request.start client_ip=127.0.0.1 content_length= content_type= method=DELETE path=/knowledge-bases/70f7761bf5d747edbe32bbdb0ce70b4e
+2026-08-02 23:10:36.952 INFO 5278b342b927435fba25014a8bcca9e7 request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=44 method=DELETE path=/knowledge-bases/70f7761bf5d747edbe32bbdb0ce70b4e response_content_type=application/json status_code=200
+2026-08-02 23:10:36.954 INFO - 127.0.0.1:64603 - "DELETE /knowledge-bases/70f7761bf5d747edbe32bbdb0ce70b4e HTTP/1.1" 200
+2026-08-02 23:10:37.011 INFO f37ba47f2cf84064b1baf357478917bc request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/knowledge-bases
+2026-08-02 23:10:37.035 INFO f37ba47f2cf84064b1baf357478917bc request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=23 method=GET path=/knowledge-bases response_content_type=application/json status_code=200
+2026-08-02 23:10:37.036 INFO - 127.0.0.1:64247 - "GET /knowledge-bases HTTP/1.1" 200
+2026-08-02 23:27:00.355 INFO d17406eb02b44effbdedcce7855abfa4 processing_worker.task.start attempt=1 task_id=processing-5a715740e5e8f02fd440fd1e4c44a846 task_type=upload_file.process worker_id=local-processing-worker
+2026-08-02 23:27:00.388 INFO d17406eb02b44effbdedcce7855abfa4 rag_service.upload_file.process.start batch_id=upload-30b9dc75e54b4588957fd66be527ac43 file_id=upload-file-b01b97c5355344c191c5f25bca9d164c knowledge_base_id=2394106ae7554c3fb06c13dbd9539a9f storage_path=uploads/2394106ae7554c3fb06c13dbd9539a9f/upload-30b9dc75e54b4588957fd66be527ac43/DH-P5000-16GP-DC.txt workspace_id=default-workspace
+2026-08-02 23:27:00.605 INFO d17406eb02b44effbdedcce7855abfa4 document.processing.start doc_id=e1c1eea9a2518e7f83a948bec9c52cff file_size=3855 knowledge_base_id=2394106ae7554c3fb06c13dbd9539a9f source=uploads/2394106ae7554c3fb06c13dbd9539a9f/upload-30b9dc75e54b4588957fd66be527ac43/DH-P5000-16GP-DC.txt workspace_id=default-workspace
+2026-08-02 23:27:00.633 INFO d17406eb02b44effbdedcce7855abfa4 document.processing.stage.start doc_id=e1c1eea9a2518e7f83a948bec9c52cff source=uploads/2394106ae7554c3fb06c13dbd9539a9f/upload-30b9dc75e54b4588957fd66be527ac43/DH-P5000-16GP-DC.txt stage=parse
+2026-08-02 23:27:00.719 INFO d17406eb02b44effbdedcce7855abfa4 document.processing.stage.end doc_id=e1c1eea9a2518e7f83a948bec9c52cff elements=188 images=0 stage=parse
+2026-08-02 23:27:00.775 INFO d17406eb02b44effbdedcce7855abfa4 document.processing.stage.start doc_id=e1c1eea9a2518e7f83a948bec9c52cff stage=chunk
+2026-08-02 23:27:00.873 INFO d17406eb02b44effbdedcce7855abfa4 document.processing.stage.end by_strategy={"legacy": 7} by_type={"child": 6, "parent": 1} chunk_count=7 doc_id=e1c1eea9a2518e7f83a948bec9c52cff lengths={"average": 618.2857142857143, "maximum": 2164, "minimum": 279, "oversize_count": 1, "tiny_count": 0} stage=chunk tier_chains=[["legacy"]]
+2026-08-02 23:27:01.006 INFO d17406eb02b44effbdedcce7855abfa4 document.processing.stage.start doc_id=e1c1eea9a2518e7f83a948bec9c52cff stage=index
+2026-08-02 23:27:02.660 INFO d17406eb02b44effbdedcce7855abfa4 document.processing.stage.end chunks=7 doc_id=e1c1eea9a2518e7f83a948bec9c52cff stage=index
+2026-08-02 23:27:02.706 INFO d17406eb02b44effbdedcce7855abfa4 document.processing.stage.start doc_id=e1c1eea9a2518e7f83a948bec9c52cff image_count=0 stage=multimodal
+2026-08-02 23:27:02.753 INFO d17406eb02b44effbdedcce7855abfa4 document.processing.stage.end doc_id=e1c1eea9a2518e7f83a948bec9c52cff failed=0 stage=multimodal total=0
+2026-08-02 23:27:02.796 INFO d17406eb02b44effbdedcce7855abfa4 document.processing.stage.start doc_id=e1c1eea9a2518e7f83a948bec9c52cff stage=postprocess
+2026-08-02 23:27:02.964 INFO d17406eb02b44effbdedcce7855abfa4 document.enrichment.start doc_id=e1c1eea9a2518e7f83a948bec9c52cff knowledge_base_id=2394106ae7554c3fb06c13dbd9539a9f task_id=enrichment-b41239021ac54fc685cae8434ce8f191 workspace_id=default-workspace
+2026-08-02 23:27:03.085 INFO d17406eb02b44effbdedcce7855abfa4 Retrying request to /chat/completions in 0.410903 seconds
+2026-08-02 23:27:03.093 INFO d17406eb02b44effbdedcce7855abfa4 document.processing.stage.end doc_id=e1c1eea9a2518e7f83a948bec9c52cff enrichment_queued=True kg_enabled=False stage=postprocess wiki_generation_status=queued
+2026-08-02 23:27:03.360 INFO d17406eb02b44effbdedcce7855abfa4 document.processing.end doc_id=e1c1eea9a2518e7f83a948bec9c52cff indexed_chunks=0 knowledge_base_id=2394106ae7554c3fb06c13dbd9539a9f status=completed workspace_id=default-workspace
+2026-08-02 23:27:03.408 INFO d17406eb02b44effbdedcce7855abfa4 rag_service.upload_file.process.end batch_id=upload-30b9dc75e54b4588957fd66be527ac43 chunks=7 document_id=e1c1eea9a2518e7f83a948bec9c52cff file_id=upload-file-b01b97c5355344c191c5f25bca9d164c knowledge_base_id=2394106ae7554c3fb06c13dbd9539a9f workspace_id=default-workspace
+2026-08-02 23:27:03.453 INFO d17406eb02b44effbdedcce7855abfa4 processing_worker.task.completed task_id=processing-5a715740e5e8f02fd440fd1e4c44a846 worker_id=local-processing-worker
+2026-08-02 23:27:03.464 INFO d17406eb02b44effbdedcce7855abfa4 processing_worker.task.start attempt=1 task_id=processing-46b2601bed3f3d3f601fad343412cb23 task_type=wiki.ingest worker_id=local-processing-worker
+2026-08-02 23:27:03.501 INFO d17406eb02b44effbdedcce7855abfa4 Retrying request to /chat/completions in 0.982668 seconds
+2026-08-02 23:27:03.550 INFO d17406eb02b44effbdedcce7855abfa4 Retrying request to /chat/completions in 0.416305 seconds
+2026-08-02 23:27:03.970 INFO d17406eb02b44effbdedcce7855abfa4 Retrying request to /chat/completions in 0.913387 seconds
+2026-08-02 23:27:04.511 ERROR d17406eb02b44effbdedcce7855abfa4 document.enrichment.failed
+Traceback (most recent call last):
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpx\_transports\default.py", line 101, in map_httpcore_exceptions
+    yield
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpx\_transports\default.py", line 250, in handle_request
+    resp = self._pool.handle_request(req)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpcore\_sync\connection_pool.py", line 256, in handle_request
+    raise exc from None
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpcore\_sync\connection_pool.py", line 236, in handle_request
+    response = connection.handle_request(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpcore\_sync\connection.py", line 101, in handle_request
+    raise exc
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpcore\_sync\connection.py", line 78, in handle_request
+    stream = self._connect(request)
+             ^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpcore\_sync\connection.py", line 124, in _connect
+    stream = self._network_backend.connect_tcp(**kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpcore\_backends\sync.py", line 207, in connect_tcp
+    with map_exceptions(exc_map):
+  File "D:\soft\anaconda\Lib\contextlib.py", line 155, in __exit__
+    self.gen.throw(typ, value, traceback)
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpcore\_exceptions.py", line 14, in map_exceptions
+    raise to_exc(exc) from exc
+httpcore.ConnectError: [WinError 10013] “‘“ª÷÷∑√Œ »®œﬁ≤ª‘ –Ìµƒ∑Ω Ω◊ˆ¡À“ª∏ˆ∑√Œ Ã◊Ω”◊÷µƒ≥¢ ‘°£
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\openai\_base_client.py", line 955, in _request
+    response = self._client.send(
+               ^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpx\_client.py", line 914, in send
+    response = self._send_handling_auth(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpx\_client.py", line 942, in _send_handling_auth
+    response = self._send_handling_redirects(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpx\_client.py", line 979, in _send_handling_redirects
+    response = self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpx\_client.py", line 1014, in _send_single_request
+    response = transport.handle_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpx\_transports\default.py", line 249, in handle_request
+    with map_httpcore_exceptions():
+  File "D:\soft\anaconda\Lib\contextlib.py", line 155, in __exit__
+    self.gen.throw(typ, value, traceback)
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpx\_transports\default.py", line 118, in map_httpcore_exceptions
+    raise mapped_exc(message) from exc
+httpx.ConnectError: [WinError 10013] “‘“ª÷÷∑√Œ »®œﬁ≤ª‘ –Ìµƒ∑Ω Ω◊ˆ¡À“ª∏ˆ∑√Œ Ã◊Ω”◊÷µƒ≥¢ ‘°£
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "D:\python_project\new-rag-project\backend\app\services\documents\document_enrichment.py", line 210, in _run
+    self.provider.generate(
+  File "D:\python_project\new-rag-project\backend\app\services\documents\document_enrichment.py", line 111, in generate
+    response = self.client.chat.completions.create(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\openai\_utils\_utils.py", line 279, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\openai\resources\chat\completions\completions.py", line 914, in create
+    return self._post(
+           ^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\openai\_base_client.py", line 1242, in post
+    return cast(ResponseT, self.request(cast_to, opts, stream=stream, stream_cls=stream_cls))
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\openai\_base_client.py", line 919, in request
+    return self._request(
+           ^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\openai\_base_client.py", line 979, in _request
+    return self._retry_request(
+           ^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\openai\_base_client.py", line 1057, in _retry_request
+    return self._request(
+           ^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\openai\_base_client.py", line 979, in _request
+    return self._retry_request(
+           ^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\openai\_base_client.py", line 1057, in _retry_request
+    return self._request(
+           ^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\openai\_base_client.py", line 989, in _request
+    raise APIConnectionError(request=request) from err
+openai.APIConnectionError: Connection error. doc_id=e1c1eea9a2518e7f83a948bec9c52cff duration_ms=1547 error_message=Connection error. error_type=APIConnectionError knowledge_base_id=2394106ae7554c3fb06c13dbd9539a9f task_id=enrichment-b41239021ac54fc685cae8434ce8f191 workspace_id=default-workspace
+2026-08-02 23:27:04.896 INFO d17406eb02b44effbdedcce7855abfa4 Retrying request to /chat/completions in 0.480169 seconds
+2026-08-02 23:27:05.380 INFO d17406eb02b44effbdedcce7855abfa4 Retrying request to /chat/completions in 0.979636 seconds
+2026-08-02 23:27:06.364 WARNING d17406eb02b44effbdedcce7855abfa4 wiki.llm.invalid_response error=Connection error. template_id=wiki_extract_candidates
+2026-08-02 23:27:06.374 INFO d17406eb02b44effbdedcce7855abfa4 Retrying request to /chat/completions in 0.451976 seconds
+2026-08-02 23:27:06.830 INFO d17406eb02b44effbdedcce7855abfa4 Retrying request to /chat/completions in 0.785314 seconds
+2026-08-02 23:27:07.630 INFO d17406eb02b44effbdedcce7855abfa4 Retrying request to /chat/completions in 0.472503 seconds
+2026-08-02 23:27:08.108 INFO d17406eb02b44effbdedcce7855abfa4 Retrying request to /chat/completions in 0.819141 seconds
+2026-08-02 23:27:08.932 WARNING d17406eb02b44effbdedcce7855abfa4 wiki.llm.invalid_response error=Connection error. template_id=wiki_combined_extract_fallback
+2026-08-02 23:27:08.970 INFO - Retrying request to /chat/completions in 0.491553 seconds
+2026-08-02 23:27:09.465 INFO - Retrying request to /chat/completions in 0.997800 seconds
+2026-08-02 23:27:10.476 INFO - Retrying request to /chat/completions in 0.379698 seconds
+2026-08-02 23:27:10.859 INFO - Retrying request to /chat/completions in 0.755511 seconds
+2026-08-02 23:27:11.619 WARNING - wiki.llm.invalid_response error=Connection error. template_id=wiki_document_summary
+2026-08-02 23:27:11.782 INFO - Retrying request to /chat/completions in 0.381810 seconds
+2026-08-02 23:27:12.168 INFO - Retrying request to /chat/completions in 0.754442 seconds
+2026-08-02 23:27:12.952 INFO - Retrying request to /chat/completions in 0.484099 seconds
+2026-08-02 23:27:13.459 INFO - Retrying request to /chat/completions in 0.973030 seconds
+2026-08-02 23:27:14.453 WARNING - wiki.llm.invalid_response error=Connection error. template_id=wiki_reduce_page
+2026-08-02 23:27:14.567 INFO d17406eb02b44effbdedcce7855abfa4 processing_worker.task.completed task_id=processing-46b2601bed3f3d3f601fad343412cb23 worker_id=local-processing-worker
+2026-08-02 23:27:14.578 INFO d17406eb02b44effbdedcce7855abfa4 processing_worker.task.start attempt=1 task_id=processing-46f2c970778604d3fcb6eb2941bb3ffc task_type=wiki.finalize worker_id=local-processing-worker
+2026-08-02 23:27:14.657 INFO d17406eb02b44effbdedcce7855abfa4 Retrying request to /chat/completions in 0.414143 seconds
+2026-08-02 23:27:15.074 INFO d17406eb02b44effbdedcce7855abfa4 Retrying request to /chat/completions in 0.819014 seconds
+2026-08-02 23:27:15.946 INFO d17406eb02b44effbdedcce7855abfa4 Retrying request to /chat/completions in 0.464795 seconds
+2026-08-02 23:27:16.415 INFO d17406eb02b44effbdedcce7855abfa4 Retrying request to /chat/completions in 0.781093 seconds
+2026-08-02 23:27:17.211 WARNING d17406eb02b44effbdedcce7855abfa4 wiki.llm.invalid_response error=Connection error. template_id=wiki_index_intro
+2026-08-02 23:27:17.447 INFO d17406eb02b44effbdedcce7855abfa4 processing_worker.task.completed task_id=processing-46f2c970778604d3fcb6eb2941bb3ffc worker_id=local-processing-worker
+2026-08-02 23:27:17.458 INFO d17406eb02b44effbdedcce7855abfa4 processing_worker.task.start attempt=2 task_id=processing-7cf66beacae7f04bb439f8920dd687a6 task_type=upload_file.process worker_id=local-processing-worker
+2026-08-02 23:27:17.472 INFO d17406eb02b44effbdedcce7855abfa4 rag_service.upload_file.process.start batch_id=upload-30b9dc75e54b4588957fd66be527ac43 file_id=upload-file-1af872e9effe43be9d7d71b746e52b15 knowledge_base_id=2394106ae7554c3fb06c13dbd9539a9f storage_path=uploads/2394106ae7554c3fb06c13dbd9539a9f/upload-30b9dc75e54b4588957fd66be527ac43/DH-P7008.txt workspace_id=default-workspace
+2026-08-02 23:27:17.604 INFO d17406eb02b44effbdedcce7855abfa4 document.processing.start doc_id=bc27c2647438a4b64e5ef8097b541a48 file_size=3332 knowledge_base_id=2394106ae7554c3fb06c13dbd9539a9f source=uploads/2394106ae7554c3fb06c13dbd9539a9f/upload-30b9dc75e54b4588957fd66be527ac43/DH-P7008.txt workspace_id=default-workspace
+2026-08-02 23:27:17.631 INFO d17406eb02b44effbdedcce7855abfa4 document.processing.stage.start doc_id=bc27c2647438a4b64e5ef8097b541a48 source=uploads/2394106ae7554c3fb06c13dbd9539a9f/upload-30b9dc75e54b4588957fd66be527ac43/DH-P7008.txt stage=parse
+2026-08-02 23:27:17.682 INFO d17406eb02b44effbdedcce7855abfa4 document.processing.stage.end doc_id=bc27c2647438a4b64e5ef8097b541a48 elements=170 images=0 stage=parse
+2026-08-02 23:27:17.721 INFO d17406eb02b44effbdedcce7855abfa4 document.processing.stage.start doc_id=bc27c2647438a4b64e5ef8097b541a48 stage=chunk
+2026-08-02 23:27:17.766 INFO d17406eb02b44effbdedcce7855abfa4 document.processing.stage.end by_strategy={"legacy": 6} by_type={"child": 5, "parent": 1} chunk_count=6 doc_id=bc27c2647438a4b64e5ef8097b541a48 lengths={"average": 619.3333333333334, "maximum": 1858, "minimum": 328, "oversize_count": 1, "tiny_count": 0} stage=chunk tier_chains=[["legacy"]]
+2026-08-02 23:27:17.804 INFO d17406eb02b44effbdedcce7855abfa4 document.processing.stage.start doc_id=bc27c2647438a4b64e5ef8097b541a48 stage=index
+2026-08-02 23:27:22.489 INFO d17406eb02b44effbdedcce7855abfa4 document.processing.stage.end chunks=6 doc_id=bc27c2647438a4b64e5ef8097b541a48 stage=index
+2026-08-02 23:27:22.529 INFO d17406eb02b44effbdedcce7855abfa4 document.processing.stage.start doc_id=bc27c2647438a4b64e5ef8097b541a48 image_count=0 stage=multimodal
+2026-08-02 23:27:22.570 INFO d17406eb02b44effbdedcce7855abfa4 document.processing.stage.end doc_id=bc27c2647438a4b64e5ef8097b541a48 failed=0 stage=multimodal total=0
+2026-08-02 23:27:22.610 INFO d17406eb02b44effbdedcce7855abfa4 document.processing.stage.start doc_id=bc27c2647438a4b64e5ef8097b541a48 stage=postprocess
+2026-08-02 23:27:22.775 INFO d17406eb02b44effbdedcce7855abfa4 document.enrichment.start doc_id=bc27c2647438a4b64e5ef8097b541a48 knowledge_base_id=2394106ae7554c3fb06c13dbd9539a9f task_id=enrichment-d19e70361fef48ee9de4cc4ed5c009f8 workspace_id=default-workspace
+2026-08-02 23:27:22.843 INFO d17406eb02b44effbdedcce7855abfa4 document.processing.stage.end doc_id=bc27c2647438a4b64e5ef8097b541a48 enrichment_queued=True kg_enabled=False stage=postprocess wiki_generation_status=queued
+2026-08-02 23:27:22.939 INFO d17406eb02b44effbdedcce7855abfa4 Retrying request to /chat/completions in 0.421400 seconds
+2026-08-02 23:27:23.385 INFO d17406eb02b44effbdedcce7855abfa4 Retrying request to /chat/completions in 0.988903 seconds
+2026-08-02 23:27:23.502 INFO d17406eb02b44effbdedcce7855abfa4 document.processing.end doc_id=bc27c2647438a4b64e5ef8097b541a48 indexed_chunks=0 knowledge_base_id=2394106ae7554c3fb06c13dbd9539a9f status=completed workspace_id=default-workspace
+2026-08-02 23:27:23.551 INFO d17406eb02b44effbdedcce7855abfa4 rag_service.upload_file.process.end batch_id=upload-30b9dc75e54b4588957fd66be527ac43 chunks=6 document_id=bc27c2647438a4b64e5ef8097b541a48 file_id=upload-file-1af872e9effe43be9d7d71b746e52b15 knowledge_base_id=2394106ae7554c3fb06c13dbd9539a9f workspace_id=default-workspace
+2026-08-02 23:27:23.594 INFO d17406eb02b44effbdedcce7855abfa4 processing_worker.task.completed task_id=processing-7cf66beacae7f04bb439f8920dd687a6 worker_id=local-processing-worker
+2026-08-02 23:27:23.605 INFO d17406eb02b44effbdedcce7855abfa4 processing_worker.task.start attempt=1 task_id=processing-a3e565ce7584d1868a03454ca92f7fd1 task_type=wiki.ingest worker_id=local-processing-worker
+2026-08-02 23:27:23.683 INFO d17406eb02b44effbdedcce7855abfa4 Retrying request to /chat/completions in 0.454519 seconds
+2026-08-02 23:27:24.141 INFO d17406eb02b44effbdedcce7855abfa4 Retrying request to /chat/completions in 0.851492 seconds
+2026-08-02 23:27:24.377 ERROR d17406eb02b44effbdedcce7855abfa4 document.enrichment.failed
+Traceback (most recent call last):
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpx\_transports\default.py", line 101, in map_httpcore_exceptions
+    yield
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpx\_transports\default.py", line 250, in handle_request
+    resp = self._pool.handle_request(req)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpcore\_sync\connection_pool.py", line 256, in handle_request
+    raise exc from None
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpcore\_sync\connection_pool.py", line 236, in handle_request
+    response = connection.handle_request(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpcore\_sync\connection.py", line 101, in handle_request
+    raise exc
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpcore\_sync\connection.py", line 78, in handle_request
+    stream = self._connect(request)
+             ^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpcore\_sync\connection.py", line 124, in _connect
+    stream = self._network_backend.connect_tcp(**kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpcore\_backends\sync.py", line 207, in connect_tcp
+    with map_exceptions(exc_map):
+  File "D:\soft\anaconda\Lib\contextlib.py", line 155, in __exit__
+    self.gen.throw(typ, value, traceback)
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpcore\_exceptions.py", line 14, in map_exceptions
+    raise to_exc(exc) from exc
+httpcore.ConnectError: [WinError 10013] “‘“ª÷÷∑√Œ »®œﬁ≤ª‘ –Ìµƒ∑Ω Ω◊ˆ¡À“ª∏ˆ∑√Œ Ã◊Ω”◊÷µƒ≥¢ ‘°£
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\openai\_base_client.py", line 955, in _request
+    response = self._client.send(
+               ^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpx\_client.py", line 914, in send
+    response = self._send_handling_auth(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpx\_client.py", line 942, in _send_handling_auth
+    response = self._send_handling_redirects(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpx\_client.py", line 979, in _send_handling_redirects
+    response = self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpx\_client.py", line 1014, in _send_single_request
+    response = transport.handle_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpx\_transports\default.py", line 249, in handle_request
+    with map_httpcore_exceptions():
+  File "D:\soft\anaconda\Lib\contextlib.py", line 155, in __exit__
+    self.gen.throw(typ, value, traceback)
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpx\_transports\default.py", line 118, in map_httpcore_exceptions
+    raise mapped_exc(message) from exc
+httpx.ConnectError: [WinError 10013] “‘“ª÷÷∑√Œ »®œﬁ≤ª‘ –Ìµƒ∑Ω Ω◊ˆ¡À“ª∏ˆ∑√Œ Ã◊Ω”◊÷µƒ≥¢ ‘°£
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "D:\python_project\new-rag-project\backend\app\services\documents\document_enrichment.py", line 210, in _run
+    self.provider.generate(
+  File "D:\python_project\new-rag-project\backend\app\services\documents\document_enrichment.py", line 111, in generate
+    response = self.client.chat.completions.create(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\openai\_utils\_utils.py", line 279, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\openai\resources\chat\completions\completions.py", line 914, in create
+    return self._post(
+           ^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\openai\_base_client.py", line 1242, in post
+    return cast(ResponseT, self.request(cast_to, opts, stream=stream, stream_cls=stream_cls))
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\openai\_base_client.py", line 919, in request
+    return self._request(
+           ^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\openai\_base_client.py", line 979, in _request
+    return self._retry_request(
+           ^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\openai\_base_client.py", line 1057, in _retry_request
+    return self._request(
+           ^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\openai\_base_client.py", line 979, in _request
+    return self._retry_request(
+           ^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\openai\_base_client.py", line 1057, in _retry_request
+    return self._request(
+           ^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\openai\_base_client.py", line 989, in _request
+    raise APIConnectionError(request=request) from err
+openai.APIConnectionError: Connection error. doc_id=bc27c2647438a4b64e5ef8097b541a48 duration_ms=1593 error_message=Connection error. error_type=APIConnectionError knowledge_base_id=2394106ae7554c3fb06c13dbd9539a9f task_id=enrichment-d19e70361fef48ee9de4cc4ed5c009f8 workspace_id=default-workspace
+2026-08-02 23:27:25.003 INFO d17406eb02b44effbdedcce7855abfa4 Retrying request to /chat/completions in 0.460947 seconds
+2026-08-02 23:27:25.485 INFO d17406eb02b44effbdedcce7855abfa4 Retrying request to /chat/completions in 0.949090 seconds
+2026-08-02 23:27:26.437 WARNING d17406eb02b44effbdedcce7855abfa4 wiki.llm.invalid_response error=Connection error. template_id=wiki_extract_candidates
+2026-08-02 23:27:26.467 INFO d17406eb02b44effbdedcce7855abfa4 Retrying request to /chat/completions in 0.385246 seconds
+2026-08-02 23:27:26.855 INFO d17406eb02b44effbdedcce7855abfa4 Retrying request to /chat/completions in 0.949940 seconds
+2026-08-02 23:27:27.815 INFO d17406eb02b44effbdedcce7855abfa4 Retrying request to /chat/completions in 0.482752 seconds
+2026-08-02 23:27:28.303 INFO d17406eb02b44effbdedcce7855abfa4 Retrying request to /chat/completions in 0.980970 seconds
+2026-08-02 23:27:29.288 WARNING d17406eb02b44effbdedcce7855abfa4 wiki.llm.invalid_response error=Connection error. template_id=wiki_combined_extract_fallback
+2026-08-02 23:27:29.325 INFO - Retrying request to /chat/completions in 0.409165 seconds
+2026-08-02 23:27:29.737 INFO - Retrying request to /chat/completions in 0.789120 seconds
+2026-08-02 23:27:30.540 INFO - Retrying request to /chat/completions in 0.399093 seconds
+2026-08-02 23:27:30.942 INFO - Retrying request to /chat/completions in 0.978824 seconds
+2026-08-02 23:27:31.924 WARNING - wiki.llm.invalid_response error=Connection error. template_id=wiki_document_summary
+2026-08-02 23:27:32.044 INFO - Retrying request to /chat/completions in 0.442921 seconds
+2026-08-02 23:27:32.489 INFO - Retrying request to /chat/completions in 0.942516 seconds
+2026-08-02 23:27:33.451 INFO - Retrying request to /chat/completions in 0.424465 seconds
+2026-08-02 23:27:33.879 INFO - Retrying request to /chat/completions in 0.882054 seconds
+2026-08-02 23:27:34.784 WARNING - wiki.llm.invalid_response error=Connection error. template_id=wiki_reduce_page
+2026-08-02 23:27:34.889 INFO d17406eb02b44effbdedcce7855abfa4 processing_worker.task.completed task_id=processing-a3e565ce7584d1868a03454ca92f7fd1 worker_id=local-processing-worker
+2026-08-02 23:27:34.899 INFO d17406eb02b44effbdedcce7855abfa4 processing_worker.task.start attempt=1 task_id=processing-60e7fae244c271d90e25a9866ad334e7 task_type=wiki.finalize worker_id=local-processing-worker
+2026-08-02 23:27:34.998 INFO d17406eb02b44effbdedcce7855abfa4 Retrying request to /chat/completions in 0.464383 seconds
+2026-08-02 23:27:35.488 INFO d17406eb02b44effbdedcce7855abfa4 Retrying request to /chat/completions in 0.762785 seconds
+2026-08-02 23:27:36.264 INFO d17406eb02b44effbdedcce7855abfa4 Retrying request to /chat/completions in 0.488348 seconds
+2026-08-02 23:27:36.756 INFO d17406eb02b44effbdedcce7855abfa4 Retrying request to /chat/completions in 0.891224 seconds
+2026-08-02 23:27:37.651 WARNING d17406eb02b44effbdedcce7855abfa4 wiki.llm.invalid_response error=Connection error. template_id=wiki_index_intro
+2026-08-02 23:27:37.829 INFO d17406eb02b44effbdedcce7855abfa4 processing_worker.task.completed task_id=processing-60e7fae244c271d90e25a9866ad334e7 worker_id=local-processing-worker
+2026-08-02 23:30:00.345 INFO e788cf0c563244cabd7075f10018804f request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/knowledge-bases
+2026-08-02 23:30:00.399 INFO e788cf0c563244cabd7075f10018804f request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=54 method=GET path=/knowledge-bases response_content_type=application/json status_code=200
+2026-08-02 23:30:00.400 INFO - 127.0.0.1:56702 - "GET /knowledge-bases HTTP/1.1" 200
+2026-08-02 23:30:00.554 INFO ab798a8425594b8ca2b39b93b886531c request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/rag/documents?knowledge_base_id=2394106ae7554c3fb06c13dbd9539a9f
+2026-08-02 23:30:00.562 INFO ab798a8425594b8ca2b39b93b886531c request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=8 method=GET path=/rag/documents?knowledge_base_id=2394106ae7554c3fb06c13dbd9539a9f response_content_type=application/json status_code=404
+2026-08-02 23:30:00.563 INFO - 127.0.0.1:56702 - "GET /rag/documents?knowledge_base_id=2394106ae7554c3fb06c13dbd9539a9f HTTP/1.1" 404
+2026-08-02 23:30:26.391 INFO e757dd37e87d47c78fc99c7794b043e5 request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/documents?knowledge_base_id=2394106ae7554c3fb06c13dbd9539a9f
+2026-08-02 23:30:26.504 INFO e757dd37e87d47c78fc99c7794b043e5 request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=113 method=GET path=/documents?knowledge_base_id=2394106ae7554c3fb06c13dbd9539a9f response_content_type=application/json status_code=200
+2026-08-02 23:30:26.505 INFO - 127.0.0.1:56307 - "GET /documents?knowledge_base_id=2394106ae7554c3fb06c13dbd9539a9f HTTP/1.1" 200
+2026-08-02 23:31:37.419 INFO 5f12558f8d6447488322fc96af90ed1b request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/knowledge-bases/2394106ae7554c3fb06c13dbd9539a9f/wiki/pages?q=DH-P7008&limit=100
+2026-08-02 23:31:37.496 INFO 5f12558f8d6447488322fc96af90ed1b request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=76 method=GET path=/knowledge-bases/2394106ae7554c3fb06c13dbd9539a9f/wiki/pages?q=DH-P7008&limit=100 response_content_type=application/json status_code=200
+2026-08-02 23:31:37.496 INFO - 127.0.0.1:49671 - "GET /knowledge-bases/2394106ae7554c3fb06c13dbd9539a9f/wiki/pages?q=DH-P7008&limit=100 HTTP/1.1" 200
+2026-08-02 23:31:37.583 INFO be6449c0b53847f69855aae1c68295f1 request.start client_ip=127.0.0.1 content_length= content_type= method=GET path=/knowledge-bases/2394106ae7554c3fb06c13dbd9539a9f/wiki/processing-tasks
+2026-08-02 23:31:37.644 INFO be6449c0b53847f69855aae1c68295f1 request.end client_ip=127.0.0.1 content_length= content_type= duration_ms=61 method=GET path=/knowledge-bases/2394106ae7554c3fb06c13dbd9539a9f/wiki/processing-tasks response_content_type=application/json status_code=200
+2026-08-02 23:31:37.644 INFO - 127.0.0.1:49671 - "GET /knowledge-bases/2394106ae7554c3fb06c13dbd9539a9f/wiki/processing-tasks HTTP/1.1" 200
+2026-08-02 23:32:13.019 INFO d17406eb02b44effbdedcce7855abfa4 processing_worker.task.start attempt=2 task_id=processing-759852625634ac21526e18b1400556f7 task_type=wiki.ingest worker_id=local-processing-worker
+2026-08-02 23:32:13.117 INFO d17406eb02b44effbdedcce7855abfa4 Retrying request to /chat/completions in 0.378073 seconds
+2026-08-02 23:32:13.498 INFO d17406eb02b44effbdedcce7855abfa4 Retrying request to /chat/completions in 0.929812 seconds
+2026-08-02 23:32:14.438 INFO d17406eb02b44effbdedcce7855abfa4 Retrying request to /chat/completions in 0.456730 seconds
+2026-08-02 23:32:14.898 INFO d17406eb02b44effbdedcce7855abfa4 Retrying request to /chat/completions in 0.874362 seconds
+2026-08-02 23:32:15.776 WARNING d17406eb02b44effbdedcce7855abfa4 wiki.llm.invalid_response error=Connection error. template_id=wiki_extract_candidates
+2026-08-02 23:32:15.804 INFO d17406eb02b44effbdedcce7855abfa4 Retrying request to /chat/completions in 0.398334 seconds
+2026-08-02 23:32:16.218 INFO d17406eb02b44effbdedcce7855abfa4 Retrying request to /chat/completions in 0.855313 seconds
+2026-08-02 23:32:17.100 INFO d17406eb02b44effbdedcce7855abfa4 Retrying request to /chat/completions in 0.394987 seconds
+2026-08-02 23:32:17.523 INFO d17406eb02b44effbdedcce7855abfa4 Retrying request to /chat/completions in 0.855834 seconds
+2026-08-02 23:32:18.382 WARNING d17406eb02b44effbdedcce7855abfa4 wiki.llm.invalid_response error=Connection error. template_id=wiki_combined_extract_fallback
+2026-08-02 23:32:18.412 INFO - Retrying request to /chat/completions in 0.419094 seconds
+2026-08-02 23:32:18.834 INFO - Retrying request to /chat/completions in 0.944622 seconds
+2026-08-02 23:32:19.790 INFO - Retrying request to /chat/completions in 0.400910 seconds
+2026-08-02 23:32:20.255 INFO - Retrying request to /chat/completions in 0.939954 seconds
+2026-08-02 23:32:21.230 WARNING - wiki.llm.invalid_response error=Connection error. template_id=wiki_document_summary
+2026-08-02 23:32:21.534 INFO - Retrying request to /chat/completions in 0.385076 seconds
+2026-08-02 23:32:21.566 INFO - Retrying request to /chat/completions in 0.381785 seconds
+2026-08-02 23:32:21.587 INFO - Retrying request to /chat/completions in 0.473603 seconds
+2026-08-02 23:32:21.598 INFO - Retrying request to /chat/completions in 0.400186 seconds
+2026-08-02 23:32:21.922 INFO - Retrying request to /chat/completions in 0.848093 seconds
+2026-08-02 23:32:21.952 INFO - Retrying request to /chat/completions in 0.994507 seconds
+2026-08-02 23:32:22.006 INFO - Retrying request to /chat/completions in 0.972944 seconds
+2026-08-02 23:32:22.091 INFO - Retrying request to /chat/completions in 0.946299 seconds
+2026-08-02 23:32:22.796 INFO - Retrying request to /chat/completions in 0.480084 seconds
+2026-08-02 23:32:22.959 INFO - Retrying request to /chat/completions in 0.381949 seconds
+2026-08-02 23:32:22.991 INFO - Retrying request to /chat/completions in 0.459671 seconds
+2026-08-02 23:32:23.073 INFO - Retrying request to /chat/completions in 0.474575 seconds
+2026-08-02 23:32:23.304 INFO - Retrying request to /chat/completions in 0.999131 seconds
+2026-08-02 23:32:23.366 INFO - Retrying request to /chat/completions in 0.836540 seconds
+2026-08-02 23:32:23.454 INFO - Retrying request to /chat/completions in 0.818725 seconds
+2026-08-02 23:32:23.551 INFO - Retrying request to /chat/completions in 0.808951 seconds
+2026-08-02 23:32:24.206 WARNING - wiki.llm.invalid_response error=Connection error. template_id=wiki_reduce_page
+2026-08-02 23:32:24.300 WARNING - wiki.llm.invalid_response error=Connection error. template_id=wiki_reduce_page
+2026-08-02 23:32:24.306 WARNING - wiki.llm.invalid_response error=Connection error. template_id=wiki_reduce_page
+2026-08-02 23:32:24.315 INFO - Retrying request to /chat/completions in 0.483551 seconds
+2026-08-02 23:32:24.364 WARNING - wiki.llm.invalid_response error=Connection error. template_id=wiki_reduce_page
+2026-08-02 23:32:24.524 INFO - Retrying request to /chat/completions in 0.407948 seconds
+2026-08-02 23:32:24.554 INFO - Retrying request to /chat/completions in 0.483438 seconds
+2026-08-02 23:32:24.569 INFO - Retrying request to /chat/completions in 0.391447 seconds
+2026-08-02 23:32:24.823 INFO - Retrying request to /chat/completions in 0.805617 seconds
+2026-08-02 23:32:24.935 INFO - Retrying request to /chat/completions in 0.964686 seconds
+2026-08-02 23:32:24.975 INFO - Retrying request to /chat/completions in 0.754721 seconds
+2026-08-02 23:32:25.044 INFO - Retrying request to /chat/completions in 0.770823 seconds
+2026-08-02 23:32:25.645 INFO - Retrying request to /chat/completions in 0.462301 seconds
+2026-08-02 23:32:25.742 INFO - Retrying request to /chat/completions in 0.445421 seconds
+2026-08-02 23:32:25.827 INFO - Retrying request to /chat/completions in 0.477849 seconds
+2026-08-02 23:32:25.924 INFO - Retrying request to /chat/completions in 0.498119 seconds
+2026-08-02 23:32:26.110 INFO - Retrying request to /chat/completions in 0.821555 seconds
+2026-08-02 23:32:26.190 INFO - Retrying request to /chat/completions in 0.996922 seconds
+2026-08-02 23:32:26.309 INFO - Retrying request to /chat/completions in 0.935593 seconds
+2026-08-02 23:32:26.425 INFO - Retrying request to /chat/completions in 0.893211 seconds
+2026-08-02 23:32:26.935 WARNING - wiki.llm.invalid_response error=Connection error. template_id=wiki_reduce_page
+2026-08-02 23:32:27.015 INFO - Retrying request to /chat/completions in 0.434670 seconds
+2026-08-02 23:32:27.190 WARNING - wiki.llm.invalid_response error=Connection error. template_id=wiki_reduce_page
+2026-08-02 23:32:27.248 WARNING - wiki.llm.invalid_response error=Connection error. template_id=wiki_reduce_page
+2026-08-02 23:32:27.272 INFO - Retrying request to /chat/completions in 0.446009 seconds
+2026-08-02 23:32:27.321 WARNING - wiki.llm.invalid_response error=Connection error. template_id=wiki_reduce_page
+2026-08-02 23:32:27.392 INFO - Retrying request to /chat/completions in 0.407338 seconds
+2026-08-02 23:32:27.418 INFO - Retrying request to /chat/completions in 0.393323 seconds
+2026-08-02 23:32:27.476 INFO - Retrying request to /chat/completions in 0.945816 seconds
+2026-08-02 23:32:27.737 INFO - Retrying request to /chat/completions in 0.826142 seconds
+2026-08-02 23:32:27.803 INFO - Retrying request to /chat/completions in 0.998530 seconds
+2026-08-02 23:32:27.815 INFO - Retrying request to /chat/completions in 0.796760 seconds
+2026-08-02 23:32:28.434 INFO - Retrying request to /chat/completions in 0.469860 seconds
+2026-08-02 23:32:28.575 INFO - Retrying request to /chat/completions in 0.396763 seconds
+2026-08-02 23:32:28.626 INFO - Retrying request to /chat/completions in 0.390340 seconds
+2026-08-02 23:32:28.830 INFO - Retrying request to /chat/completions in 0.477839 seconds
+2026-08-02 23:32:28.906 INFO - Retrying request to /chat/completions in 0.948413 seconds
+2026-08-02 23:32:29.000 INFO - Retrying request to /chat/completions in 0.834529 seconds
+2026-08-02 23:32:29.020 INFO - Retrying request to /chat/completions in 0.840460 seconds
+2026-08-02 23:32:29.311 INFO - Retrying request to /chat/completions in 0.896971 seconds
+2026-08-02 23:32:29.840 WARNING - wiki.llm.invalid_response error=Connection error. template_id=wiki_reduce_page
+2026-08-02 23:32:29.863 WARNING - wiki.llm.invalid_response error=Connection error. template_id=wiki_reduce_page
+2026-08-02 23:32:29.875 WARNING - wiki.llm.invalid_response error=Connection error. template_id=wiki_reduce_page
+2026-08-02 23:32:30.052 INFO - Retrying request to /chat/completions in 0.499577 seconds
+2026-08-02 23:32:30.103 INFO - Retrying request to /chat/completions in 0.452977 seconds
+2026-08-02 23:32:30.136 INFO - Retrying request to /chat/completions in 0.381117 seconds
+2026-08-02 23:32:30.227 WARNING - wiki.llm.invalid_response error=Connection error. template_id=wiki_reduce_page
+2026-08-02 23:32:30.374 INFO - Retrying request to /chat/completions in 0.443429 seconds
+2026-08-02 23:32:30.521 INFO - Retrying request to /chat/completions in 0.791741 seconds
+2026-08-02 23:32:30.579 INFO - Retrying request to /chat/completions in 0.912081 seconds
+2026-08-02 23:32:30.580 INFO - Retrying request to /chat/completions in 0.996724 seconds
+2026-08-02 23:32:30.840 INFO - Retrying request to /chat/completions in 0.758974 seconds
+2026-08-02 23:32:31.347 INFO - Retrying request to /chat/completions in 0.467734 seconds
+2026-08-02 23:32:31.503 INFO - Retrying request to /chat/completions in 0.452412 seconds
+2026-08-02 23:32:31.588 INFO - Retrying request to /chat/completions in 0.475323 seconds
+2026-08-02 23:32:31.610 INFO - Retrying request to /chat/completions in 0.480494 seconds
+2026-08-02 23:32:31.838 INFO - Retrying request to /chat/completions in 0.970536 seconds
+2026-08-02 23:32:31.958 INFO - Retrying request to /chat/completions in 0.969305 seconds
+2026-08-02 23:32:32.083 INFO - Retrying request to /chat/completions in 0.944094 seconds
+2026-08-02 23:32:32.095 INFO - Retrying request to /chat/completions in 0.872636 seconds
+2026-08-02 23:32:32.837 WARNING - wiki.llm.invalid_response error=Connection error. template_id=wiki_reduce_page
+2026-08-02 23:32:32.931 WARNING - wiki.llm.invalid_response error=Connection error. template_id=wiki_reduce_page
+2026-08-02 23:32:32.970 WARNING - wiki.llm.invalid_response error=Connection error. template_id=wiki_reduce_page
+2026-08-02 23:32:32.996 INFO - Retrying request to /chat/completions in 0.423363 seconds
+2026-08-02 23:32:33.031 WARNING - wiki.llm.invalid_response error=Connection error. template_id=wiki_reduce_page
+2026-08-02 23:32:33.198 INFO - Retrying request to /chat/completions in 0.461089 seconds
+2026-08-02 23:32:33.243 INFO - Retrying request to /chat/completions in 0.482901 seconds
+2026-08-02 23:32:33.422 INFO - Retrying request to /chat/completions in 0.906208 seconds
+2026-08-02 23:32:33.663 INFO - Retrying request to /chat/completions in 0.758049 seconds
+2026-08-02 23:32:33.728 INFO - Retrying request to /chat/completions in 0.981165 seconds
+2026-08-02 23:32:34.386 INFO - Retrying request to /chat/completions in 0.463175 seconds
+2026-08-02 23:32:34.432 INFO - Retrying request to /chat/completions in 0.401640 seconds
+2026-08-02 23:32:34.740 INFO - Retrying request to /chat/completions in 0.423379 seconds
+2026-08-02 23:32:34.837 INFO - Retrying request to /chat/completions in 0.821912 seconds
+2026-08-02 23:32:34.877 INFO - Retrying request to /chat/completions in 0.818587 seconds
+2026-08-02 23:32:35.166 INFO - Retrying request to /chat/completions in 0.816826 seconds
+2026-08-02 23:32:35.662 WARNING - wiki.llm.invalid_response error=Connection error. template_id=wiki_reduce_page
+2026-08-02 23:32:35.699 WARNING - wiki.llm.invalid_response error=Connection error. template_id=wiki_reduce_page
+2026-08-02 23:32:35.988 WARNING - wiki.llm.invalid_response error=Connection error. template_id=wiki_reduce_page
+2026-08-02 23:32:36.153 INFO d17406eb02b44effbdedcce7855abfa4 processing_worker.task.completed task_id=processing-759852625634ac21526e18b1400556f7 worker_id=local-processing-worker
+2026-08-02 23:32:36.171 INFO d17406eb02b44effbdedcce7855abfa4 processing_worker.task.start attempt=1 task_id=processing-48195be137b87edcc5d845355db24a8a task_type=wiki.finalize worker_id=local-processing-worker
+2026-08-02 23:32:36.798 INFO d17406eb02b44effbdedcce7855abfa4 Retrying request to /chat/completions in 0.458582 seconds
+2026-08-02 23:32:37.273 INFO d17406eb02b44effbdedcce7855abfa4 Retrying request to /chat/completions in 0.754780 seconds
+2026-08-02 23:32:38.040 INFO d17406eb02b44effbdedcce7855abfa4 Retrying request to /chat/completions in 0.479711 seconds
+2026-08-02 23:32:38.545 INFO d17406eb02b44effbdedcce7855abfa4 Retrying request to /chat/completions in 0.928260 seconds
+2026-08-02 23:32:39.477 WARNING d17406eb02b44effbdedcce7855abfa4 wiki.llm.invalid_response error=Connection error. template_id=wiki_index_intro
+2026-08-02 23:32:42.765 INFO d17406eb02b44effbdedcce7855abfa4 processing_worker.task.completed task_id=processing-48195be137b87edcc5d845355db24a8a worker_id=local-processing-worker
+2026-08-02 23:33:56.046 INFO 435bec6e33f84381b2c90b967f727962 processing_worker.task.start attempt=1 task_id=processing-a7c9fcc48ba3541479125ea27fba95fb task_type=upload_file.process worker_id=local-processing-worker
+2026-08-02 23:33:56.062 INFO 435bec6e33f84381b2c90b967f727962 rag_service.upload_file.process.start batch_id=upload-c9e4f89c69264fe292a45550d61d0bf4 file_id=upload-file-beda45423b594840971590b944bb4936 knowledge_base_id=2394106ae7554c3fb06c13dbd9539a9f storage_path=uploads/2394106ae7554c3fb06c13dbd9539a9f/upload-c9e4f89c69264fe292a45550d61d0bf4/DH-P7008.txt workspace_id=default-workspace
+2026-08-02 23:33:56.249 INFO 435bec6e33f84381b2c90b967f727962 document.processing.start doc_id=59fdf98efc70b45272d9624523d5de68 file_size=3332 knowledge_base_id=2394106ae7554c3fb06c13dbd9539a9f source=uploads/2394106ae7554c3fb06c13dbd9539a9f/upload-c9e4f89c69264fe292a45550d61d0bf4/DH-P7008.txt workspace_id=default-workspace
+2026-08-02 23:33:56.274 INFO 435bec6e33f84381b2c90b967f727962 document.processing.stage.start doc_id=59fdf98efc70b45272d9624523d5de68 source=uploads/2394106ae7554c3fb06c13dbd9539a9f/upload-c9e4f89c69264fe292a45550d61d0bf4/DH-P7008.txt stage=parse
+2026-08-02 23:33:56.338 INFO 435bec6e33f84381b2c90b967f727962 document.processing.stage.end doc_id=59fdf98efc70b45272d9624523d5de68 elements=170 images=0 stage=parse
+2026-08-02 23:33:56.376 INFO 435bec6e33f84381b2c90b967f727962 document.processing.stage.start doc_id=59fdf98efc70b45272d9624523d5de68 stage=chunk
+2026-08-02 23:33:56.418 INFO 435bec6e33f84381b2c90b967f727962 document.processing.stage.end by_strategy={"legacy": 6} by_type={"child": 5, "parent": 1} chunk_count=6 doc_id=59fdf98efc70b45272d9624523d5de68 lengths={"average": 619.3333333333334, "maximum": 1858, "minimum": 328, "oversize_count": 1, "tiny_count": 0} stage=chunk tier_chains=[["legacy"]]
+2026-08-02 23:33:56.485 INFO 435bec6e33f84381b2c90b967f727962 document.processing.stage.start doc_id=59fdf98efc70b45272d9624523d5de68 stage=index
+2026-08-02 23:33:57.388 INFO 435bec6e33f84381b2c90b967f727962 document.processing.stage.end chunks=6 doc_id=59fdf98efc70b45272d9624523d5de68 stage=index
+2026-08-02 23:33:57.428 INFO 435bec6e33f84381b2c90b967f727962 document.processing.stage.start doc_id=59fdf98efc70b45272d9624523d5de68 image_count=0 stage=multimodal
+2026-08-02 23:33:57.473 INFO 435bec6e33f84381b2c90b967f727962 document.processing.stage.end doc_id=59fdf98efc70b45272d9624523d5de68 failed=0 stage=multimodal total=0
+2026-08-02 23:33:57.529 INFO 435bec6e33f84381b2c90b967f727962 document.processing.stage.start doc_id=59fdf98efc70b45272d9624523d5de68 stage=postprocess
+2026-08-02 23:33:57.708 INFO 435bec6e33f84381b2c90b967f727962 document.enrichment.start doc_id=59fdf98efc70b45272d9624523d5de68 knowledge_base_id=2394106ae7554c3fb06c13dbd9539a9f task_id=enrichment-9bf6021f63ab4bc5b0411c420882e0be workspace_id=default-workspace
+2026-08-02 23:33:57.749 INFO 435bec6e33f84381b2c90b967f727962 document.processing.stage.end doc_id=59fdf98efc70b45272d9624523d5de68 enrichment_queued=True kg_enabled=False stage=postprocess wiki_generation_status=queued
+2026-08-02 23:33:57.893 INFO 435bec6e33f84381b2c90b967f727962 Retrying request to /chat/completions in 0.484383 seconds
+2026-08-02 23:33:58.320 INFO 435bec6e33f84381b2c90b967f727962 document.processing.end doc_id=59fdf98efc70b45272d9624523d5de68 indexed_chunks=0 knowledge_base_id=2394106ae7554c3fb06c13dbd9539a9f status=completed workspace_id=default-workspace
+2026-08-02 23:33:58.366 INFO 435bec6e33f84381b2c90b967f727962 rag_service.upload_file.process.end batch_id=upload-c9e4f89c69264fe292a45550d61d0bf4 chunks=6 document_id=59fdf98efc70b45272d9624523d5de68 file_id=upload-file-beda45423b594840971590b944bb4936 knowledge_base_id=2394106ae7554c3fb06c13dbd9539a9f workspace_id=default-workspace
+2026-08-02 23:33:58.381 INFO 435bec6e33f84381b2c90b967f727962 Retrying request to /chat/completions in 0.889365 seconds
+2026-08-02 23:33:58.403 INFO 435bec6e33f84381b2c90b967f727962 processing_worker.task.completed task_id=processing-a7c9fcc48ba3541479125ea27fba95fb worker_id=local-processing-worker
+2026-08-02 23:33:59.274 ERROR 435bec6e33f84381b2c90b967f727962 document.enrichment.failed
+Traceback (most recent call last):
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpx\_transports\default.py", line 101, in map_httpcore_exceptions
+    yield
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpx\_transports\default.py", line 250, in handle_request
+    resp = self._pool.handle_request(req)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpcore\_sync\connection_pool.py", line 256, in handle_request
+    raise exc from None
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpcore\_sync\connection_pool.py", line 236, in handle_request
+    response = connection.handle_request(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpcore\_sync\connection.py", line 101, in handle_request
+    raise exc
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpcore\_sync\connection.py", line 78, in handle_request
+    stream = self._connect(request)
+             ^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpcore\_sync\connection.py", line 124, in _connect
+    stream = self._network_backend.connect_tcp(**kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpcore\_backends\sync.py", line 207, in connect_tcp
+    with map_exceptions(exc_map):
+  File "D:\soft\anaconda\Lib\contextlib.py", line 155, in __exit__
+    self.gen.throw(typ, value, traceback)
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpcore\_exceptions.py", line 14, in map_exceptions
+    raise to_exc(exc) from exc
+httpcore.ConnectError: [WinError 10013] “‘“ª÷÷∑√Œ »®œﬁ≤ª‘ –Ìµƒ∑Ω Ω◊ˆ¡À“ª∏ˆ∑√Œ Ã◊Ω”◊÷µƒ≥¢ ‘°£
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\openai\_base_client.py", line 955, in _request
+    response = self._client.send(
+               ^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpx\_client.py", line 914, in send
+    response = self._send_handling_auth(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpx\_client.py", line 942, in _send_handling_auth
+    response = self._send_handling_redirects(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpx\_client.py", line 979, in _send_handling_redirects
+    response = self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpx\_client.py", line 1014, in _send_single_request
+    response = transport.handle_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpx\_transports\default.py", line 249, in handle_request
+    with map_httpcore_exceptions():
+  File "D:\soft\anaconda\Lib\contextlib.py", line 155, in __exit__
+    self.gen.throw(typ, value, traceback)
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\httpx\_transports\default.py", line 118, in map_httpcore_exceptions
+    raise mapped_exc(message) from exc
+httpx.ConnectError: [WinError 10013] “‘“ª÷÷∑√Œ »®œﬁ≤ª‘ –Ìµƒ∑Ω Ω◊ˆ¡À“ª∏ˆ∑√Œ Ã◊Ω”◊÷µƒ≥¢ ‘°£
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "D:\python_project\new-rag-project\backend\app\services\documents\document_enrichment.py", line 210, in _run
+    self.provider.generate(
+  File "D:\python_project\new-rag-project\backend\app\services\documents\document_enrichment.py", line 111, in generate
+    response = self.client.chat.completions.create(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\openai\_utils\_utils.py", line 279, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\openai\resources\chat\completions\completions.py", line 914, in create
+    return self._post(
+           ^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\openai\_base_client.py", line 1242, in post
+    return cast(ResponseT, self.request(cast_to, opts, stream=stream, stream_cls=stream_cls))
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\openai\_base_client.py", line 919, in request
+    return self._request(
+           ^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\openai\_base_client.py", line 979, in _request
+    return self._retry_request(
+           ^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\openai\_base_client.py", line 1057, in _retry_request
+    return self._request(
+           ^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\openai\_base_client.py", line 979, in _request
+    return self._retry_request(
+           ^^^^^^^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\openai\_base_client.py", line 1057, in _retry_request
+    return self._request(
+           ^^^^^^^^^^^^^^
+  File "D:\python_project\new-rag-project\backend\.venv\Lib\site-packages\openai\_base_client.py", line 989, in _request
+    raise APIConnectionError(request=request) from err
+openai.APIConnectionError: Connection error. doc_id=59fdf98efc70b45272d9624523d5de68 duration_ms=1577 error_message=Connection error. error_type=APIConnectionError knowledge_base_id=2394106ae7554c3fb06c13dbd9539a9f task_id=enrichment-9bf6021f63ab4bc5b0411c420882e0be workspace_id=default-workspace
+2026-08-02 23:38:57.047 INFO 435bec6e33f84381b2c90b967f727962 processing_worker.task.start attempt=2 task_id=processing-0909f90aeb856f6de2422340627854a8 task_type=wiki.ingest worker_id=local-processing-worker
+2026-08-02 23:38:57.197 INFO 435bec6e33f84381b2c90b967f727962 Retrying request to /chat/completions in 0.389833 seconds
+2026-08-02 23:38:57.612 INFO 435bec6e33f84381b2c90b967f727962 Retrying request to /chat/completions in 0.832389 seconds
+2026-08-02 23:38:58.456 INFO 435bec6e33f84381b2c90b967f727962 Retrying request to /chat/completions in 0.396757 seconds
+2026-08-02 23:38:58.857 INFO 435bec6e33f84381b2c90b967f727962 Retrying request to /chat/completions in 0.895897 seconds
+2026-08-02 23:38:59.757 WARNING 435bec6e33f84381b2c90b967f727962 wiki.llm.invalid_response error=Connection error. template_id=wiki_extract_candidates
+2026-08-02 23:38:59.788 INFO 435bec6e33f84381b2c90b967f727962 Retrying request to /chat/completions in 0.458704 seconds
+2026-08-02 23:39:00.251 INFO 435bec6e33f84381b2c90b967f727962 Retrying request to /chat/completions in 0.759497 seconds
+2026-08-02 23:39:01.022 INFO 435bec6e33f84381b2c90b967f727962 Retrying request to /chat/completions in 0.422024 seconds
+2026-08-02 23:39:01.447 INFO 435bec6e33f84381b2c90b967f727962 Retrying request to /chat/completions in 0.931049 seconds
+2026-08-02 23:39:02.383 WARNING 435bec6e33f84381b2c90b967f727962 wiki.llm.invalid_response error=Connection error. template_id=wiki_combined_extract_fallback
+2026-08-02 23:39:02.419 INFO - Retrying request to /chat/completions in 0.465159 seconds
+2026-08-02 23:39:02.888 INFO - Retrying request to /chat/completions in 0.796192 seconds
+2026-08-02 23:39:03.715 INFO - Retrying request to /chat/completions in 0.472424 seconds
+2026-08-02 23:39:04.191 INFO - Retrying request to /chat/completions in 0.779129 seconds
+2026-08-02 23:39:04.973 WARNING - wiki.llm.invalid_response error=Connection error. template_id=wiki_document_summary
+2026-08-02 23:39:05.110 INFO - Retrying request to /chat/completions in 0.494765 seconds
+2026-08-02 23:39:05.610 INFO - Retrying request to /chat/completions in 0.888402 seconds
+2026-08-02 23:39:06.509 INFO - Retrying request to /chat/completions in 0.482649 seconds
+2026-08-02 23:39:06.995 INFO - Retrying request to /chat/completions in 0.903328 seconds
+2026-08-02 23:39:07.923 WARNING - wiki.llm.invalid_response error=Connection error. template_id=wiki_reduce_page
+2026-08-02 23:39:08.042 INFO 435bec6e33f84381b2c90b967f727962 processing_worker.task.completed task_id=processing-0909f90aeb856f6de2422340627854a8 worker_id=local-processing-worker
+2026-08-02 23:39:08.051 INFO 435bec6e33f84381b2c90b967f727962 processing_worker.task.start attempt=1 task_id=processing-847a1f72882ef614ae663837dd42f24e task_type=wiki.finalize worker_id=local-processing-worker
+2026-08-02 23:39:08.106 INFO 435bec6e33f84381b2c90b967f727962 Retrying request to /chat/completions in 0.397691 seconds
+2026-08-02 23:39:08.506 INFO 435bec6e33f84381b2c90b967f727962 Retrying request to /chat/completions in 0.913368 seconds
+2026-08-02 23:39:09.451 INFO 435bec6e33f84381b2c90b967f727962 Retrying request to /chat/completions in 0.463739 seconds
+2026-08-02 23:39:09.918 INFO 435bec6e33f84381b2c90b967f727962 Retrying request to /chat/completions in 0.943642 seconds
+2026-08-02 23:39:10.883 WARNING 435bec6e33f84381b2c90b967f727962 wiki.llm.invalid_response error=Connection error. template_id=wiki_index_intro
+2026-08-02 23:39:11.938 INFO 435bec6e33f84381b2c90b967f727962 processing_worker.task.completed task_id=processing-847a1f72882ef614ae663837dd42f24e worker_id=local-processing-worker

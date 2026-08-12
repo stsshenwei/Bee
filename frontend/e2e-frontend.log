@@ -1,0 +1,18 @@
+
+> rag-frontend@1.0.0 dev
+> next dev --hostname 0.0.0.0 --port 3111
+
+   ▲ Next.js 15.2.0
+   - Local:        http://localhost:3111
+   - Network:      http://0.0.0.0:3111
+   - Environments: .env.local, .env
+
+ ✓ Starting...
+ ✓ Ready in 1928ms
+ ○ Compiling /knowledge ...
+ ✓ Compiled /knowledge in 4.1s (1351 modules)
+ GET /knowledge 200 in 5573ms
+ GET /knowledge 200 in 139ms
+ GET /knowledge 200 in 102ms
+ GET /knowledge 200 in 70ms
+ ✓ Compiled in 3.3s (1351 modules)
