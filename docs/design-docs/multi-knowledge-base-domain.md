@@ -1,49 +1,42 @@
-# 多知识库领域设计
+# Multi-Knowledge-Base Domain
 
-## 领域边界
+## Domain Boundaries
 
-- `workspace`：后续租户与权限的稳定容器。
-- `knowledge_base`：Document 知识库生命周期、索引策略、Provider 引用与聚合状态。
-- `KnowledgeBaseScope`：请求级不可变范围，不存入全局服务状态。
-- `document` / `document_chunk`：SQLite 权威内容，每行强制 workspace/KB 归属。
+- `workspace`: stable top-level ownership container.
+- `knowledge_base`: lifecycle, type, indexing strategy, provider references, aggregate state, and archive status.
+- `KnowledgeBaseScope`: immutable request scope; it is passed explicitly and is not stored in global service state.
+- `document` and `document_chunk`: authoritative PostgreSQL evidence rows, each owned by one workspace and one KB.
+- `document_chunk_embedding`: pgvector projection of indexable scoped chunks.
+- Wiki, KG, processing, audit, memory, and evaluation rows use the same PostgreSQL schema and ownership boundaries.
 
-## 兼容与隔离
+## Compatibility And Isolation
 
-旧请求落到配置的默认 KB，绝不解释为全库。显式 KB 不存在或已归档时拒绝。文档、FTS、Milvus、KG、Agent、评测和引用验证共同使用同一 scope；跨库 child/parent、图谱边或 citation 即使 ID 存在也会被拒绝。
+Legacy requests without KB selection resolve to the configured default KB and never mean all KBs. Explicit KBs must exist, be active, and belong to one workspace. Archived KBs reject upload and retrieval.
 
-## 生命周期
+Dense pgvector retrieval, PostgreSQL keyword retrieval, parent/child hydration, GraphRetriever, Agent tools, evaluation, and citation verification all use the same scope. Cross-KB child/parent, graph relation, document id, or citation references are rejected even if the raw id exists.
 
-第一阶段支持创建、列表、详情、更新、归档和恢复。归档是逻辑删除：禁止上传与检索，保留 SQLite、Milvus、Neo4j 和源文件，物理 purge 留给后续审计型 change。
+## Lifecycle
 
-## Provider 配置
+The application supports create, list, detail, update, archive, and restore. Archive is logical deletion: uploads and retrieval are blocked, but PostgreSQL rows, source files, vectors, Wiki state, KG rows, and optional graph data are retained. Physical purge is a separate future change.
 
-知识库同时保存 requested 与 effective Provider。requested 是用户提交的 parser、embedding、reranker、vector store 和 enrichment 引用；effective 是当前运行时工厂实际启用值。当前工厂不支持的覆盖值保留在 requested，并把字段名记录为 `inactive_overrides`，不得静默宣称已生效。第一阶段不实现多向量数据库注册表，也不为每个 KB 创建独立 collection。
+## Provider Configuration
 
-## 文档后处理
+Knowledge bases store requested and effective provider configuration. Requested values record user intent; effective values record the currently wired parser, embedding, reranker, vector store, and enrichment providers. Unsupported requested values remain visible in `inactive_overrides`; they are not silently treated as active.
 
-基础解析/分块/索引完成后，可异步生成概要、关键词和建议问题。长文使用 parent chunk 分批与汇总；失败可重试且不重复解析文档。生成 metadata 不能作为最终事实答案的唯一来源，必须回查原始 chunk。
+The active vector provider is `postgres_pgvector`; keyword search is PostgreSQL text/trigram/exact search. The first phase does not create per-KB databases or vector collections.
 
-## 最终 schema 与重建
+## Rebuild And Compatibility
 
-本领域不迁移旧知识数据。空数据库直接创建最终 `workspace`、`knowledge_base`、document/chunk、任务、KG、审计和反馈表；非空旧 schema 只返回 `reset_required`。缺少 scope 字段的 Milvus collection 同样拒绝查询和普通写入。
+This domain does not migrate old knowledge data. Empty/final PostgreSQL storage can start normally. Legacy SQLite metadata, old Milvus collections, missing workspace/KB ownership columns, incompatible schema generation, or pgvector dimension/type mismatch return `reset_required` and fail closed.
 
-clean-rebuild 默认 dry-run，执行时要求服务停止和完整确认短语 `RESET_ALL_KNOWLEDGE_DATA`。协调器先写 maintenance/manifest，再依次 reset 与 initialize SQLite、Milvus、可选 Neo4j 和受管理文件。全部成功才移除 maintenance；部分失败禁止业务启动。
+Clean-rebuild is dry-run by default. Execution requires stopped services and the exact confirmation phrase. The coordinator writes maintenance/manifest state, resets and initializes PostgreSQL, retires legacy SQLite/Milvus artifacts, optionally handles Neo4j and managed files, and removes maintenance only after full success.
 
-`--backup-dir` 可备份 SQLite 与受管理文件，但 Milvus/Neo4j 必须使用原生备份。恢复意味着恢复一套完整的 clean-rebuild 前快照和对应应用版本，不允许把旧库手工接入最终 schema。
+Backups must represent one coherent application/storage generation. Restoring partial old SQLite/Milvus data into the final PostgreSQL schema is unsupported.
 
-## 第一阶段限制
+## Current Limits
 
-- 只支持 Document 知识库和单一默认 workspace。
-- 归档不是物理删除，也不回收索引或源文件。
-- 未实现用户、成员、共享、角色与 RBAC。
-- 未实现 FAQ/Wiki、外部数据源同步和 Provider 实例注册表。
-- 未实现旧数据导入器；重建后需要重新上传可信源文档。
-
-## 后续边界
-
-- `add-auth-tenant-kb-permissions`：只实现 principal、tenant、membership、role、Token 和权限范围交集。
-- `add-search-and-deep-read-tools`：增加迭代搜索、文章读取和工具注册，不改变 KB 归属。
-- FAQ/Wiki：新增知识类型与编辑流程。
-- 数据源同步：新增连接器、游标和增量任务。
-- Provider 注册表：管理多 parser/embedding/vector/reranker 实例。
-- 物理 purge：需要审计、异步任务、失败恢复和派生索引清理。
+- The default workspace remains the compatibility workspace for old clients.
+- Archive is not physical purge.
+- User/member/RBAC ownership is out of scope for this phase.
+- External source sync and provider instance registry are out of scope.
+- Old data import is out of scope; rebuild requires trusted source documents to be re-ingested.

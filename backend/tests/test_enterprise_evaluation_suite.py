@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from app.models.document_models import Chunk
 from app.services.documents.document_repository import DocumentRepository
+from tests.test_runtime_config import postgres_runtime_patches
 
 
 class EnterpriseEvaluationSuiteTests(unittest.TestCase):
@@ -266,14 +267,16 @@ class EnterpriseEvaluationSuiteTests(unittest.TestCase):
             env = {
                 "OPENAI_API_KEY": "test-key",
                 "VECTOR_STORE_DIR": str(Path(tmpdir) / "vector_db"),
-                "METADATA_DB_PATH": str(Path(tmpdir) / "metadata.sqlite3"),
+                "DATABASE_URL": "postgresql://rag:rag@localhost:5432/rag_test",
+                "POSTGRES_SCHEMA": "rag",
                 "EVAL_DATASET_DIR": str(Path(tmpdir) / "evalsets"),
                 "EVAL_REPORT_DIR": str(Path(tmpdir) / "eval_reports"),
                 "RAG_DATA_DIR": str(Path(tmpdir) / "data"),
                 "AUTO_INGEST_ON_STARTUP": "false",
+                "WIKI_INGEST_ENABLED": "false",
             }
             with patch.dict(os.environ, env, clear=False):
-                with patch("app.services.retrieval.vector_store._create_or_load_collection", return_value=object()):
+                with postgres_runtime_patches():
                     module = importlib.import_module("app.main")
 
         fake = FakeEvaluationService()

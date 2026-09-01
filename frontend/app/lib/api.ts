@@ -123,6 +123,15 @@ export async function retryDocumentEnrichment(documentId: string, knowledgeBaseI
   );
 }
 
+export async function retryDocumentProcessing(documentId: string, knowledgeBaseId: string): Promise<DocumentItem> {
+  return readJson<DocumentItem>(
+    await fetch(
+      `${API_BASE}/documents/${encodeURIComponent(documentId)}/processing/retry?knowledge_base_id=${encodeURIComponent(knowledgeBaseId)}`,
+      { method: "POST" },
+    ),
+  );
+}
+
 export async function getDocumentProcessingTrace(documentId: string, knowledgeBaseId: string): Promise<DocumentProcessingTrace> {
   return readJson<DocumentProcessingTrace>(
     await fetch(

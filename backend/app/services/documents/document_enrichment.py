@@ -7,12 +7,17 @@ import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from app.models.document_models import Chunk
 from app.models.knowledge_base import KnowledgeBaseScope
 from app.services.agent.agent_prompt_templates import PromptTemplateCatalog, PromptTemplateError
+from app.services.async_runtime.task_routes import SUMMARY_GENERATION_TASK
 from app.services.infrastructure.logging_config import get_trace_id, trace_context
+
+if TYPE_CHECKING:
+    from app.services.async_runtime.queue import AsyncProcessingQueue
+    from app.services.processing.processing_task_repository import ProcessingTaskRepository
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +144,8 @@ class DocumentEnrichmentService:
         max_batch_tokens: int = 6000,
         max_retries: int = 2,
         asynchronous: bool = True,
+        processing_repository: "ProcessingTaskRepository | None" = None,
+        async_queue: "AsyncProcessingQueue | None" = None,
     ):
         self.repository = repository
         self.provider = provider
@@ -146,6 +153,8 @@ class DocumentEnrichmentService:
         self.max_batch_tokens = max(500, max_batch_tokens)
         self.max_retries = max(0, max_retries)
         self.asynchronous = asynchronous
+        self.processing_repository = processing_repository
+        self.async_queue = async_queue
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="document-enrichment") if asynchronous else None
         self._futures: dict[str, Future] = {}
 
@@ -161,6 +170,27 @@ class DocumentEnrichmentService:
             source_chunk_ids=parent_ids,
         )
         task_id = str(task["id"])
+        if self.processing_repository is not None and self.async_queue is not None and self.async_queue.enabled:
+            processing_task = self.processing_repository.create_task(
+                SUMMARY_GENERATION_TASK,
+                scope,
+                document_id=doc_id,
+                payload={
+                    "schema_version": 1,
+                    "doc_id": doc_id,
+                    "enrichment_task_id": task_id,
+                    "source_chunk_ids": parent_ids,
+                },
+                max_attempts=max(1, self.max_retries + 1),
+                trace_id=get_trace_id(),
+                idempotency_key=f"summary-generation:{scope.knowledge_base_id}:{doc_id}:{task_id}",
+                source_revision=",".join(parent_ids),
+            )
+            dispatch = self.async_queue.enqueue(processing_task)
+            record_dispatch = getattr(self.processing_repository, "record_broker_dispatch", None)
+            if callable(record_dispatch):
+                record_dispatch(processing_task["id"], broker_task_id=dispatch.broker_task_id, queue_name=dispatch.queue)
+            return None
         if self._executor is None:
             self._run(task_id, doc_id, chunks, scope)
             return None
@@ -168,6 +198,21 @@ class DocumentEnrichmentService:
         future = self._executor.submit(self._run_with_trace, trace_id, task_id, doc_id, list(chunks), scope)
         self._futures[doc_id] = future
         return future
+
+    def process_task(self, task: dict[str, Any]) -> None:
+        payload = dict(task.get("payload") or {})
+        doc_id = str(task.get("document_id") or payload.get("doc_id") or "")
+        enrichment_task_id = str(payload.get("enrichment_task_id") or "")
+        if not doc_id:
+            raise ValueError("summary.generation task is missing document_id")
+        if not enrichment_task_id:
+            raise ValueError("summary.generation task is missing enrichment_task_id")
+        scope = KnowledgeBaseScope(
+            workspace_id=str(task["workspace_id"]),
+            selected_knowledge_base_ids=(str(task["knowledge_base_id"]),),
+        )
+        chunks = [self._chunk_from_row(row) for row in self.repository.list_chunks(doc_id=doc_id, scope=scope)]
+        self._run(enrichment_task_id, doc_id, chunks, scope, raise_on_failure=True)
 
     def _run_with_trace(self, trace_id: str, task_id: str, doc_id: str, chunks: list[Chunk], scope: KnowledgeBaseScope) -> None:
         with trace_context(trace_id):
@@ -187,7 +232,15 @@ class DocumentEnrichmentService:
         if future is not None:
             future.result(timeout=timeout)
 
-    def _run(self, task_id: str, doc_id: str, chunks: list[Chunk], scope: KnowledgeBaseScope) -> None:
+    def _run(
+        self,
+        task_id: str,
+        doc_id: str,
+        chunks: list[Chunk],
+        scope: KnowledgeBaseScope,
+        *,
+        raise_on_failure: bool = False,
+    ) -> None:
         started = time.monotonic()
         logger.info(
             "document.enrichment.start",
@@ -267,6 +320,8 @@ class DocumentEnrichmentService:
                 )
             except Exception:
                 logger.exception("Failed to persist document enrichment failure for %s", doc_id)
+            if raise_on_failure:
+                raise
 
     def _batch_parent_chunks(self, chunks: list[Chunk]) -> list[list[Chunk]]:
         batches: list[list[Chunk]] = []

@@ -1278,6 +1278,10 @@ def _json_dumps(value: Any) -> str:
 
 
 def _json_loads(value: Any, fallback: Any) -> Any:
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, (bytes, bytearray)):
+        value = value.decode("utf-8")
     try:
         return json.loads(value or "")
     except Exception:

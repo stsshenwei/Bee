@@ -14,6 +14,8 @@ from app.services.agent.agent_prompt_templates import PromptTemplateCatalog
 from app.services.documents.document_repository import DocumentRepository
 from app.services.knowledge.knowledge_base_repository import KnowledgeBaseRepository
 from app.services.knowledge.knowledge_base_service import KnowledgeBaseService
+from app.services.processing.processing_task_repository import TASK_COMPLETED, TASK_RETRYING, ProcessingTaskRepository
+from app.services.processing.processing_worker import DocumentProcessingWorker
 
 
 class FakeProvider:
@@ -212,6 +214,106 @@ class DocumentEnrichmentTests(unittest.TestCase):
         self.assertIn("Generate Summary", catalog.get("generate_summary").name)
         self.assertIn("manual.md", calls[0]["messages"][0]["content"])
         self.assertIn("GPON content", calls[0]["messages"][0]["content"])
+
+    def test_async_runtime_routes_summary_generation_to_processing_queue(self):
+        class FakeQueue:
+            enabled = True
+
+            def __init__(self):
+                self.tasks = []
+
+            def enqueue(self, task):
+                self.tasks.append(task)
+                return SimpleNamespace(broker_task_id=f"broker-{task['id']}", queue="enrichment")
+
+        processing_repo = ProcessingTaskRepository(self.path)
+        queue = FakeQueue()
+        service = DocumentEnrichmentService(
+            self.repository,
+            FakeProvider(),
+            enabled=True,
+            asynchronous=True,
+            processing_repository=processing_repo,
+            async_queue=queue,
+        )
+
+        result = service.enqueue("doc-1", self.chunks, self.scope)
+        tasks = processing_repo.list_tasks(self.scope, document_id="doc-1")
+
+        self.assertIsNone(result)
+        self.assertEqual(1, len(queue.tasks))
+        self.assertEqual("summary.generation", queue.tasks[0]["task_type"])
+        self.assertEqual(["summary.generation"], [task["task_type"] for task in tasks])
+        self.assertEqual("enrichment", tasks[0]["payload"]["_async_runtime"]["queue_name"])
+        self.assertEqual(["parent-1"], tasks[0]["payload"]["source_chunk_ids"])
+
+    def test_worker_processes_summary_generation_task_from_repository_chunks(self):
+        processing_repo = ProcessingTaskRepository(self.path)
+        service = DocumentEnrichmentService(
+            self.repository,
+            FakeProvider(),
+            enabled=True,
+            asynchronous=False,
+            processing_repository=processing_repo,
+        )
+        enrichment_task = self.repository.create_enrichment_task(
+            "doc-1",
+            self.scope,
+            provider_ref="summary-test",
+            source_chunk_ids=["parent-1"],
+        )
+        processing_repo.create_task(
+            "summary.generation",
+            self.scope,
+            document_id="doc-1",
+            payload={"schema_version": 1, "doc_id": "doc-1", "enrichment_task_id": enrichment_task["id"]},
+            max_attempts=2,
+        )
+        worker = DocumentProcessingWorker(
+            repository=processing_repo,
+            rag_service=SimpleNamespace(document_enrichment_service=service),
+        )
+
+        self.assertTrue(worker.run_once())
+
+        document = self.repository.get_document("doc-1", self.scope)
+        processing_task = processing_repo.list_tasks(self.scope, document_id="doc-1")[0]
+        self.assertEqual("completed", document["summary_status"])
+        self.assertEqual(TASK_COMPLETED, processing_task["status"])
+
+    def test_worker_retries_failed_summary_generation_task(self):
+        processing_repo = ProcessingTaskRepository(self.path)
+        service = DocumentEnrichmentService(
+            self.repository,
+            FakeProvider(error=TimeoutError("temporary provider outage")),
+            enabled=True,
+            asynchronous=False,
+            processing_repository=processing_repo,
+        )
+        enrichment_task = self.repository.create_enrichment_task(
+            "doc-1",
+            self.scope,
+            provider_ref="summary-test",
+            source_chunk_ids=["parent-1"],
+        )
+        processing_repo.create_task(
+            "summary.generation",
+            self.scope,
+            document_id="doc-1",
+            payload={"schema_version": 1, "doc_id": "doc-1", "enrichment_task_id": enrichment_task["id"]},
+            max_attempts=2,
+        )
+        worker = DocumentProcessingWorker(
+            repository=processing_repo,
+            rag_service=SimpleNamespace(document_enrichment_service=service),
+        )
+
+        self.assertTrue(worker.run_once())
+
+        document = self.repository.get_document("doc-1", self.scope)
+        processing_task = processing_repo.list_tasks(self.scope, document_id="doc-1")[0]
+        self.assertEqual("failed", document["summary_status"])
+        self.assertEqual(TASK_RETRYING, processing_task["status"])
 
 
 if __name__ == "__main__":

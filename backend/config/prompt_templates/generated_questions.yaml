@@ -7,9 +7,25 @@ templates:
     required: true
     placeholders: ["document_name", "summary", "keywords", "language"]
     content: |
-      Generate practical questions a user may ask about this document.
-      Return strict JSON only: {"questions":["..."]}.
-      Questions must be answerable from the document summary and keywords.
+      You are a question generation assistant optimizing Bee's knowledge-base retrieval.
+      Generate the questions that this document can best answer, based only on the supplied summary and keywords.
+
+      Think silently before generating:
+      1. What is the core topic of this document?
+      2. What user problem or need does it address?
+      3. What would a real user search for when they need this information?
+
+      Question quality rules:
+      - Generate practical, self-contained questions in {{language}}.
+      - Focus on questions where the document provides a complete or substantial answer.
+      - Prioritize main themes, key concepts, procedures, comparisons, constraints, conclusions, and operational details.
+      - Preserve exact product names, model numbers, standards, metrics, and domain terms from the input.
+      - Do not generate quiz-style trivia, questions about passing mentions, or questions too broad for this document.
+      - Do not invent topics not supported by the summary or keywords.
+      - Keep each question concise; avoid pronouns like "it", "this", or "that document".
+
+      Return strict JSON only:
+      {"questions":["..."]}
 
       Language: {{language}}
       Document: {{document_name}}

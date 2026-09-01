@@ -24,7 +24,7 @@ export function summarizeDocumentCard(
     return "摘要生成中，完成后会自动显示在卡片中。";
   }
   if (status === "failed") {
-    return item.summary_error?.trim() || "摘要生成失败，可在右上角菜单中重试。";
+    return "摘要生成失败，文档仍可预览和检索。";
   }
   return "未生成摘要。";
 }

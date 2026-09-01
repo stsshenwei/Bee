@@ -112,6 +112,32 @@ class ProcessingTaskRepositoryTests(unittest.TestCase):
             self.assertEqual(2, reclaimed["attempt"])
             self.assertEqual("worker-new", reclaimed["lease_owner"])
 
+    def test_claim_task_claims_only_named_runnable_task(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._repo(tmp)
+            repo.create_task("document.parse", self.scope, task_id="task-target", document_id="doc-1")
+            repo.create_task("document.parse", self.scope, task_id="task-other", document_id="doc-2")
+
+            claimed = repo.claim_task("task-target", worker_id="celery-worker", lease_seconds=30)
+            skipped = repo.claim_task("task-target", worker_id="second-worker", lease_seconds=30)
+
+            self.assertEqual("task-target", claimed["id"])
+            self.assertEqual(TASK_PROCESSING, claimed["status"])
+            self.assertEqual("celery-worker", claimed["lease_owner"])
+            self.assertIsNone(skipped)
+            self.assertEqual(TASK_PENDING, repo.get_task("task-other")["status"])
+
+    def test_record_broker_dispatch_stores_metadata_in_payload(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._repo(tmp)
+            task = repo.create_task("wiki.ingest", self.scope, task_id="task-dispatch", payload={"schema_version": 1})
+
+            updated = repo.record_broker_dispatch(task["id"], broker_task_id="broker-1", queue_name="wiki")
+
+            self.assertEqual(1, updated["payload"]["schema_version"])
+            self.assertEqual("broker-1", updated["payload"]["_async_runtime"]["broker_task_id"])
+            self.assertEqual("wiki", updated["payload"]["_async_runtime"]["queue_name"])
+
     def test_runnable_finalize_payloads_are_coalesced_per_scope(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = self._repo(tmp)

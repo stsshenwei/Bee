@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { canRetryUploadFile, orderedPhases, summarizeProcessingPreview, summarizeUploadFile } from "./processing-ui.ts";
+import {
+  canRetryUploadFile,
+  orderedPhases,
+  summarizeDocumentCard,
+  summarizeProcessingPreview,
+  summarizeUploadFile,
+} from "./processing-ui.ts";
 
 const phases = [
   { name: "multimodal", status: "partial_failed", retry_eligible: true, errors: ["ocr failed"] },
@@ -28,6 +34,19 @@ test("summarizes partial multimodal failure separately from text indexing", () =
   assert.equal(summary.hasPartialMultimodalFailure, true);
   assert.equal(summary.errorCount, 1);
   assert.match(summary.phaseText, /multimodal:partial_failed/);
+});
+
+test("does not expose provider errors as document card summaries", () => {
+  const summary = summarizeDocumentCard({
+    parse_status: "parsed",
+    processing_task_status: "completed",
+    summary: "",
+    summary_status: "failed",
+    summary_error: "Connection error.",
+  });
+
+  assert.equal(summary, "摘要生成失败，文档仍可预览和检索。");
+  assert.notEqual(summary, "Connection error.");
 });
 
 test("summarizes processing preview decisions", () => {

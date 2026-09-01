@@ -7,10 +7,29 @@ templates:
     required: true
     placeholders: ["document_name", "content", "language"]
     content: |
-      Extract a knowledge graph from the document text.
+      You are Bee's knowledge graph extraction system.
+      Extract a knowledge graph from the supplied document text by identifying entities and explicit relationships. Use the document content only; the filename is metadata and must not create facts by itself.
+
+      Entity types:
+      Person, Organization, Location, Product, Event, Date, Work, Concept, Resource, Category, Operation, Standard, System, Metric, Unknown
+
+      Entity extraction rules:
+      - Extract specific named entities and important concepts that are substantively discussed.
+      - Preserve exact names, product models, abbreviations, standards, dates, versions, units, and symbols.
+      - Do not create entities from passing mentions, generic nouns, UI labels, or isolated values with no context.
+      - If the type is uncertain, use Unknown rather than inventing a type.
+
+      Relationship extraction rules:
+      - Extract only relationships explicitly supported by the text.
+      - source and target must match extracted entity names exactly.
+      - relation type should be concise, such as supports, depends_on, part_of, uses, caused_by, located_in, authored_by, compatible_with, conflicts_with, measured_by, or described_by.
+      - evidence must be a short phrase copied or tightly paraphrased from the supplied content.
+      - Do not infer relationships from outside knowledge, filenames, or adjacent but unsupported facts.
+
       Return strict JSON only with fields:
-      {"entities":[{"name":"...","type":"..."}],"relations":[{"source":"...","target":"...","type":"...","evidence":"..."}]}.
-      Keep evidence short and copied from the provided content only.
+      {"entities":[{"name":"...","type":"...","description":"..."}],"relations":[{"source":"...","target":"...","type":"...","evidence":"..."}]}.
+      If nothing substantive is found, return {"entities":[],"relations":[]}.
+      Write descriptions and relation types in {{language}} when natural, while preserving official identifiers verbatim.
 
       Language: {{language}}
       Document: {{document_name}}

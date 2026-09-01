@@ -1,0 +1,3 @@
+INFO:     Will watch for changes in these directories: ['D:\\python_project\\new-rag-project\\backend']
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [14068] using StatReload

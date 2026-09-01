@@ -7,14 +7,17 @@ from threading import Lock
 from types import SimpleNamespace
 
 from app.models.document_models import Chunk, ParsedDocument, ParsedElement, ParsedImage
-from app.models.processing_config import PROCESSING_VERSION, ProcessingRuntimeDefaults
+from app.models.processing_config import PROCESSING_VERSION, DurableProcessingWorkerConfig, ProcessingRuntimeDefaults
 from app.services.documents.document_chunker import DocumentChunker
 from app.services.documents.document_repository import DocumentRepository
 from app.services.documents.image_repository import ImageRepository
 from app.services.knowledge.knowledge_base_repository import KnowledgeBaseRepository
 from app.services.knowledge.knowledge_base_service import KnowledgeBaseService
 from app.services.processing.processing_span_tracker import ProcessingSpanRepository, ProcessingSpanTracker
+from app.services.processing.processing_task_repository import ProcessingTaskRepository
 from app.services.processing.processing_trace import ProcessingTraceRecorder
+from app.services.processing.processing_worker import DocumentProcessingWorker
+from app.services.async_runtime.task_routes import route_for_task_type
 from app.services.retrieval.rag_service import RAGService
 
 
@@ -249,6 +252,20 @@ class FakeCaptionProvider:
         return MultimodalResult(f"Caption:{image.decode('utf-8')}", self.name, 0.82)
 
 
+class FakeAsyncQueue:
+    enabled = True
+
+    def __init__(self):
+        self.tasks = []
+
+    def enqueue(self, task):
+        self.tasks.append(task)
+        return SimpleNamespace(broker_task_id=f"broker-{task['id']}", queue=route_for_task_type(str(task.get("task_type") or "")))
+
+    def health(self):
+        return {"enabled": True, "ok": True}
+
+
 class ScopeCapturingKGService:
     def __init__(self):
         self.calls = []
@@ -352,6 +369,103 @@ class RAGServiceStructuredIngestTests(unittest.TestCase):
             self.assertEqual("parent", repo.get_chunk("p1")["chunk_type"])
             self.assertEqual("child", vector.indexed[0].chunk_type)
             self.assertEqual(["doc-1"], vector.replaced_doc_ids)
+
+    def test_async_runtime_routes_graph_extraction_to_enrichment_queue(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "rag.sqlite3"
+            repo = DocumentRepository(db_path)
+            vector = FakeVectorStore(Path(tmp) / "vector")
+            kg_service = ScopeCapturingKGService()
+            service = make_service(tmp, repo, vector, FakeParser(), kg_service=kg_service, kg_enabled=True)
+            task_repo = ProcessingTaskRepository(db_path)
+            queue = FakeAsyncQueue()
+            service.async_processing_queue = queue
+            service.processing_worker = DocumentProcessingWorker(
+                repository=task_repo,
+                rag_service=service,
+                config=DurableProcessingWorkerConfig(enabled=True),
+                async_queue=queue,
+                start_local_worker=False,
+            )
+            file_path = Path(tmp) / "manual.md"
+            file_path.write_text("# Manual\nBody", encoding="utf-8")
+
+            service.parse_and_index_document(file_path)
+
+            tasks = task_repo.list_tasks(service.default_scope, document_id="doc-1")
+            self.assertEqual([], kg_service.calls)
+            self.assertEqual(["knowledge.post_process"], [task["task_type"] for task in tasks])
+            self.assertEqual("postprocess", tasks[0]["payload"]["_async_runtime"]["queue_name"])
+            self.assertEqual("doc-1", tasks[0]["payload"]["doc_id"])
+
+    def test_postprocess_worker_fans_out_graph_task_to_enrichment_queue(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "rag.sqlite3"
+            repo = DocumentRepository(db_path)
+            vector = FakeVectorStore(Path(tmp) / "vector")
+            kg_service = ScopeCapturingKGService()
+            service = make_service(tmp, repo, vector, FakeParser(), kg_service=kg_service, kg_enabled=True)
+            task_repo = ProcessingTaskRepository(db_path)
+            queue = FakeAsyncQueue()
+            service.async_processing_queue = queue
+            worker = DocumentProcessingWorker(
+                repository=task_repo,
+                rag_service=service,
+                config=DurableProcessingWorkerConfig(enabled=True),
+                async_queue=queue,
+                start_local_worker=False,
+            )
+            service.processing_worker = worker
+            file_path = Path(tmp) / "manual.md"
+            file_path.write_text("# Manual\nBody", encoding="utf-8")
+            service.parse_and_index_document(file_path)
+
+            self.assertTrue(worker.run_once())
+
+            tasks = task_repo.list_tasks(service.default_scope, document_id="doc-1")
+            by_type = {task["task_type"]: task for task in tasks}
+            self.assertEqual({"knowledge.post_process", "graph.extraction"}, set(by_type))
+            self.assertEqual("enrichment", by_type["graph.extraction"]["payload"]["_async_runtime"]["queue_name"])
+
+    def test_async_runtime_routes_multimodal_provider_work_to_enrichment_queue(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "rag.sqlite3"
+            repo = DocumentRepository(db_path)
+            vector = FakeVectorStore(Path(tmp) / "vector")
+            parser = FakeParser(images=[ParsedImage("img-1", "media/img-1.jpg", "scanned_pdf", page_number=1)])
+            object_storage = FakeObjectStorage({"media/img-1.jpg": b"image bytes"})
+            ocr_provider = FakeOCRProvider()
+            service = make_service(
+                tmp,
+                repo,
+                vector,
+                parser,
+                ocr_enabled=True,
+                object_storage=object_storage,
+                ocr_provider_service=ocr_provider,
+            )
+            task_repo = ProcessingTaskRepository(db_path)
+            queue = FakeAsyncQueue()
+            service.async_processing_queue = queue
+            service.processing_worker = DocumentProcessingWorker(
+                repository=task_repo,
+                rag_service=service,
+                config=DurableProcessingWorkerConfig(enabled=True),
+                async_queue=queue,
+                start_local_worker=False,
+            )
+            file_path = Path(tmp) / "manual.md"
+            file_path.write_text("# Manual\nBody", encoding="utf-8")
+
+            service.parse_and_index_document(file_path)
+
+            tasks = task_repo.list_tasks(service.default_scope, document_id="doc-1")
+            by_type = {task["task_type"]: task for task in tasks}
+            self.assertEqual([], ocr_provider.calls)
+            self.assertEqual({"image.multimodal", "knowledge.post_process"}, set(by_type))
+            self.assertEqual("enrichment", by_type["image.multimodal"]["payload"]["_async_runtime"]["queue_name"])
+            self.assertEqual("postprocess", by_type["knowledge.post_process"]["payload"]["_async_runtime"]["queue_name"])
+            self.assertEqual(1, by_type["image.multimodal"]["payload"]["image_count"])
 
     def test_wiki_only_processing_persists_chunks_and_skips_vector_index(self):
         with tempfile.TemporaryDirectory() as tmp:

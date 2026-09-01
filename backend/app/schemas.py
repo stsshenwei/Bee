@@ -6,12 +6,27 @@ from pydantic import BaseModel, Field
 class ChatRequest(BaseModel):
     message: str
     conversation_id: str | None = None
+    stream_message_id: str | None = None
+    stream_offset: int | None = None
     memory_enabled: bool = True
     temporary: bool = False
     knowledge_base_id: str | None = None
     knowledge_base_ids: list[str] | None = None
     chat_mode: Literal["quick", "reasoning", "wiki"] | None = None
     attachment_ids: list[str] | None = None
+
+
+class ChatStreamStopRequest(BaseModel):
+    conversation_id: str
+    stream_message_id: str
+    reason: str = "client_requested"
+
+
+class ChatStreamStopResponse(BaseModel):
+    conversation_id: str
+    stream_message_id: str
+    status: str
+    stopped: bool = True
 
 
 class ChatAttachmentResponse(BaseModel):
@@ -459,11 +474,16 @@ class DocumentItem(BaseModel):
     summary_version: int = 0
     summary_available: bool = False
     processing_task_id: str = ""
+    processing_task_type: str = ""
     processing_task_status: str = ""
+    processing_task_queue: str = ""
+    processing_broker_task_id: str = ""
     processing_task_attempt: int = 0
     processing_task_max_attempts: int = 0
     processing_dead_lettered: bool = False
     processing_last_error: str = ""
+    processing_dead_letter_reason: str = ""
+    processing_retry_available: bool = False
     processing_latest_attempt: int = 0
 
 

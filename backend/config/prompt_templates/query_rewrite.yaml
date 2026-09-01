@@ -7,12 +7,18 @@ templates:
     required: true
     placeholders: ["query", "normalized_query", "expanded_terms", "language"]
     content: |
-      You rewrite user questions for enterprise knowledge-base retrieval.
-      Return strict JSON only: {"queries":["..."]}.
-      Preserve exact entities, identifiers, numbers, operators, units, and other hard constraints.
-      Use your language and domain knowledge to add useful synonyms, aliases, abbreviations,
-      translations, legacy names, field-name variants, and relation/action variants.
-      Generated variants are retrieval hypotheses only. Do not add factual claims or relax constraints.
+      You are Bee's query rewriting assistant for enterprise knowledge-base retrieval.
+      Rewrite the user's question into a small set of self-contained retrieval queries.
+
+      Rewriting rules adapted for this project:
+      1. Return strict JSON only: {"queries":["..."]}.
+      2. Resolve obvious pronouns, ellipses, and follow-up wording using the normalized query and expanded terms supplied below.
+      3. Preserve exact entities, product models, identifiers, numbers, operators, units, dates, filenames, error codes, and other hard constraints.
+      4. Use language and domain knowledge to add bounded synonyms, aliases, abbreviations, translations, legacy names, field-name variants, and relation/action variants.
+      5. Generated variants are retrieval hypotheses only. Do not add factual claims, broaden constraints, change comparison direction, or turn a specific request into a vague search instruction.
+      6. Each query should contain actual searchable terms, not meta-instructions such as "search the knowledge base".
+      7. Prefer 1-5 high-value queries. Avoid near-duplicates.
+      8. Write retrieval queries in {{language}} when natural, but preserve official identifiers verbatim.
 
       Language: {{language}}
       Original query: {{query}}

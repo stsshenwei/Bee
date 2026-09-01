@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { archiveKnowledgeBase, generateWikiPage, listParserEngines, updateUploadBatchSettings, uploadChatAttachment } from "./api.ts";
+import {
+  archiveKnowledgeBase,
+  generateWikiPage,
+  listParserEngines,
+  retryDocumentProcessing,
+  updateUploadBatchSettings,
+  uploadChatAttachment,
+} from "./api.ts";
 
 function jsonResponse(body, init = {}) {
   return new Response(JSON.stringify(body), {
@@ -107,6 +114,36 @@ test("uploads temporary chat attachment as multipart form data", async () => {
   assert.equal(calls[0].options.method, "POST");
   assert.ok(calls[0].options.body instanceof FormData);
   assert.equal(attachment.id, "att-1");
+});
+
+test("retries a dead-letter document processing task", async () => {
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url: String(url), options });
+    return jsonResponse({
+      id: "doc/1",
+      workspace_id: "ws",
+      knowledge_base_id: "kb/1",
+      name: "manual.md",
+      file_type: "md",
+      storage_path: "manual.md",
+      parse_status: "processing",
+      created_at: "",
+      updated_at: "",
+      metadata_json: {},
+      chunks: 1,
+      processing_task_status: "retrying",
+      processing_task_queue: "core",
+      processing_retry_available: false,
+    });
+  };
+
+  const result = await retryDocumentProcessing("doc/1", "kb/1");
+
+  assert.equal(calls[0].url, "http://localhost:8000/documents/doc%2F1/processing/retry?knowledge_base_id=kb%2F1");
+  assert.equal(calls[0].options.method, "POST");
+  assert.equal(result.processing_task_status, "retrying");
+  assert.equal(result.processing_task_queue, "core");
 });
 
 test("generates a Wiki draft from an indexed document", async () => {

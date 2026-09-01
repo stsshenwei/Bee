@@ -190,11 +190,16 @@ export type DocumentItem = {
   summary_version?: number;
   summary_available?: boolean;
   processing_task_id?: string;
+  processing_task_type?: string;
   processing_task_status?: string;
+  processing_task_queue?: string;
+  processing_broker_task_id?: string;
   processing_task_attempt?: number;
   processing_task_max_attempts?: number;
   processing_dead_lettered?: boolean;
   processing_last_error?: string;
+  processing_dead_letter_reason?: string;
+  processing_retry_available?: boolean;
   processing_latest_attempt?: number;
 };
 

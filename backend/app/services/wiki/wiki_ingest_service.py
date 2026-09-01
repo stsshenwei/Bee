@@ -203,6 +203,7 @@ class WikiIngestService:
         prompt_catalog: PromptTemplateCatalog,
         config: WikiIngestConfig | None = None,
         span_tracker: ProcessingSpanTracker | None = None,
+        async_queue: Any | None = None,
     ):
         self.repository = repository
         self.page_service = page_service
@@ -213,6 +214,7 @@ class WikiIngestService:
         self.prompt_catalog = prompt_catalog
         self.config = config or WikiIngestConfig()
         self.span_tracker = span_tracker or ProcessingSpanTracker.disabled()
+        self.async_queue = async_queue
         self._page_lock_guard = Lock()
         self._page_locks: dict[tuple[str, str], Lock] = {}
         self._llm_metrics: dict[str, dict[str, Any]] = {}
@@ -277,27 +279,40 @@ class WikiIngestService:
             "generation_task_id": generation.id,
             "root_trace_id": trace_id,
         }
-        processing_task = self.processing_repository.create_task(
-            WIKI_INGEST_TASK,
-            scope,
-            payload=payload,
-            document_id=document_id,
-            upload_batch_id=generation_run_id,
-            max_attempts=self.config.max_attempts,
-            run_after=available_at,
-            trace_id=trace_id,
-            payload_schema_version=1,
-            idempotency_key=idempotency_key,
-            source_revision=revision,
-            parent_trace_id=trace_id,
-        )
-        self.repository.enqueue_pending(
-            scope,
-            document_id=document_id,
-            document_revision=revision,
-            task_id=str(processing_task.get("id") or ""),
-            available_at=available_at,
-        )
+        try:
+            processing_task = self.processing_repository.create_task(
+                WIKI_INGEST_TASK,
+                scope,
+                payload=payload,
+                document_id=document_id,
+                upload_batch_id=generation_run_id,
+                max_attempts=self.config.max_attempts,
+                run_after=available_at,
+                trace_id=trace_id,
+                payload_schema_version=1,
+                idempotency_key=idempotency_key,
+                source_revision=revision,
+                parent_trace_id=trace_id,
+            )
+            processing_task = self._dispatch_processing_task(processing_task)
+            self.repository.enqueue_pending(
+                scope,
+                document_id=document_id,
+                document_revision=revision,
+                task_id=str(processing_task.get("id") or ""),
+                available_at=available_at,
+            )
+        except Exception as exc:
+            try:
+                self.repository.update_generation_task(
+                    scope,
+                    generation.id,
+                    status="failed",
+                    error_message=f"Failed to enqueue Wiki processing task: {exc}",
+                )
+            except Exception:
+                logger.exception("wiki.ingest.mark_enqueue_failure_failed", extra={"generation_task_id": generation.id})
+            raise
         return {
             "task": generation.to_dict(),
             "processing_task": processing_task,
@@ -391,7 +406,7 @@ class WikiIngestService:
             run_after=finalize_at,
         )
         if merged_finalize is None:
-            self.processing_repository.create_task(
+            created_finalize = self.processing_repository.create_task(
                 WIKI_FINALIZE_TASK,
                 scope,
                 payload=finalize_payload,
@@ -404,6 +419,9 @@ class WikiIngestService:
                 idempotency_key=f"wiki-finalize:{scope.knowledge_base_id}:{generation_run_id}",
                 parent_trace_id=str(task.get("trace_id") or ""),
             )
+            self._dispatch_processing_task(created_finalize)
+        else:
+            self._dispatch_processing_task(merged_finalize)
         if generation_task_id:
             self.repository.update_generation_task(
                 scope,
@@ -411,6 +429,18 @@ class WikiIngestService:
                 status="finalizing",
                 page_slug=next((slug for slug in reduced if self._page_type_for_slug(scope, slug) == "summary"), ""),
             )
+
+    def _dispatch_processing_task(self, task: dict[str, Any] | None) -> dict[str, Any] | None:
+        if not task or self.async_queue is None or not getattr(self.async_queue, "enabled", False):
+            return task
+        payload = dict(task.get("payload") or {})
+        if isinstance(payload.get("_async_runtime"), dict) and payload["_async_runtime"].get("broker_task_id"):
+            return task
+        dispatch = self.async_queue.enqueue(task)
+        record_dispatch = getattr(self.processing_repository, "record_broker_dispatch", None)
+        if callable(record_dispatch):
+            return record_dispatch(str(task["id"]), broker_task_id=dispatch.broker_task_id, queue_name=dispatch.queue)
+        return {**task, "broker_task_id": dispatch.broker_task_id, "queue_name": dispatch.queue}
 
     def process_finalize_task(self, task: dict[str, Any]) -> None:
         scope = _task_scope(task)
@@ -1066,7 +1096,6 @@ class WikiIngestService:
         items: list[dict[str, Any]],
         pages: list[Any],
     ) -> dict[str, list[str]]:
-        categories = {"summary": "摘要", "entity": "实体", "concept": "概念", "manual": "手工页面"}
         payload = self._complete_json(
             "wiki_taxonomy_plan",
             {
@@ -1088,8 +1117,46 @@ class WikiIngestService:
             if path:
                 assignments[slug] = path
         for slug, item in items_by_slug.items():
-            assignments.setdefault(slug, [categories.get(str(item.get("page_type") or ""), "知识")])
+            assignments.setdefault(slug, self._fallback_taxonomy_path(item))
         return assignments
+
+    @staticmethod
+    def _fallback_taxonomy_path(item: dict[str, Any]) -> list[str]:
+        page_type = str(item.get("page_type") or "").strip().lower()
+        title = str(item.get("title") or "")
+        aliases = " ".join(str(value) for value in item.get("aliases") or [])
+        summary = str(item.get("summary") or "")
+        name_text = f"{title} {aliases}".lower()
+        text = f"{title} {aliases} {summary}".lower()
+        if page_type == "summary":
+            return ["文档摘要"]
+        if any(token in name_text for token in ("itu-t", "ieee", "rfc", "802.", "g.984")):
+            return ["技术标准"]
+        if any(token in name_text for token in ("power", "pwr", "电源", "双电源")):
+            return ["供电技术"]
+        if any(token in name_text for token in ("vlan", "qinq", "ipv6", "igmp", "snooping")):
+            return ["网络协议"]
+        if any(token in name_text for token in ("gpon", "epon", "pon", "10gepon", "onu", "olt", "光网络", "光接入")):
+            return ["网络技术"]
+        if any(token in name_text for token in ("安装", "部署", "机架", "rack", "热插拔", "hot-swap", "维护")):
+            return ["安装部署"]
+        if any(token in name_text for token in ("fan", "风扇", "端口", "板卡", "主控", "模块", "mpu", "接口")):
+            return ["硬件设备"]
+        if any(token in name_text for token in ("dh-", "设备", "平台", "产品", "型号")):
+            return ["产品"]
+        if any(token in text for token in ("power", "pwr", "电源", "供电", "ac", "dc", "双电源")):
+            return ["供电技术"]
+        if any(token in text for token in ("安装", "部署", "机架", "rack", "热插拔", "hot-swap", "维护")):
+            return ["安装部署"]
+        if any(token in text for token in ("fan", "风扇", "端口", "板卡", "主控", "模块", "mpu", "接口")):
+            return ["硬件设备"]
+        if any(token in text for token in ("vlan", "qinq", "ipv6", "igmp", "snooping", "协议", "路由", "交换", "组播")):
+            return ["网络协议"]
+        if any(token in text for token in ("gpon", "epon", "pon", "10gepon", "onu", "olt", "光网络", "光接入", "pon 口")):
+            return ["网络技术"]
+        if any(token in text for token in ("标准", "规范")):
+            return ["技术标准"]
+        return ["知识主题"]
 
     @staticmethod
     def _taxonomy_item_from_page(page: Any) -> dict[str, Any]:

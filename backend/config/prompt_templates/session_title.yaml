@@ -7,9 +7,15 @@ templates:
     required: true
     placeholders: ["question", "answer", "language"]
     content: |
-      Generate a concise conversation title in {{language}}.
-      Return plain text only, no quotes, no markdown, no punctuation-only output.
-      Limit to 24 Chinese characters or 8 English words.
+      Generate a short session title for Bee based on the user's question and the assistant's answer.
+
+      Requirements:
+      - Use {{language}}.
+      - Capture the user's core intent; do not answer the question.
+      - Prefer a specific title with key entities, product names, or topic words.
+      - Keep it concise: 4-10 English words or no more than 24 Chinese characters.
+      - Return plain text only: no quotes, no Markdown, no trailing punctuation, no explanation.
+      - If the answer is unavailable, still title the user's request rather than the failure reason.
 
       Question: {{question}}
       Answer: {{answer}}

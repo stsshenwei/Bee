@@ -49,7 +49,7 @@ class MilvusKeywordSearch:
         self.vector_store.delete_document(doc_id)
 
 
-class SQLiteFTSKeywordSearch:
+class PostgresKeywordSearch:
     def __init__(self, repository: Any):
         self.repository = repository
 
@@ -58,7 +58,7 @@ class SQLiteFTSKeywordSearch:
             return
         doc_ids = {chunk.doc_id for chunk in chunks}
         if len(doc_ids) != 1:
-            raise ValueError("SQLiteFTSKeywordSearch.index expects chunks from one document")
+            raise ValueError("PostgresKeywordSearch.index expects chunks from one document")
         self.repository.replace_chunks(next(iter(doc_ids)), chunks)
 
     def search(self, query: str, top_k: int, filters: dict[str, Any] | None = None) -> list[RetrievedChunk]:
@@ -101,3 +101,6 @@ class SQLiteFTSKeywordSearch:
 
     def delete_by_doc_id(self, doc_id: str) -> None:
         self.repository.delete_document(doc_id)
+
+
+SQLiteFTSKeywordSearch = PostgresKeywordSearch

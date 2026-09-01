@@ -77,6 +77,67 @@ class SQLiteStorageResetProvider:
         return {"initialized": self.initializer is not None, "path": str(self.db_path)}
 
 
+class PostgresStorageResetProvider:
+    name = "postgres"
+
+    def __init__(self, database, *, config=None, defaults=None, target_label: str = ""):
+        from app.services.storage.postgres_schema import PostgresSchemaConfig
+
+        self.database = database
+        self.config = config or PostgresSchemaConfig(schema=database.settings.schema)
+        self.defaults = defaults
+        self.target_label = target_label or f"schema={self.config.schema}"
+
+    def plan(self) -> list[ResetPlanItem]:
+        return [ResetPlanItem(self.name, self.target_label, "drop schema and initialize final PostgreSQL schema", True)]
+
+    def backup(self, backup_root: Path) -> dict[str, object]:
+        return {"supported": False, "reason": "Use pg_dump or a PostgreSQL-native backup before clean-rebuild when required"}
+
+    def reset(self) -> dict[str, object]:
+        from app.services.storage.postgres import quote_ident
+
+        with self.database.transaction() as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"drop schema if exists {quote_ident(self.config.schema)} cascade")
+        return {"dropped_schema": self.config.schema}
+
+    def initialize(self) -> dict[str, object]:
+        from app.services.storage.postgres_schema import POSTGRES_SCHEMA_VERSION, initialize_postgres_database
+
+        initialize_postgres_database(self.database, config=self.config, defaults=self.defaults)
+        return {
+            "initialized": True,
+            "schema": self.config.schema,
+            "version": POSTGRES_SCHEMA_VERSION,
+            "vector_dimension": self.config.vector_dimension,
+            "vector_type": self.config.vector_type,
+        }
+
+
+class RetiredMilvusArtifactsProvider:
+    name = "retired-milvus"
+
+    def __init__(self, rag_collection: str, entity_collection: str):
+        self.rag_collection = rag_collection
+        self.entity_collection = entity_collection
+
+    def plan(self) -> list[ResetPlanItem]:
+        return [
+            ResetPlanItem(self.name, self.rag_collection, "retired collection ignored by PostgreSQL startup", True),
+            ResetPlanItem(self.name, self.entity_collection, "retired collection ignored by PostgreSQL startup", True),
+        ]
+
+    def backup(self, backup_root: Path) -> dict[str, object]:
+        return {"supported": False, "reason": "Use a Milvus-native backup/export outside normal startup when required"}
+
+    def reset(self) -> dict[str, object]:
+        return {"retired": [self.rag_collection, self.entity_collection], "dropped": []}
+
+    def initialize(self) -> dict[str, object]:
+        return {"initialized": False, "reason": "Milvus is retired for PostgreSQL storage"}
+
+
 class ManagedFilesResetProvider:
     def __init__(
         self,

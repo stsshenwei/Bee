@@ -12,13 +12,15 @@ rag:
     base_url: ${EMBEDDING_BASE_URL}
     api_key: ${EMBEDDING_API_KEY}
   vector_store:
-    type: milvus
-    url: ${MILVUS_URI}
-    collection: rag_chunks
+    type: postgres_pgvector
+    database_url: ${DATABASE_URL}
+    schema: ${POSTGRES_SCHEMA}
+    vector_type: ${PGVECTOR_TYPE}
+    index_type: ${PGVECTOR_INDEX_TYPE}
   keyword_search:
-    type: milvus
-    url: ${MILVUS_URI}
-    index: rag_chunks
+    type: postgres_text_trigram
+    language: ${POSTGRES_KEYWORD_LANGUAGE}
+    trigram_enabled: ${POSTGRES_TRIGRAM_ENABLED}
   reranker:
     enabled: true
     provider: bge
@@ -63,6 +65,35 @@ processing_worker:
   max_concurrent_tasks: 1
   default_max_attempts: 3
   retry_backoff_seconds: [10, 30, 120]
+
+async_runtime:
+  enabled: false
+  mode: local
+  broker_url: ${ASYNC_RUNTIME_BROKER_URL}
+  result_backend_url: ${ASYNC_RUNTIME_RESULT_BACKEND_URL}
+  local_fallback_enabled: true
+  local_worker_enabled: true
+  default_max_retries: 3
+  default_time_limit_seconds: 3600
+  default_soft_time_limit_seconds: 3300
+  core:
+    queue: core
+    concurrency: 8
+  postprocess:
+    queue: postprocess
+    concurrency: 2
+  enrichment:
+    queue: enrichment
+    concurrency: 12
+  maintenance:
+    queue: maintenance
+    concurrency: 4
+  shared:
+    queue: shared
+    concurrency: 6
+  wiki:
+    queue: wiki
+    concurrency: 8
 
 prompts:
   directory: config/prompt_templates

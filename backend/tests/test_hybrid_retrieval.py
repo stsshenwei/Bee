@@ -11,6 +11,7 @@ from app.services.retrieval.query_understanding import (
     QueryUnderstandingConfig,
     QueryUnderstandingService,
 )
+from app.services.retrieval.retrieval_models import RetrievedChunk
 
 
 class FakeVectorStore:
@@ -54,6 +55,18 @@ class QueryAwareVectorStore(FakeVectorStore):
     def query_bm25(self, question, top_k):
         self.bm25_queries.append((question, top_k))
         return list(self.bm25_by_query.get(question, []))[:top_k]
+
+
+class FakeKeywordSearch:
+    def __init__(self, hits=None, hits_by_query=None):
+        self.hits = hits or []
+        self.hits_by_query = hits_by_query or {}
+        self.queries = []
+
+    def search(self, query, top_k, filters=None):
+        self.queries.append((query, top_k, filters))
+        hits = self.hits_by_query.get(query, self.hits)
+        return list(hits)[:top_k]
 
 
 class FakeReranker:
@@ -152,16 +165,20 @@ class HybridRetrievalTests(unittest.TestCase):
         self.assertEqual("p1", hits[0]["metadata"]["parent_id"])
         self.assertGreater(hits[0]["keyword_score"], 0)
 
-    def test_keyword_retrieve_uses_milvus_bm25_when_enabled(self):
+    def test_keyword_retrieve_uses_postgres_keyword_search(self):
         vector_store = FakeVectorStore()
-        vector_store.bm25_hits = [
-            {
-                "content": "",
-                "metadata": {"chunk_id": "c1", "doc_id": "doc-1", "parent_id": "p1"},
-                "bm25_score": 2.4,
-                "distance": 0.0,
-            }
-        ]
+        keyword_search = FakeKeywordSearch(
+            [
+                RetrievedChunk(
+                    chunk_id="c1",
+                    doc_id="doc-1",
+                    parent_id="p1",
+                    content="",
+                    score=2.4,
+                    bm25_score=2.4,
+                )
+            ]
+        )
         service = RAGService(
             vector_store=vector_store,
             llm_client=SimpleNamespace(),
@@ -174,11 +191,13 @@ class HybridRetrievalTests(unittest.TestCase):
             chunk_overlap=10,
             milvus_bm25_enabled=True,
             bm25_recall_top_n=50,
+            keyword_search=keyword_search,
         )
 
         hits = service.keyword_retrieve_hits("ERR_CODE_42", top_k=5)
 
-        self.assertEqual([("ERR_CODE_42", 5)], vector_store.bm25_queries)
+        self.assertEqual([], vector_store.bm25_queries)
+        self.assertEqual([("ERR_CODE_42", 5)], [(query, top_k) for query, top_k, _ in keyword_search.queries])
         self.assertEqual("c1", hits[0]["metadata"]["chunk_id"])
         self.assertEqual(2.4, hits[0]["keyword_score"])
 
@@ -367,16 +386,18 @@ class HybridRetrievalTests(unittest.TestCase):
         self.assertEqual(5, sources[0]["page_end"])
         self.assertEqual(["c1", "c2"], sources[0]["matched_child_ids"])
 
-    def test_hybrid_retrieve_uses_dense_and_bm25_fanout_with_rrf(self):
+    def test_hybrid_retrieve_uses_dense_and_keyword_fanout_with_rrf(self):
         vector_store = FakeVectorStore()
         vector_store.dense_hits = [
             {"content": "", "metadata": {"chunk_id": "shared", "parent_id": "p1"}, "distance": 0.1, "vector_score": 0.9},
             {"content": "", "metadata": {"chunk_id": "dense-only", "parent_id": "p2"}, "distance": 0.2, "vector_score": 0.8},
         ]
-        vector_store.bm25_hits = [
-            {"content": "", "metadata": {"chunk_id": "shared", "parent_id": "p1"}, "distance": 0.0, "bm25_score": 3.0},
-            {"content": "", "metadata": {"chunk_id": "bm25-only", "parent_id": "p3"}, "distance": 0.0, "bm25_score": 2.0},
-        ]
+        keyword_search = FakeKeywordSearch(
+            [
+                RetrievedChunk("shared", "", "p1", content="", score=3.0, bm25_score=3.0),
+                RetrievedChunk("bm25-only", "", "p3", content="", score=2.0, bm25_score=2.0),
+            ]
+        )
         service = RAGService(
             vector_store=vector_store,
             llm_client=SimpleNamespace(),
@@ -391,12 +412,14 @@ class HybridRetrievalTests(unittest.TestCase):
             dense_recall_top_n=50,
             bm25_recall_top_n=50,
             fusion_top_k=30,
+            keyword_search=keyword_search,
         )
 
         hits = service.hybrid_retrieve_hits("question")
 
         self.assertEqual([("question", 50)], vector_store.dense_queries)
-        self.assertEqual([("question", 50)], vector_store.bm25_queries)
+        self.assertEqual([], vector_store.bm25_queries)
+        self.assertEqual([("question", 50)], [(query, top_k) for query, top_k, _ in keyword_search.queries])
         self.assertEqual(["shared", "dense-only", "bm25-only"], [hit["metadata"]["chunk_id"] for hit in hits])
         self.assertGreater(hits[0]["hybrid_score"], hits[1]["hybrid_score"])
         self.assertEqual(0.9, hits[0]["vector_score"])
@@ -437,14 +460,12 @@ class HybridRetrievalTests(unittest.TestCase):
                 ]
             return [{"content": "", "metadata": {"chunk_id": "shared", "parent_id": "p2"}, "distance": 0.3}]
 
-        def query_bm25(question, top_k):
-            vector_store.bm25_queries.append((question, top_k))
-            if "RJ45" in question:
-                return [{"content": "", "metadata": {"chunk_id": "rj45", "parent_id": "p1"}, "distance": 0.0, "bm25_score": 4.0}]
-            return []
-
         vector_store.query_dense = query_dense
-        vector_store.query_bm25 = query_bm25
+        keyword_search = FakeKeywordSearch(
+            hits_by_query={
+                "8个RJ45": [RetrievedChunk("rj45", "", "p1", content="", score=4.0, bm25_score=4.0)]
+            }
+        )
         query_understanding = QueryUnderstandingService(
             rewrite_client=RewriteClient(),
             config=QueryUnderstandingConfig(enabled=True, rewrite_enabled=True, max_queries=3),
@@ -465,15 +486,17 @@ class HybridRetrievalTests(unittest.TestCase):
             fusion_top_k=30,
             retrieval_debug_enabled=True,
             query_understanding=query_understanding,
+            keyword_search=keyword_search,
         )
 
         hits = service.hybrid_retrieve_hits("8个电口")
 
         dense_queries = [query for query, _ in vector_store.dense_queries]
-        bm25_queries = [query for query, _ in vector_store.bm25_queries]
+        keyword_queries = [query for query, _, _ in keyword_search.queries]
         self.assertIn("8个电口", dense_queries)
         self.assertIn("8个RJ-45", dense_queries)
-        self.assertIn("8个RJ45", bm25_queries)
+        self.assertEqual([], vector_store.bm25_queries)
+        self.assertIn("8个RJ45", keyword_queries)
         self.assertEqual({"rj45", "shared"}, {hit["metadata"]["chunk_id"] for hit in hits})
         self.assertEqual(1, len([hit for hit in hits if hit["metadata"]["chunk_id"] == "rj45"]))
         self.assertIn("query_understanding", service._last_retrieval_debug)

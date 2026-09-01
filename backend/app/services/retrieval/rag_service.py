@@ -32,7 +32,7 @@ from app.services.documents.document_repository import DocumentRepository
 from app.services.knowledge.audit_repository import KnowledgeAuditRepository
 from app.services.agent.agent_prompt_templates import ContextPromptCatalog, scope_to_prompt_kbs
 from app.services.documents.image_repository import ImageRepository
-from app.services.retrieval.keyword_search import SQLiteFTSKeywordSearch
+from app.services.retrieval.keyword_search import PostgresKeywordSearch
 from app.services.documents.multimodal_processing import (
     CaptionProvider,
     DisabledCaptionProvider,
@@ -43,10 +43,33 @@ from app.services.documents.multimodal_processing import (
 from app.services.documents.object_storage import LocalObjectStorage, ObjectStorageProvider
 from app.services.infrastructure.observability import get_observability_sink
 from app.services.processing.processing_trace import ProcessingTraceRecorder
+from app.services.processing.processing_task_repository import (
+    TASK_CANCELED,
+    TASK_COMPLETED,
+    TASK_DEAD_LETTERED,
+    TASK_FAILED,
+    TASK_PENDING,
+    TASK_PROCESSING,
+    TASK_RETRYING,
+)
 from app.services.infrastructure.logging_config import get_trace_id as _current_log_trace_id
 from app.services.retrieval.query_understanding import QueryUnderstandingResult, QueryUnderstandingService
 from app.services.retrieval.retrieval_models import KeywordSearch, RetrievedChunk
 from app.services.documents.upload_batch_repository import UploadBatchRepository, initial_phase_report
+from app.services.async_runtime.task_routes import (
+    CHUNK_EXTRACT_TASK,
+    DOCUMENT_PROCESS_TASK,
+    EMBEDDING_INDEX_TASK,
+    GENERATED_QUESTIONS_TASK,
+    GRAPH_EXTRACTION_TASK,
+    IMAGE_MULTIMODAL_TASK,
+    KNOWLEDGE_POSTPROCESS_TASK,
+    SUMMARY_GENERATION_TASK,
+    UPLOAD_FILE_TASK,
+    WIKI_FINALIZE_TASK,
+    WIKI_INGEST_TASK,
+    route_for_task_type,
+)
 
 if TYPE_CHECKING:
     from app.services.retrieval.vector_store import MilvusVectorStore
@@ -81,9 +104,30 @@ TRACE_STATUS_MAP = {
     "pending": "pending",
 }
 
+ACTIVE_PROCESSING_TASK_STATUSES = {TASK_PENDING, TASK_PROCESSING, TASK_RETRYING}
+FAILED_PROCESSING_TASK_STATUSES = {TASK_FAILED, TASK_DEAD_LETTERED}
+TERMINAL_PROCESSING_TASK_STATUSES = {TASK_COMPLETED, TASK_FAILED, TASK_CANCELED, TASK_DEAD_LETTERED}
+PROCESSING_TASK_STAGE_NAMES = {
+    DOCUMENT_PROCESS_TASK: "docreader",
+    UPLOAD_FILE_TASK: "docreader",
+    CHUNK_EXTRACT_TASK: "chunking",
+    EMBEDDING_INDEX_TASK: "embedding",
+    IMAGE_MULTIMODAL_TASK: "multimodal",
+    KNOWLEDGE_POSTPROCESS_TASK: "postprocess",
+    SUMMARY_GENERATION_TASK: "postprocess",
+    GENERATED_QUESTIONS_TASK: "postprocess",
+    GRAPH_EXTRACTION_TASK: "postprocess",
+    WIKI_INGEST_TASK: "postprocess",
+    WIKI_FINALIZE_TASK: "postprocess",
+}
+
 
 class ProcessingPreviewError(ValueError):
     """Raised when read-only processing preview fails a safety limit."""
+
+
+class StaleDocumentRevision(RuntimeError):
+    """Raised when a staged task belongs to an older document revision."""
 
 
 class RAGService:
@@ -225,7 +269,7 @@ class RAGService:
             child_overlap_tokens=chunk_overlap,
         )
         self.query_understanding = query_understanding or QueryUnderstandingService()
-        self.keyword_search = keyword_search or SQLiteFTSKeywordSearch(self.document_repository)
+        self.keyword_search = keyword_search or PostgresKeywordSearch(self.document_repository)
         self.kg_service = kg_service
         self.kg_extraction_enabled = kg_extraction_enabled
         self.graph_retriever = graph_retriever
@@ -741,7 +785,28 @@ class RAGService:
                         processing_settings,
                         resolved_processing=resolved_processing,
                     )
-                    multimodal_summary = self.process_multimodal_operations(parsed.doc_id, scope)
+                    multimodal_task = None
+                    if int(image_operation_summary.get("operations", 0) or 0) > 0:
+                        multimodal_task = self._enqueue_async_document_stage(
+                            IMAGE_MULTIMODAL_TASK,
+                            parsed.doc_id,
+                            scope,
+                            payload={"image_count": len(parsed.images)},
+                            stage="multimodal",
+                        )
+                    if multimodal_task is not None:
+                        multimodal_summary = {
+                            "total": image_operation_summary["operations"],
+                            "completed": 0,
+                            "failed": 0,
+                            "canceled": 0,
+                            "skipped": 0,
+                            "queued": image_operation_summary["operations"],
+                            "errors": [],
+                            "task": multimodal_task,
+                        }
+                    else:
+                        multimodal_summary = self.process_multimodal_operations(parsed.doc_id, scope)
                 trace.record_output(
                     multimodal_span,
                     {
@@ -768,57 +833,94 @@ class RAGService:
                 if callable(cancel_check):
                     cancel_check()
                 logger.info("document.processing.stage.start", extra={"stage": "postprocess", "doc_id": parsed.doc_id})
-                with trace.db_subspan(
-                    postprocess_span,
-                    "graph_extraction",
-                    input={"enabled": graph_enabled, "chunks": len(chunks)},
-                ) as graph_span:
-                    if graph_enabled:
-                        self._run_kg_enrichment(parsed.doc_id, chunks, scope)
-                    else:
-                        trace.mark_db_subspan_skipped(
-                            graph_span,
-                            reason="graph_disabled_by_strategy",
-                            output={"enabled": False},
-                        )
-                with trace.db_subspan(
-                    postprocess_span,
-                    "wiki_enqueue",
-                    input={"enabled": wiki_enabled, "document_id": parsed.doc_id},
-                ) as wiki_enqueue_span:
-                    if wiki_enabled:
-                        wiki_generation_result = self._run_wiki_generation(parsed.doc_id, scope)
-                    else:
-                        wiki_generation_result = {
-                            "task": {"status": "skipped", "reason": "wiki_disabled_by_strategy"},
-                            "page": None,
-                            "proposal": None,
-                        }
-                        trace.mark_db_subspan_skipped(
-                            wiki_enqueue_span,
-                            reason="wiki_disabled_by_strategy",
-                            output={"enabled": False},
-                        )
-                enrichment_queued = False
-                if self.document_enrichment_service is not None:
-                    provider_known = hasattr(self.document_enrichment_service, "provider")
-                    enrichment_queued = bool(
-                        getattr(self.document_enrichment_service, "enabled", False)
-                        and (not provider_known or getattr(self.document_enrichment_service, "provider", None) is not None)
-                    )
+                postprocess_task = self._enqueue_async_document_stage(
+                    KNOWLEDGE_POSTPROCESS_TASK,
+                    parsed.doc_id,
+                    scope,
+                    payload={
+                        "chunks": len(chunks),
+                        "graph_enabled": graph_enabled,
+                        "wiki_enabled": wiki_enabled,
+                    },
+                    stage="postprocess",
+                )
+                if postprocess_task is not None:
+                    wiki_generation_result = {
+                        "task": {
+                            "status": "queued",
+                            "task_id": postprocess_task["task_id"],
+                            "queue": postprocess_task["queue"],
+                        },
+                        "page": None,
+                        "proposal": None,
+                    }
+                    enrichment_queued = False
+                else:
                     with trace.db_subspan(
                         postprocess_span,
-                        "summary_generation",
-                        kind="generation",
-                        input={"enabled": enrichment_queued, "chunks": len(chunks)},
-                    ):
-                        self.document_enrichment_service.enqueue(parsed.doc_id, chunks, scope)
+                        "graph_extraction",
+                        input={"enabled": graph_enabled, "chunks": len(chunks)},
+                    ) as graph_span:
+                        if graph_enabled:
+                            graph_task = self._enqueue_async_document_stage(
+                                GRAPH_EXTRACTION_TASK,
+                                parsed.doc_id,
+                                scope,
+                                payload={"chunks": len(chunks)},
+                                stage="postprocess",
+                            )
+                            if graph_task is None:
+                                self._run_kg_enrichment(parsed.doc_id, chunks, scope)
+                            elif graph_span is not None:
+                                self.processing_trace_recorder.span_tracker.update_output(
+                                    graph_span,
+                                    {"queued": True, "task": graph_task},
+                                )
+                        else:
+                            trace.mark_db_subspan_skipped(
+                                graph_span,
+                                reason="graph_disabled_by_strategy",
+                                output={"enabled": False},
+                            )
+                    with trace.db_subspan(
+                        postprocess_span,
+                        "wiki_enqueue",
+                        input={"enabled": wiki_enabled, "document_id": parsed.doc_id},
+                    ) as wiki_enqueue_span:
+                        if wiki_enabled:
+                            wiki_generation_result = self._run_wiki_generation(parsed.doc_id, scope)
+                        else:
+                            wiki_generation_result = {
+                                "task": {"status": "skipped", "reason": "wiki_disabled_by_strategy"},
+                                "page": None,
+                                "proposal": None,
+                            }
+                            trace.mark_db_subspan_skipped(
+                                wiki_enqueue_span,
+                                reason="wiki_disabled_by_strategy",
+                                output={"enabled": False},
+                            )
+                    enrichment_queued = False
+                    if self.document_enrichment_service is not None:
+                        provider_known = hasattr(self.document_enrichment_service, "provider")
+                        enrichment_queued = bool(
+                            getattr(self.document_enrichment_service, "enabled", False)
+                            and (not provider_known or getattr(self.document_enrichment_service, "provider", None) is not None)
+                        )
+                        with trace.db_subspan(
+                            postprocess_span,
+                            "summary_generation",
+                            kind="generation",
+                            input={"enabled": enrichment_queued, "chunks": len(chunks)},
+                        ):
+                            self.document_enrichment_service.enqueue(parsed.doc_id, chunks, scope)
                 trace.record_output(
                     postprocess_span,
                     {
                         "kg_attempted": graph_enabled,
                         "wiki_generation": wiki_generation_result,
                         "enrichment_queued": enrichment_queued,
+                        "postprocess_task": postprocess_task,
                     },
                 )
                 if not needs_embedding:
@@ -919,6 +1021,69 @@ class RAGService:
             return len(value)
         return 0
 
+    def _source_revision_for_file(self, file_path: Path, processing_settings: dict[str, Any] | None = None) -> str:
+        resolved = self._resolve_processing_settings(processing_settings)
+        stat = file_path.stat()
+        source = file_path.resolve().as_posix()
+        try:
+            source = file_path.resolve().relative_to(self.data_dir.resolve()).as_posix()
+        except ValueError:
+            pass
+        raw = json.dumps(
+            {
+                "source": source,
+                "size": int(stat.st_size),
+                "mtime_ns": int(getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1_000_000_000))),
+                "processing": resolved.effective.to_dict(),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def _indexing_state(self, scope: KnowledgeBaseScope) -> dict[str, bool]:
+        indexing_strategy = None
+        if self.knowledge_base_service is not None:
+            indexing_strategy = self.knowledge_base_service.resolve_indexing_strategy(scope)
+        dense_enabled = bool(getattr(indexing_strategy, "dense_enabled", True))
+        keyword_enabled = bool(getattr(indexing_strategy, "keyword_enabled", True))
+        return {
+            "dense_enabled": dense_enabled,
+            "keyword_enabled": keyword_enabled,
+            "graph_enabled": bool(getattr(indexing_strategy, "graph_enabled", self.kg_extraction_enabled)),
+            "wiki_enabled": bool(getattr(indexing_strategy, "wiki_enabled", False)),
+            "needs_embedding": dense_enabled or keyword_enabled,
+        }
+
+    def _chunk_from_repository_row(self, row: dict[str, Any]) -> Chunk:
+        return Chunk(
+            id=str(row["id"]),
+            doc_id=str(row["doc_id"]),
+            parent_id=row.get("parent_id"),
+            chunk_type=str(row["chunk_type"]),
+            title_path=str(row.get("title_path", "")),
+            content=str(row.get("content", "")),
+            content_markdown=str(row.get("content_markdown", "")),
+            page_start=row.get("page_start"),
+            page_end=row.get("page_end"),
+            token_count=int(row.get("token_count", 0) or 0),
+            metadata=dict(row.get("metadata_json", {})),
+        )
+
+    def _assert_document_revision_current(
+        self,
+        doc_id: str,
+        scope: KnowledgeBaseScope,
+        source_revision: str,
+    ) -> None:
+        if not source_revision:
+            return
+        document = self.document_repository.get_document(doc_id, scope)
+        metadata = dict((document or {}).get("metadata_json") or {})
+        current = str(metadata.get("source_revision") or "")
+        if current and current != source_revision:
+            raise StaleDocumentRevision(f"Document {doc_id} revision changed before staged task execution")
+
     def _chunk_trace_summary(self, chunks: list[Chunk]) -> dict[str, Any]:
         lengths = [len(chunk.content or "") for chunk in chunks]
         child_target = int(getattr(self.document_chunker, "child_max_tokens", self.chunk_size) or self.chunk_size)
@@ -979,6 +1144,67 @@ class RAGService:
                 self.kg_service.enrich_document(doc_id, chunks)
         except Exception as exc:
             logger.warning("KG enrichment failed for document %s without failing Raw RAG ingest: %s", doc_id, exc)
+
+    def _enqueue_async_document_stage(
+        self,
+        task_type: str,
+        doc_id: str,
+        scope: KnowledgeBaseScope,
+        *,
+        payload: dict[str, Any] | None = None,
+        stage: str,
+        source_revision: str = "",
+    ) -> dict[str, Any] | None:
+        queue = getattr(self, "async_processing_queue", None)
+        worker = getattr(self, "processing_worker", None)
+        repository = getattr(worker, "repository", None)
+        if queue is None or repository is None or not getattr(queue, "enabled", False):
+            return None
+        revision = source_revision or self._document_processing_revision(doc_id, scope)
+        task_payload = {"schema_version": 1, "doc_id": doc_id, "source_revision": revision, **(payload or {})}
+        task = repository.create_task(
+            task_type,
+            scope,
+            document_id=doc_id,
+            upload_batch_id=str(task_payload.get("batch_id") or ""),
+            upload_file_id=str(task_payload.get("file_id") or ""),
+            payload=task_payload,
+            max_attempts=worker.config.max_attempts_for_stage(stage),
+            trace_id=_current_log_trace_id() or "",
+            idempotency_key=f"{task_type}:{scope.knowledge_base_id}:{doc_id}:{revision}",
+            source_revision=revision,
+        )
+        dispatch_queue = route_for_task_type(task_type)
+        broker_task_id = str(task.get("broker_task_id") or "")
+        if str(task.get("status") or "") in {"pending", "retrying"}:
+            dispatch = queue.enqueue(task)
+            dispatch_queue = dispatch.queue
+            broker_task_id = dispatch.broker_task_id
+            record_dispatch = getattr(repository, "record_broker_dispatch", None)
+            if callable(record_dispatch):
+                task = record_dispatch(task["id"], broker_task_id=dispatch.broker_task_id, queue_name=dispatch.queue)
+        return {
+            "task_id": task["id"],
+            "task_type": task_type,
+            "status": task.get("status"),
+            "queue": dispatch_queue,
+            "broker_task_id": broker_task_id,
+            "source_revision": revision,
+        }
+
+    def _document_processing_revision(self, doc_id: str, scope: KnowledgeBaseScope) -> str:
+        document = self.document_repository.get_document(doc_id, scope)
+        if document is None:
+            return ""
+        metadata = dict(document.get("metadata_json") or {})
+        marker = metadata.get("source_revision") or metadata.get("processing_trace_id") or document.get("updated_at")
+        return ":".join(
+            [
+                str(marker or ""),
+                str(metadata.get("processing_version") or ""),
+                str(metadata.get("chunks") or ""),
+            ]
+        )
 
     def _with_ocr_elements(self, parser: DocumentParser, file_path: Path, parsed):
         extractor = getattr(parser, "extract_ocr_elements", None)
@@ -1251,23 +1477,10 @@ class RAGService:
     ) -> list[dict[str, Any]]:
         scope = scope or self.default_scope
         limit = top_k or self.bm25_recall_top_n or self.top_k
-        if self.milvus_bm25_enabled:
-            query_bm25 = getattr(self.vector_store, "query_bm25", None)
-            if callable(query_bm25):
-                try:
-                    hits = query_bm25(question, limit, scope=scope)
-                except TypeError:
-                    if not scope.compatibility_default:
-                        raise RuntimeError("BM25 provider does not support knowledge-base scope")
-                    hits = query_bm25(question, limit)
-                for hit in hits:
-                    hit["keyword_score"] = float(hit.get("bm25_score", hit.get("keyword_score", 0.0)))
-                return hits
-
         try:
             fts_hits = self.keyword_search.search(question, limit, filters={"scope": scope, "doc_ids": scope.document_ids})
         except Exception as exc:
-            logger.warning("SQLite FTS keyword retrieval failed: %s", exc)
+            logger.warning("PostgreSQL keyword retrieval failed: %s", exc)
             fts_hits = []
         if fts_hits:
             return [self._retrieved_chunk_to_hit(hit) for hit in fts_hits]
@@ -2798,12 +3011,15 @@ class RAGService:
                 source_path = self._resolve_source_path(storage_path)
                 if not source_path.exists() or not source_path.is_file():
                     continue
+                batch = self.upload_batch_repository.get_batch(batch_id, scope)
+                source_revision = self._source_revision_for_file(source_path, batch.get("settings") or {})
                 document_id = document_id or stable_doc_id(source_path)
                 metadata = {
                     "size": int(file_task.get("size") or source_path.stat().st_size),
                     "upload_batch_id": batch_id,
                     "upload_file_id": str(file_task.get("id") or ""),
                     "upload_relative_path": str(file_task.get("relative_path") or ""),
+                    "source_revision": source_revision,
                     **scope.to_dict(),
                 }
                 self.document_repository.upsert_document(
@@ -2860,11 +3076,533 @@ class RAGService:
         total = int(result.get("total", 0) or 0)
         failed = int(result.get("failed", 0) or 0)
         canceled = int(result.get("canceled", 0) or 0)
+        queued = int(result.get("queued", 0) or 0)
         if total <= 0:
             return "skipped"
+        if queued:
+            return "queued"
         if failed or canceled:
             return "partial_failed"
         return "completed"
+
+    def enqueue_upload_file_chunk_stage(self, file_task: dict[str, Any], scope: KnowledgeBaseScope) -> dict[str, Any] | None:
+        file_id = str(file_task["id"])
+        batch_id = str(file_task.get("batch_id") or "")
+        source_path = self._resolve_source_path(str(file_task["storage_path"]))
+        batch = self.upload_batch_repository.get_batch(batch_id, scope)
+        processing_settings = batch.get("settings") or {}
+        doc_id = str(file_task.get("document_id") or "") or stable_doc_id(source_path)
+        source_revision = self._source_revision_for_file(source_path, processing_settings)
+        worker = getattr(self, "processing_worker", None)
+        repository = getattr(worker, "repository", None)
+        if repository is not None:
+            for existing in repository.list_tasks(scope, upload_batch_id=batch_id, task_types={CHUNK_EXTRACT_TASK}):
+                if (
+                    str(existing.get("upload_file_id") or "") == file_id
+                    and str(existing.get("source_revision") or "") == source_revision
+                ):
+                    payload = dict(existing.get("payload") or {})
+                    runtime = dict(payload.get("_async_runtime") or {})
+                    return {
+                        "task_id": existing["id"],
+                        "task_type": CHUNK_EXTRACT_TASK,
+                        "status": existing.get("status"),
+                        "queue": runtime.get("queue_name") or route_for_task_type(CHUNK_EXTRACT_TASK),
+                        "broker_task_id": runtime.get("broker_task_id") or "",
+                        "source_revision": source_revision,
+                    }
+        document = self.document_repository.get_document(doc_id, scope)
+        metadata = dict((document or {}).get("metadata_json") or {})
+        self.document_repository.upsert_document(
+            id=doc_id,
+            name=source_path.name,
+            file_type=source_path.suffix.lower().lstrip("."),
+            storage_path=str(file_task["storage_path"]),
+            parse_status="pending",
+            metadata_json={
+                **metadata,
+                "size": int(file_task.get("size") or source_path.stat().st_size),
+                "upload_batch_id": batch_id,
+                "upload_file_id": file_id,
+                "source_revision": source_revision,
+                **scope.to_dict(),
+            },
+            workspace_id=scope.workspace_id,
+            knowledge_base_id=scope.knowledge_base_id,
+        )
+        self.upload_batch_repository.update_file(
+            file_id,
+            scope,
+            status="parsing",
+            document_id=doc_id,
+            error_message="",
+            phases=self._upload_phase_report({"parse": "queued", "chunk": "queued"}),
+            warnings=[],
+            errors=[],
+            retry_eligible=False,
+        )
+        return self._enqueue_async_document_stage(
+            CHUNK_EXTRACT_TASK,
+            doc_id,
+            scope,
+            payload={
+                "batch_id": batch_id,
+                "file_id": file_id,
+                "storage_path": file_task.get("storage_path"),
+                "original_name": file_task.get("original_name"),
+                "processing_settings": processing_settings,
+            },
+            stage="parse",
+            source_revision=source_revision,
+        )
+
+    def process_chunk_extract_task(
+        self,
+        task: dict[str, Any],
+        scope: KnowledgeBaseScope,
+        *,
+        cancel_check: Any | None = None,
+    ) -> dict[str, Any]:
+        payload = dict(task.get("payload") or {})
+        source_revision = str(task.get("source_revision") or payload.get("source_revision") or "")
+        file_id = str(task.get("upload_file_id") or payload.get("file_id") or "")
+        batch_id = str(task.get("upload_batch_id") or payload.get("batch_id") or "")
+        storage_path = str(payload.get("storage_path") or "")
+        processing_settings = dict(payload.get("processing_settings") or {})
+        if not storage_path:
+            raise ValueError("chunk.extract task is missing storage_path")
+        source_path = self._resolve_source_path(storage_path)
+        resolved_processing = self._resolve_processing_settings(processing_settings)
+        indexing = self._indexing_state(scope)
+        doc_id = str(task.get("document_id") or payload.get("doc_id") or stable_doc_id(source_path))
+        self._assert_document_revision_current(doc_id, scope, source_revision)
+        file_size = source_path.stat().st_size
+        trace = self.processing_trace_recorder.start(
+            name="document_processing",
+            doc_id=doc_id,
+            file_name=source_path.name,
+            source=storage_path,
+            scope=scope.to_dict(),
+            metadata={
+                "file_size": file_size,
+                "extension": source_path.suffix.lower(),
+                "source_revision": source_revision,
+                "staged_task_type": CHUNK_EXTRACT_TASK,
+                "requested_processing": resolved_processing.requested.to_dict(),
+                "effective_processing": resolved_processing.effective.to_dict(),
+            },
+        )
+        parser_warnings: list[str] = []
+        image_operation_summary = {"resources": 0, "operations": 0, "errors": []}
+        try:
+            with trace.span(
+                "load",
+                input={
+                    "source": storage_path,
+                    "file_name": source_path.name,
+                    "file_type": source_path.suffix.lower().lstrip("."),
+                    "size": file_size,
+                    "parser_engine": resolved_processing.effective.parser_engine,
+                },
+            ) as load_span:
+                if callable(cancel_check):
+                    cancel_check()
+                self.document_repository.upsert_document(
+                    id=doc_id,
+                    name=source_path.name,
+                    file_type=source_path.suffix.lower().lstrip("."),
+                    storage_path=storage_path,
+                    parse_status="parsing",
+                    metadata_json={
+                        "size": file_size,
+                        "processing_trace_id": trace.trace_id,
+                        "processing_trace_dir": str(trace.trace_dir),
+                        "source_revision": source_revision,
+                        **scope.to_dict(),
+                    },
+                    workspace_id=scope.workspace_id,
+                    knowledge_base_id=scope.knowledge_base_id,
+                )
+                parser = self.document_parser
+                parser_engine = resolved_processing.effective.parser_engine
+                with trace.db_subspan(
+                    load_span,
+                    "parser_call",
+                    input={
+                        "parser_engine": parser_engine,
+                        "file_type": source_path.suffix.lower().lstrip("."),
+                        "custom_parser": parser is not None,
+                    },
+                ):
+                    if parser is not None:
+                        parse_signature = inspect.signature(parser.parse)
+                        accepts_requested_engine = "requested_engine" in parse_signature.parameters or any(
+                            parameter.kind == inspect.Parameter.VAR_KEYWORD
+                            for parameter in parse_signature.parameters.values()
+                        )
+                        parsed = parser.parse(source_path, requested_engine=parser_engine) if accepts_requested_engine else parser.parse(source_path)
+                    else:
+                        parsed = PARSER_REGISTRY.parse(
+                            source_path,
+                            engine=parser_engine,
+                            force_scanned=resolved_processing.effective.pdf_force_scanned,
+                            render_dpi=resolved_processing.effective.pdf_render_dpi,
+                            jpeg_quality=resolved_processing.effective.pdf_jpeg_quality,
+                            max_pages=resolved_processing.effective.pdf_max_pages,
+                            max_image_edge_px=resolved_processing.effective.pdf_max_image_edge_px,
+                            render_concurrency=resolved_processing.effective.pdf_render_concurrency,
+                        )
+                if self.ocr_enabled:
+                    parsed = self._with_ocr_elements(parser, source_path, parsed)
+                trace.reassign_doc_id(parsed.doc_id)
+                if parsed.doc_id != doc_id:
+                    self.document_repository.upsert_document(
+                        id=parsed.doc_id,
+                        name=parsed.file_name,
+                        file_type=parsed.file_type,
+                        storage_path=storage_path,
+                        parse_status="parsing",
+                        metadata_json={
+                            "size": file_size,
+                            "processing_trace_id": trace.trace_id,
+                            "processing_trace_dir": str(trace.trace_dir),
+                            "source_revision": source_revision,
+                            **scope.to_dict(),
+                        },
+                        workspace_id=scope.workspace_id,
+                        knowledge_base_id=scope.knowledge_base_id,
+                    )
+                    self.document_repository.delete_document(doc_id, scope)
+                parsed_markdown = self._parsed_markdown(parsed)
+                parsed_file = trace.write_text("parsed.md", parsed_markdown)
+                parser_warnings = [str(item) for item in getattr(parsed.diagnostics, "warnings", ()) or ()]
+                trace.record_output(
+                    load_span,
+                    {
+                        "doc_id": parsed.doc_id,
+                        "file_type": parsed.file_type,
+                        "elements": len(parsed.elements),
+                        "images": len(parsed.images),
+                        "characters": len(parsed_markdown),
+                        "parsed_markdown_file": parsed_file,
+                        "parser_diagnostics": asdict(parsed.diagnostics),
+                        "document_metadata": parsed.metadata,
+                    },
+                )
+
+            with trace.span(
+                "chunk_strategy",
+                input={
+                    "requested_strategy": resolved_processing.requested.chunk_strategy,
+                    "effective_strategy": resolved_processing.effective.chunk_strategy,
+                    "parent_chunk_size_chars": resolved_processing.effective.parent_chunk_size_chars,
+                    "child_chunk_size_chars": resolved_processing.effective.child_chunk_size_chars,
+                    "child_chunk_overlap_chars": resolved_processing.effective.child_chunk_overlap_chars,
+                },
+            ) as chunk_span:
+                if callable(cancel_check):
+                    cancel_check()
+                with trace.db_subspan(
+                    chunk_span,
+                    "chunk_strategy_attempt",
+                    input={
+                        "requested_strategy": resolved_processing.requested.chunk_strategy,
+                        "effective_strategy": resolved_processing.effective.chunk_strategy,
+                    },
+                ):
+                    chunks = self._with_source_metadata(
+                        self.document_chunker.chunk(parsed),
+                        source=storage_path,
+                        file_name=source_path.name,
+                        scope=scope,
+                        processing_version=resolved_processing.effective.processing_version,
+                        size_unit=resolved_processing.effective.size_unit,
+                        requested_parser_engine=resolved_processing.requested.parser_engine,
+                        effective_parser_engine=resolved_processing.effective.parser_engine,
+                    )
+                self.document_repository.replace_chunks(parsed.doc_id, chunks, scope)
+                self._reset_image_resources_for_reparse(parsed.doc_id, parsed.images, scope)
+                image_operation_summary = self._persist_image_operations(
+                    parsed.doc_id,
+                    parsed.images,
+                    scope,
+                    processing_settings,
+                    resolved_processing=resolved_processing,
+                )
+                chunks_file = trace.write_jsonl("chunks.jsonl", self._chunk_trace_rows(chunks))
+                chunk_summary = self._chunk_trace_summary(chunks)
+                trace.record_output(
+                    chunk_span,
+                    {
+                        **chunk_summary,
+                        "chunks_file": chunks_file,
+                        "processing_version": resolved_processing.effective.processing_version,
+                        "image_operations": image_operation_summary,
+                    },
+                )
+
+            self.document_repository.upsert_document(
+                id=parsed.doc_id,
+                name=parsed.file_name,
+                file_type=parsed.file_type,
+                storage_path=storage_path,
+                parse_status="chunked",
+                metadata_json={
+                    "size": file_size,
+                    "elements": len(parsed.elements),
+                    "chunks": len(chunks),
+                    "parser": asdict(parsed.diagnostics),
+                    "processing_trace_id": trace.trace_id,
+                    "processing_trace_dir": str(trace.trace_dir),
+                    "source_revision": source_revision,
+                    "processing_version": resolved_processing.effective.processing_version,
+                    "processing": resolved_processing.to_dict(),
+                    "indexing_strategy": {key: value for key, value in indexing.items() if key != "needs_embedding"},
+                    **scope.to_dict(),
+                },
+                workspace_id=scope.workspace_id,
+                knowledge_base_id=scope.knowledge_base_id,
+            )
+            if file_id:
+                self.upload_batch_repository.update_file(
+                    file_id,
+                    scope,
+                    status="parsing",
+                    document_id=parsed.doc_id,
+                    chunks=len(chunks),
+                    phases=self._upload_phase_report(
+                        {"parse": "completed", "chunk": "completed", "index": "queued"},
+                        warnings_by_phase={"parse": parser_warnings},
+                    ),
+                    warnings=parser_warnings,
+                    errors=[str(item) for item in image_operation_summary.get("errors", [])],
+                    retry_eligible=False,
+                )
+            next_task = self._enqueue_async_document_stage(
+                EMBEDDING_INDEX_TASK,
+                parsed.doc_id,
+                scope,
+                payload={
+                    "batch_id": batch_id,
+                    "file_id": file_id,
+                    "storage_path": storage_path,
+                    "processing_settings": processing_settings,
+                    "image_operation_summary": image_operation_summary,
+                    "parser_warnings": parser_warnings,
+                    **indexing,
+                },
+                stage="index",
+                source_revision=source_revision,
+            )
+            if next_task is None:
+                self.process_embedding_index_task(
+                    {
+                        "document_id": parsed.doc_id,
+                        "upload_batch_id": batch_id,
+                        "upload_file_id": file_id,
+                        "source_revision": source_revision,
+                        "payload": {
+                            "batch_id": batch_id,
+                            "file_id": file_id,
+                            "storage_path": storage_path,
+                            "processing_settings": processing_settings,
+                            "image_operation_summary": image_operation_summary,
+                            "parser_warnings": parser_warnings,
+                            **indexing,
+                        },
+                    },
+                    scope,
+                    cancel_check=cancel_check,
+                )
+            trace.finish()
+            return {"doc_id": parsed.doc_id, "chunks": len(chunks), "next_task": next_task, "source_revision": source_revision}
+        except Exception as exc:
+            if file_id:
+                self.upload_batch_repository.update_file(
+                    file_id,
+                    scope,
+                    status="failed",
+                    error_message=str(exc),
+                    phases=self._upload_phase_report(
+                        {"parse": "failed", "chunk": "skipped", "index": "skipped", "multimodal": "skipped", "postprocess": "skipped"},
+                        errors_by_phase={"parse": [str(exc)]},
+                        retry_phases={"parse"},
+                    ),
+                    warnings=parser_warnings,
+                    errors=[str(exc)],
+                    retry_eligible=True,
+                )
+            trace.finish(error=exc)
+            raise
+
+    def process_embedding_index_task(
+        self,
+        task: dict[str, Any],
+        scope: KnowledgeBaseScope,
+        *,
+        cancel_check: Any | None = None,
+    ) -> dict[str, Any]:
+        payload = dict(task.get("payload") or {})
+        doc_id = str(task.get("document_id") or payload.get("doc_id") or "")
+        if not doc_id:
+            raise ValueError("embedding.index task is missing document_id")
+        source_revision = str(task.get("source_revision") or payload.get("source_revision") or "")
+        self._assert_document_revision_current(doc_id, scope, source_revision)
+        if callable(cancel_check):
+            cancel_check()
+        document = self.document_repository.get_document(doc_id, scope)
+        if document is None:
+            raise ValueError(f"Cannot index missing document {doc_id!r}")
+        metadata = dict(document.get("metadata_json") or {})
+        chunks = [self._chunk_from_repository_row(row) for row in self.document_repository.list_chunks(doc_id=doc_id, scope=scope)]
+        needs_embedding = bool(payload.get("needs_embedding", True))
+        dense_enabled = bool(payload.get("dense_enabled", True))
+        keyword_enabled = bool(payload.get("keyword_enabled", True))
+        graph_enabled = bool(payload.get("graph_enabled", False))
+        wiki_enabled = bool(payload.get("wiki_enabled", False))
+        image_operation_summary = dict(payload.get("image_operation_summary") or {})
+        parser_warnings = [str(item) for item in payload.get("parser_warnings", [])]
+        file_id = str(task.get("upload_file_id") or payload.get("file_id") or "")
+        batch_id = str(task.get("upload_batch_id") or payload.get("batch_id") or "")
+        storage_path = str(payload.get("storage_path") or document.get("storage_path") or "")
+
+        self._mark_wiki_source_stale(doc_id, scope, reason="source_reindexed")
+        if needs_embedding:
+            replace_document_chunks = getattr(self.vector_store, "replace_document_chunks", None)
+            if callable(replace_document_chunks):
+                try:
+                    replace_document_chunks(doc_id, chunks, scope=scope)
+                except TypeError:
+                    replace_document_chunks(doc_id, chunks)
+            else:
+                self.vector_store.upsert_chunks(chunks)
+        else:
+            self._delete_vector_document(doc_id, scope)
+        self.document_repository.upsert_document(
+            id=doc_id,
+            name=str(document.get("name") or Path(storage_path).name or doc_id),
+            file_type=str(document.get("file_type") or Path(storage_path).suffix.lower().lstrip(".")),
+            storage_path=storage_path,
+            parse_status="parsed",
+            metadata_json={
+                **metadata,
+                "chunks": len(chunks),
+                "source_revision": source_revision or metadata.get("source_revision", ""),
+                "indexing_strategy": {
+                    "dense_enabled": dense_enabled,
+                    "keyword_enabled": keyword_enabled,
+                    "graph_enabled": graph_enabled,
+                    "wiki_enabled": wiki_enabled,
+                },
+                **scope.to_dict(),
+            },
+            workspace_id=scope.workspace_id,
+            knowledge_base_id=scope.knowledge_base_id,
+        )
+
+        multimodal_summary: dict[str, Any]
+        operations = int(image_operation_summary.get("operations", 0) or 0)
+        multimodal_task = None
+        if operations > 0:
+            multimodal_task = self._enqueue_async_document_stage(
+                IMAGE_MULTIMODAL_TASK,
+                doc_id,
+                scope,
+                payload={
+                    "batch_id": batch_id,
+                    "file_id": file_id,
+                    "image_count": image_operation_summary.get("resources", 0),
+                },
+                stage="multimodal",
+                source_revision=source_revision,
+            )
+        if multimodal_task is not None:
+            multimodal_summary = {
+                "total": operations,
+                "completed": 0,
+                "failed": 0,
+                "canceled": 0,
+                "skipped": 0,
+                "queued": operations,
+                "errors": [],
+                "task": multimodal_task,
+            }
+        else:
+            multimodal_summary = self.process_multimodal_operations(doc_id, scope)
+
+        postprocess_task = self._enqueue_async_document_stage(
+            KNOWLEDGE_POSTPROCESS_TASK,
+            doc_id,
+            scope,
+            payload={
+                "batch_id": batch_id,
+                "file_id": file_id,
+                "chunks": len(chunks),
+                "graph_enabled": graph_enabled,
+                "wiki_enabled": wiki_enabled,
+            },
+            stage="postprocess",
+            source_revision=source_revision,
+        )
+        if postprocess_task is None:
+            if graph_enabled:
+                graph_task = self._enqueue_async_document_stage(
+                    GRAPH_EXTRACTION_TASK,
+                    doc_id,
+                    scope,
+                    payload={"batch_id": batch_id, "file_id": file_id, "chunks": len(chunks)},
+                    stage="postprocess",
+                    source_revision=source_revision,
+                )
+                if graph_task is None:
+                    self._run_kg_enrichment(doc_id, chunks, scope)
+            if wiki_enabled:
+                self._run_wiki_generation(doc_id, scope)
+            if self.document_enrichment_service is not None:
+                self.document_enrichment_service.enqueue(doc_id, chunks, scope)
+
+        multimodal_errors = [
+            *[str(item) for item in image_operation_summary.get("errors", [])],
+            *[str(item) for item in multimodal_summary.get("errors", [])],
+        ]
+        multimodal_status = self._multimodal_phase_status(multimodal_summary)
+        phases = self._upload_phase_report(
+            {
+                "parse": "completed",
+                "chunk": "completed",
+                "index": "completed",
+                "multimodal": multimodal_status,
+                "postprocess": "queued" if postprocess_task is not None else "completed",
+            },
+            warnings_by_phase={"parse": parser_warnings},
+            errors_by_phase={"multimodal": multimodal_errors},
+            retry_phases={"multimodal"} if multimodal_status == "partial_failed" else set(),
+        )
+        if file_id:
+            self.upload_batch_repository.update_file(
+                file_id,
+                scope,
+                status="completed",
+                document_id=doc_id,
+                chunks=len(chunks),
+                phases=phases,
+                warnings=parser_warnings,
+                errors=multimodal_errors,
+                retry_eligible=False,
+            )
+        if batch_id:
+            self._finish_upload_batch_from_files(batch_id, scope)
+        return {
+            "doc_id": doc_id,
+            "indexed_chunks": len(
+                [chunk for chunk in chunks if chunk.chunk_type in {"child", "table", "ocr", "image_ocr", "image_caption"}]
+            )
+            if needs_embedding
+            else 0,
+            "persisted_chunks": len(chunks),
+            "multimodal": multimodal_summary,
+            "postprocess_task": postprocess_task,
+        }
 
     def _process_upload_file(self, file_task: dict[str, Any], scope: KnowledgeBaseScope, cancel_check: Any | None = None) -> None:
         file_id = str(file_task["id"])
@@ -3483,11 +4221,16 @@ class RAGService:
                     "metadata_json": {},
                     "summary_available": False,
                     "processing_task_id": "",
+                    "processing_task_type": "",
                     "processing_task_status": "",
+                    "processing_task_queue": "",
+                    "processing_broker_task_id": "",
                     "processing_task_attempt": 0,
                     "processing_task_max_attempts": 0,
                     "processing_dead_lettered": False,
                     "processing_last_error": "",
+                    "processing_dead_letter_reason": "",
+                    "processing_retry_available": False,
                     "processing_latest_attempt": 0,
                 }
             )
@@ -3495,19 +4238,8 @@ class RAGService:
 
     def _document_runtime_status(self, doc: dict[str, Any], scope: KnowledgeBaseScope) -> dict[str, Any]:
         doc_id = str(doc.get("id") or "")
-        tasks: list[dict[str, Any]] = []
-        dead_letters: list[dict[str, Any]] = []
-        if self.processing_worker is not None:
-            try:
-                tasks = self.processing_worker.repository.list_tasks(scope, document_id=doc_id)
-                dead_letters = [
-                    item
-                    for item in self.processing_worker.repository.list_dead_letters(scope)
-                    if str(item.get("document_id") or "") == doc_id
-                ]
-            except Exception as exc:
-                logger.warning("Failed to read processing task status for document %s: %s", doc_id, exc)
-        latest_task = tasks[-1] if tasks else {}
+        tasks, dead_letters = self._processing_tasks_for_document(doc_id, scope)
+        latest_task = self._select_display_processing_task(tasks)
         latest_attempt = 0
         try:
             latest_attempt = self.processing_trace_recorder.span_tracker.latest_attempt(doc_id)
@@ -3518,15 +4250,198 @@ class RAGService:
         last_error = str(latest_task.get("last_error_message") or "")
         if dead_letters and not last_error:
             last_error = str(dead_letters[-1].get("error_message") or "")
+        payload = latest_task.get("payload") if isinstance(latest_task.get("payload"), dict) else {}
+        async_runtime = payload.get("_async_runtime") if isinstance(payload.get("_async_runtime"), dict) else {}
+        latest_status = str(latest_task.get("status") or "")
+        latest_is_dead_letter = latest_status == TASK_DEAD_LETTERED
+        dead_letter_reason = str((dead_letters[-1].get("error_message") if dead_letters else "") or "")
         return {
             "summary_available": bool(summary and summary_status == "completed"),
             "processing_task_id": str(latest_task.get("id") or ""),
+            "processing_task_type": str(latest_task.get("task_type") or ""),
             "processing_task_status": str(latest_task.get("status") or ""),
+            "processing_task_queue": str(async_runtime.get("queue_name") or ""),
+            "processing_broker_task_id": str(async_runtime.get("broker_task_id") or ""),
             "processing_task_attempt": int(latest_task.get("attempt") or 0),
             "processing_task_max_attempts": int(latest_task.get("max_attempts") or 0),
-            "processing_dead_lettered": bool(dead_letters or latest_task.get("status") == "dead_lettered"),
+            "processing_dead_lettered": bool(latest_is_dead_letter),
             "processing_last_error": last_error,
+            "processing_dead_letter_reason": dead_letter_reason,
+            "processing_retry_available": bool(latest_is_dead_letter or latest_status == TASK_PENDING),
             "processing_latest_attempt": latest_attempt,
+        }
+
+    def _processing_tasks_for_document(
+        self, doc_id: str, scope: KnowledgeBaseScope
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        if self.processing_worker is None:
+            return [], []
+        try:
+            tasks = self.processing_worker.repository.list_tasks(scope, document_id=doc_id)
+            dead_letters = [
+                item
+                for item in self.processing_worker.repository.list_dead_letters(scope)
+                if str(item.get("document_id") or "") == doc_id
+            ]
+            return tasks, dead_letters
+        except Exception as exc:
+            logger.warning("Failed to read processing task status for document %s: %s", doc_id, exc)
+            return [], []
+
+    def _select_display_processing_task(self, tasks: list[dict[str, Any]]) -> dict[str, Any]:
+        if not tasks:
+            return {}
+        active = [
+            task
+            for task in reversed(tasks)
+            if str(task.get("status") or "").lower() in ACTIVE_PROCESSING_TASK_STATUSES
+        ]
+        if active:
+            return active[0]
+        failed = [
+            task
+            for task in reversed(tasks)
+            if str(task.get("status") or "").lower() in FAILED_PROCESSING_TASK_STATUSES
+        ]
+        if failed:
+            return failed[0]
+        visible_terminal = [
+            task
+            for task in reversed(tasks)
+            if str(task.get("status") or "").lower() != TASK_CANCELED
+        ]
+        return visible_terminal[0] if visible_terminal else tasks[-1]
+
+    def _overlay_processing_tasks_on_trace(
+        self, root: dict[str, Any], tasks: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        if not tasks:
+            return root
+        merged_root = copy.deepcopy(root)
+        stages = merged_root.get("children")
+        if not isinstance(stages, list):
+            return merged_root
+        tasks_by_stage: dict[str, list[dict[str, Any]]] = {}
+        for task in tasks:
+            stage_name = PROCESSING_TASK_STAGE_NAMES.get(str(task.get("task_type") or ""))
+            if stage_name:
+                tasks_by_stage.setdefault(stage_name, []).append(task)
+        if not tasks_by_stage:
+            return merged_root
+
+        for stage in stages:
+            if not isinstance(stage, dict):
+                continue
+            stage_name = str(stage.get("name") or "")
+            stage_tasks = tasks_by_stage.get(stage_name)
+            if not stage_tasks:
+                continue
+            stage["status"] = self._aggregate_task_trace_status(stage_tasks, str(stage.get("status") or "pending"))
+            if stage["status"] in {"pending", "running"}:
+                stage["ended_at"] = ""
+            output = stage.get("output") if isinstance(stage.get("output"), dict) else {}
+            stage["output"] = {
+                **output,
+                "processing_tasks": [
+                    {
+                        "id": str(task.get("id") or ""),
+                        "type": str(task.get("task_type") or ""),
+                        "status": str(task.get("status") or ""),
+                        "attempt": int(task.get("attempt") or 0),
+                        "max_attempts": int(task.get("max_attempts") or 0),
+                    }
+                    for task in stage_tasks
+                ],
+            }
+
+        active_task_statuses = {
+            str(task.get("status") or "").lower()
+            for task in tasks
+            if str(task.get("status") or "").lower() in ACTIVE_PROCESSING_TASK_STATUSES
+        }
+        stage_statuses = {str(stage.get("status") or "").lower() for stage in stages if isinstance(stage, dict)}
+        if "failed" in stage_statuses:
+            merged_root["status"] = "failed"
+        elif TASK_PROCESSING in active_task_statuses or TASK_RETRYING in active_task_statuses or "running" in stage_statuses:
+            merged_root["status"] = "running"
+        elif TASK_PENDING in active_task_statuses:
+            merged_root["status"] = "pending"
+        elif tasks and all(str(task.get("status") or "").lower() in TERMINAL_PROCESSING_TASK_STATUSES for task in tasks):
+            merged_root["status"] = "done"
+        return merged_root
+
+    def _aggregate_task_trace_status(self, tasks: list[dict[str, Any]], fallback_status: str) -> str:
+        statuses = [self._task_trace_status(str(task.get("status") or "")) for task in tasks]
+        if "failed" in statuses:
+            return "failed"
+        if "running" in statuses:
+            return "running"
+        if "pending" in statuses:
+            return "pending"
+        if statuses and all(status in {"done", "cancelled"} for status in statuses):
+            return "done" if "done" in statuses else "cancelled"
+        return self._map_trace_status(fallback_status)
+
+    def _task_trace_status(self, status: str) -> str:
+        normalized = status.lower()
+        if normalized in {TASK_PROCESSING, TASK_RETRYING}:
+            return "running"
+        if normalized == TASK_PENDING:
+            return "pending"
+        if normalized == TASK_COMPLETED:
+            return "done"
+        if normalized in FAILED_PROCESSING_TASK_STATUSES:
+            return "failed"
+        if normalized == TASK_CANCELED:
+            return "cancelled"
+        return self._map_trace_status(normalized)
+
+    def _current_trace_stage(self, stages: list[dict[str, Any]]) -> str:
+        current_stage = next(
+            (str(stage.get("name") or "") for stage in stages if isinstance(stage, dict) and stage.get("status") == "running"),
+            "",
+        )
+        if not current_stage:
+            current_stage = next(
+                (
+                    str(stage.get("name") or "")
+                    for stage in stages
+                    if isinstance(stage, dict) and stage.get("status") in {"pending", "failed"}
+                ),
+                "",
+            )
+        return current_stage
+
+    def retry_document_processing_task(self, doc_id: str, scope: KnowledgeBaseScope) -> dict[str, Any]:
+        if self.processing_worker is None:
+            raise ValueError("Document processing worker is disabled")
+        document = self.document_repository.get_document(doc_id, scope)
+        if document is None:
+            raise KeyError(doc_id)
+        repository = self.processing_worker.repository
+        tasks = repository.list_tasks(scope, document_id=doc_id)
+        task = next((item for item in reversed(tasks) if item.get("status") == "dead_lettered"), None)
+        if task is not None:
+            retried = repository.retry_dead_letter(str(task["id"]), delay_seconds=0)
+        else:
+            retried = next((item for item in reversed(tasks) if item.get("status") in {TASK_PENDING, TASK_RETRYING}), None)
+            if retried is None:
+                raise ValueError("No dead-letter, pending, or retrying processing task is available for retry")
+        queue = getattr(self, "async_processing_queue", None)
+        if queue is not None and getattr(queue, "enabled", False):
+            dispatch = queue.enqueue(retried)
+            record_dispatch = getattr(repository, "record_broker_dispatch", None)
+            if callable(record_dispatch):
+                repository.record_broker_dispatch(retried["id"], broker_task_id=dispatch.broker_task_id, queue_name=dispatch.queue)
+        document = self.document_repository.get_document(doc_id, scope)
+        if document is None:
+            raise KeyError(doc_id)
+        metadata = document.get("metadata_json") or {}
+        return {
+            **document,
+            "source": document.get("storage_path", ""),
+            "size": int(metadata.get("size", 0) or 0),
+            **self._document_runtime_status(document, scope),
         }
 
     def get_document_processing_trace(self, doc_id: str, scope: KnowledgeBaseScope | None = None) -> dict[str, Any]:
@@ -3535,13 +4450,12 @@ class RAGService:
         if doc is None:
             raise KeyError(doc_id)
 
+        processing_tasks, _ = self._processing_tasks_for_document(doc_id, scope)
         span_tree = self.processing_trace_recorder.span_tracker.latest_tree(doc_id)
         if span_tree is not None:
-            root = span_tree["root"]
+            root = self._overlay_processing_tasks_on_trace(span_tree["root"], processing_tasks)
             stages = root.get("children") or []
-            current_stage = next((stage["name"] for stage in stages if stage["status"] == "running"), "")
-            if not current_stage:
-                current_stage = next((stage["name"] for stage in stages if stage["status"] in {"pending", "failed"}), "")
+            current_stage = self._current_trace_stage(stages)
             metadata = doc.get("metadata_json") or {}
             runtime_status = self._document_runtime_status(doc, scope)
             return {
@@ -3585,11 +4499,9 @@ class RAGService:
                         "trace_dir": str(resolved_trace_dir),
                     }
 
-        root = self._weknora_trace_root(doc, trace_payload)
+        root = self._overlay_processing_tasks_on_trace(self._weknora_trace_root(doc, trace_payload), processing_tasks)
         stages = root["children"]
-        current_stage = next((stage["name"] for stage in stages if stage["status"] == "running"), "")
-        if not current_stage:
-            current_stage = next((stage["name"] for stage in stages if stage["status"] in {"pending", "failed"}), "")
+        current_stage = self._current_trace_stage(stages)
 
         runtime_status = self._document_runtime_status(doc, scope)
         return {

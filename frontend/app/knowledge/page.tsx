@@ -32,6 +32,7 @@ import {
   readJson,
   rejectWikiProposal,
   retryDocumentEnrichment,
+  retryDocumentProcessing,
   retryUploadBatchFile,
   applyWikiProposal,
   updateWikiIssue,
@@ -617,6 +618,23 @@ export default function KnowledgePage() {
     }
   }
 
+  async function retryProcessing(item: DocumentItem) {
+    if (!selected) return;
+    setRetryingId(item.id);
+    setError("");
+    try {
+      await retryDocumentProcessing(item.id, selected.id);
+      await loadDocuments(selected.id, false, documentFilters);
+      if (traceDrawer.open && traceDrawer.document?.id === item.id) {
+        await refreshProcessingTrace();
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "处理任务重试失败");
+    } finally {
+      setRetryingId("");
+    }
+  }
+
   async function openProcessingTrace(item: DocumentItem) {
     if (!selected) return;
     setTraceDrawer({ open: true, loading: true, refreshing: false, error: "", document: item });
@@ -726,6 +744,7 @@ export default function KnowledgePage() {
         onOpenDocumentDetail={openDocumentDetail}
         onDeleteDocument={deleteDocument}
         onRetrySummary={retrySummary}
+        onRetryProcessing={retryProcessing}
         onOpenTrace={openProcessingTrace}
         settingsDialog={
           settingsTarget ? (
@@ -1212,6 +1231,7 @@ function KnowledgeBaseDetailShell({
   onOpenDocumentDetail,
   onDeleteDocument,
   onRetrySummary,
+  onRetryProcessing,
   onOpenTrace,
   settingsDialog,
   viewer,
@@ -1254,6 +1274,7 @@ function KnowledgeBaseDetailShell({
   onOpenDocumentDetail: (item: DocumentItem) => void;
   onDeleteDocument: (item: DocumentItem) => void;
   onRetrySummary: (item: DocumentItem) => void;
+  onRetryProcessing: (item: DocumentItem) => void;
   onOpenTrace: (item: DocumentItem) => void;
   settingsDialog: ReactNode;
   viewer: ReactNode;
@@ -1332,6 +1353,7 @@ function KnowledgeBaseDetailShell({
           onOpenDocumentDetail={onOpenDocumentDetail}
           onDeleteDocument={onDeleteDocument}
           onRetrySummary={onRetrySummary}
+          onRetryProcessing={onRetryProcessing}
           onOpenTrace={onOpenTrace}
         />
       ) : null}
@@ -2002,6 +2024,7 @@ function DocumentCollection({
   onOpenDocumentDetail,
   onDeleteDocument,
   onRetrySummary,
+  onRetryProcessing,
   onOpenTrace,
 }: {
   documents: DocumentItem[];
@@ -2013,6 +2036,7 @@ function DocumentCollection({
   onOpenDocumentDetail: (item: DocumentItem) => void;
   onDeleteDocument: (item: DocumentItem) => void;
   onRetrySummary: (item: DocumentItem) => void;
+  onRetryProcessing: (item: DocumentItem) => void;
   onOpenTrace: (item: DocumentItem) => void;
 }) {
   const toggle = (id: string, checked: boolean) => {
@@ -2048,6 +2072,7 @@ function DocumentCollection({
             onOpenDocumentDetail={onOpenDocumentDetail}
             onDeleteDocument={onDeleteDocument}
             onRetrySummary={onRetrySummary}
+            onRetryProcessing={onRetryProcessing}
             onOpenTrace={onOpenTrace}
           />
         ))}
@@ -2096,7 +2121,7 @@ function DocumentCollection({
             {item.keywords_json?.length ? (
               <div className="kb-keywords">{item.keywords_json.map((keyword) => <span key={keyword}>{keyword}</span>)}</div>
             ) : null}
-            {item.summary_status === "failed" ? <p className="summary-error">{item.summary_error || "概要生成失败，文档仍可正常检索。"}</p> : null}
+            {item.summary_status === "failed" ? <p className="summary-error">概要生成失败，文档仍可正常检索。</p> : null}
           </div>
           <button
             type="button"
@@ -2116,6 +2141,11 @@ function DocumentCollection({
             {!isUploadPlaceholderDocument(item) && item.summary_status === "failed" ? (
               <button type="button" onClick={() => onRetrySummary(item)} disabled={retryingId === item.id}>
                 {retryingId === item.id ? "重试中" : "重试概要"}
+              </button>
+            ) : null}
+            {!isUploadPlaceholderDocument(item) && item.processing_retry_available ? (
+              <button type="button" onClick={() => onRetryProcessing(item)} disabled={retryingId === item.id}>
+                {retryingId === item.id ? "重试中" : "重试处理"}
               </button>
             ) : null}
             {isUploadPlaceholderDocument(item) ? <span className="kb-muted">等待入库</span> : null}
@@ -2138,7 +2168,7 @@ function getDocumentTileSummary(item: DocumentItem): string {
     return "摘要生成中，完成后会自动显示在卡片中。";
   }
   if (status === "failed") {
-    return item.summary_error?.trim() || "摘要生成失败，可在右上角菜单中重试。";
+    return "摘要生成失败，文档仍可预览和检索。";
   }
   return "未生成摘要。";
 }
@@ -2196,20 +2226,21 @@ function documentRuntimeStatus(item: DocumentItem): { label: string; tone: "neut
   const taskStatus = (item.processing_task_status || "").toLowerCase();
   const parseStatus = (item.parse_status || "").toLowerCase();
   const summaryStatus = (item.summary_status || "none").toLowerCase();
+  const queue = item.processing_task_queue ? ` · 队列 ${item.processing_task_queue}` : "";
   const attempt = item.processing_task_attempt || 0;
   const maxAttempts = item.processing_task_max_attempts || 0;
   const retrySuffix = attempt && maxAttempts ? ` · ${attempt}/${maxAttempts}` : "";
   if (item.processing_dead_lettered || taskStatus === "dead_lettered") {
-    return { label: `处理失败${retrySuffix}`, tone: "failed", title: item.processing_last_error || "任务已进入死信队列" };
+    return { label: `处理失败${retrySuffix}`, tone: "failed", title: `${item.processing_last_error || "任务已进入死信队列"}${queue}` };
   }
   if (taskStatus === "retrying") {
-    return { label: `等待重试${retrySuffix}`, tone: "failed", title: item.processing_last_error || "处理任务将在稍后重试" };
+    return { label: `等待重试${retrySuffix}`, tone: "failed", title: `${item.processing_last_error || "处理任务将在稍后重试"}${queue}` };
   }
   if (taskStatus === "queued" || taskStatus === "pending" || taskStatus === "scheduled") {
-    return { label: "等待处理", tone: "running", title: "任务已入队，等待 worker 处理" };
+    return { label: "等待处理", tone: "running", title: `任务已入队，等待 worker 处理${queue}` };
   }
   if (taskStatus === "processing" || parseStatus === "parsing") {
-    return { label: `处理中${retrySuffix}`, tone: "running", title: "正在解析、切片或索引文档" };
+    return { label: `处理中${retrySuffix}`, tone: "running", title: `正在解析、切片或索引文档${queue}` };
   }
   if (parseStatus === "failed") {
     return { label: "解析失败", tone: "failed", title: item.processing_last_error || "文档解析失败" };
@@ -2232,12 +2263,18 @@ function documentRuntimeStatus(item: DocumentItem): { label: string; tone: "neut
 function documentRuntimeTaskLine(task?: Record<string, unknown>): string {
   if (!task) return "";
   const status = String(task.processing_task_status || "");
+  const taskType = String(task.processing_task_type || "");
+  const queue = String(task.processing_task_queue || "");
+  const brokerTaskId = String(task.processing_broker_task_id || "");
   const attempt = Number(task.processing_task_attempt || 0);
   const maxAttempts = Number(task.processing_task_max_attempts || 0);
   const latestAttempt = Number(task.processing_latest_attempt || 0);
   const deadLettered = Boolean(task.processing_dead_lettered);
   const parts = [];
+  if (taskType) parts.push(taskType);
   if (status) parts.push(`任务 ${status}`);
+  if (queue) parts.push(`队列 ${queue}`);
+  if (brokerTaskId) parts.push(`broker ${brokerTaskId}`);
   if (attempt || maxAttempts) parts.push(`重试 ${attempt}/${maxAttempts || "-"}`);
   if (latestAttempt) parts.push(`Trace attempt ${latestAttempt}`);
   if (deadLettered) parts.push("死信");
@@ -2253,6 +2290,7 @@ function DocumentTileCard({
   onOpenDocumentDetail,
   onDeleteDocument,
   onRetrySummary,
+  onRetryProcessing,
   onOpenTrace,
 }: {
   item: DocumentItem;
@@ -2263,6 +2301,7 @@ function DocumentTileCard({
   onOpenDocumentDetail: (item: DocumentItem) => void;
   onDeleteDocument: (item: DocumentItem) => void;
   onRetrySummary: (item: DocumentItem) => void;
+  onRetryProcessing: (item: DocumentItem) => void;
   onOpenTrace: (item: DocumentItem) => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -2327,6 +2366,20 @@ function DocumentTileCard({
                   <span>{retryingId === item.id ? "重试中" : "重试摘要"}</span>
                 </button>
               ) : null}
+              {item.processing_retry_available ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={retryingId === item.id}
+                  onClick={() => {
+                    setMenuOpen(false);
+                    onRetryProcessing(item);
+                  }}
+                >
+                  <TraceIcon />
+                  <span>{retryingId === item.id ? "重试中" : "重试处理"}</span>
+                </button>
+              ) : null}
               <button
                 type="button"
                 role="menuitem"
@@ -2372,6 +2425,7 @@ function DocumentCard({
   onOpenDocument,
   onDeleteDocument,
   onRetrySummary,
+  onRetryProcessing,
   onOpenTrace,
 }: {
   item: DocumentItem;
@@ -2381,6 +2435,7 @@ function DocumentCard({
   onOpenDocument: (item: DocumentItem) => void;
   onDeleteDocument: (item: DocumentItem) => void;
   onRetrySummary: (item: DocumentItem) => void;
+  onRetryProcessing: (item: DocumentItem) => void;
   onOpenTrace: (item: DocumentItem) => void;
 }) {
   const runtimeStatus = documentRuntimeStatus(item);
@@ -2414,6 +2469,11 @@ function DocumentCard({
         {item.summary_status === "failed" ? (
           <button type="button" onClick={() => onRetrySummary(item)} disabled={retryingId === item.id}>
             {retryingId === item.id ? "重试中" : "重试概要"}
+          </button>
+        ) : null}
+        {item.processing_retry_available ? (
+          <button type="button" onClick={() => onRetryProcessing(item)} disabled={retryingId === item.id}>
+            {retryingId === item.id ? "重试中" : "重试处理"}
           </button>
         ) : null}
         <button type="button" onClick={() => onOpenDocument(item)}>查看</button>

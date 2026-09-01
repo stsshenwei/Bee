@@ -3,6 +3,7 @@ import logging
 import inspect
 import mimetypes
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -15,6 +16,8 @@ from openai import OpenAI
 from app.schemas import (
     ChatAttachmentResponse,
     ChatRequest,
+    ChatStreamStopRequest,
+    ChatStreamStopResponse,
     DocumentContentResponse,
     DocumentItem,
     DocumentsResponse,
@@ -79,50 +82,57 @@ from app.models.knowledge_base import KnowledgeBaseScope, ProviderReferences
 from app.models.processing_config import DurableProcessingWorkerConfig, ProcessingRuntimeDefaults
 from app.services.agent.agent_prompt_templates import AgentPromptCatalog, ContextPromptCatalog, PromptTemplateCatalog
 from app.services.agent.agent_runtime import AgentRuntime
-from app.services.agent.agent_runtime_spans import AgentRuntimeSpanRepository
+from app.services.agent.postgres_agent_runtime_spans import PostgresAgentRuntimeSpanRepository
 from app.services.agent.agent_runtime_tools import build_default_tool_registry
 from app.services.agent.agent_tools import GraphRetrieverTool, KeywordSearchTool, RawRAGTool
 from app.services.agent.agentic_workflow import AgenticRetrievalWorkflow
 from app.services.retrieval.citation_verifier import CitationVerifier
 from app.services.documents.document_chunker import DocumentChunker
-from app.services.memory.conversation_repository import ConversationRepository
+from app.services.memory.postgres_conversation_repository import PostgresConversationRepository
 from app.services.memory.conversation_service import ConversationService
 from app.services.documents.document_parser import PARSER_REGISTRY, RegistryDocumentParser
-from app.services.documents.document_repository import DocumentRepository
+from app.services.documents.postgres_document_repository import PostgresDocumentRepository
 from app.services.documents.document_enrichment import (
     DocumentEnrichmentService,
     OpenAIDocumentEnrichmentProvider,
     PromptBackedOpenAIDocumentEnrichmentProvider,
 )
+from app.services.documents.postgres_image_repository import PostgresImageRepository
 from app.services.retrieval.embedding_provider import OpenAIEmbeddingProvider
 from app.services.kg.entity_resolver import BaselineEntityResolver
-from app.services.kg.entity_vector_store import MilvusEntityVectorStore
+from app.services.kg.entity_vector_store import PostgresEntityVectorStore
 from app.services.evaluation.evaluation_dataset_loader import EvaluationDatasetLoader
 from app.services.evaluation.evaluation_metrics import RuleBasedEvaluationScorer
-from app.services.evaluation.evaluation_repository import EvaluationRepository
+from app.services.evaluation.postgres_evaluation_repository import PostgresEvaluationRepository
 from app.services.evaluation.evaluation_reporter import EvaluationReporter
 from app.services.evaluation.evaluation_runner import EvaluationRunner, EvaluationService
 from app.services.kg.graph_store import Neo4jGraphStore, UnavailableGraphStore
 from app.services.kg.graph_retriever import GraphRetriever
 from app.services.kg.kg_extractor import OpenAIKGExtractor
-from app.services.kg.kg_repository import KGRepository
+from app.services.kg.postgres_kg_repository import PostgresKGRepository
 from app.services.kg.kg_service import KGEnrichmentService
-from app.services.knowledge.knowledge_base_repository import KnowledgeBaseRepository
+from app.services.knowledge.postgres_audit_repository import PostgresKnowledgeAuditRepository
+from app.services.knowledge.postgres_knowledge_base_repository import PostgresKnowledgeBaseRepository
 from app.services.knowledge.knowledge_base_service import KnowledgeBaseService, KnowledgeBaseValidationError
-from app.services.wiki.wiki_repository import WikiRepository
+from app.services.wiki.postgres_wiki_repository import PostgresWikiRepository
 from app.services.wiki.wiki_service import WikiPageService, WikiValidationError
 from app.services.wiki.wiki_ingest_service import WikiIngestConfig, WikiIngestService
 from app.services.storage.storage_schema import DefaultKnowledgeBaseSettings, StorageResetRequired
 from app.services.storage.storage_reset import clear_runtime_lock, write_runtime_lock
 from app.services.documents.temporary_attachment_repository import TemporaryAttachmentRepository
-from app.services.documents.upload_batch_repository import UploadBatchRepository
-from app.services.memory.memory_repository import MemoryRepository
+from app.services.documents.postgres_upload_batch_repository import PostgresUploadBatchRepository
+from app.services.memory.postgres_memory_repository import PostgresMemoryRepository
 from app.services.memory.memory_service import MemoryService
 from app.services.infrastructure.observability import configure_observability_from_env, get_observability_sink, use_observability_trace
 from app.services.processing.processing_trace import ProcessingTraceRecorder
-from app.services.processing.processing_span_tracker import ProcessingSpanRepository, ProcessingSpanTracker
-from app.services.processing.processing_task_repository import ProcessingTaskRepository
+from app.services.processing.postgres_processing_span_repository import PostgresProcessingSpanRepository
+from app.services.processing.processing_span_tracker import ProcessingSpanTracker
+from app.services.processing.postgres_processing_task_repository import PostgresProcessingTaskRepository
 from app.services.processing.processing_worker import DocumentProcessingWorker
+from app.services.async_runtime.config import AsyncRuntimeConfig
+from app.services.async_runtime.diagnostics import async_runtime_diagnostics
+from app.services.async_runtime.queue import CeleryProcessingQueue, DisabledProcessingQueue
+from app.services.async_runtime.reconciliation import reconcile_processing_queue
 from app.services.agent.runtime_skills import RuntimeSkillsManager
 from app.services.infrastructure.logging_config import (
     configure_logging_from_env,
@@ -145,7 +155,16 @@ from app.services.retrieval.rag_service import RAGService
 from app.services.retrieval.rag_config import load_rag_config
 from app.services.retrieval.reranker import build_reranker
 from app.services.agent.retrieval_planner import RetrievalPlanner
-from app.services.retrieval.vector_store import MilvusVectorStore
+from app.services.retrieval.postgres_vector_store import PostgresVectorStore
+from app.services.storage.postgres import PostgresDatabase, PostgresSettings
+from app.services.chat_streaming.event_bus import ChatEventBus, ChatStreamEvent
+from app.services.chat_streaming.stream_manager import MemoryStreamManager, StreamIdentity
+from app.services.chat_pipeline import (
+    ChatPipelineContext,
+    ChatPipelineRequest,
+    ChatPipelineRuntime,
+    run_quick_rag_pipeline,
+)
 
 load_dotenv()
 configure_logging_from_env()
@@ -282,6 +301,95 @@ def _raise_internal_error(message: str, exc: Exception) -> None:
     raise HTTPException(status_code=500, detail=f"{message}: {exc}") from exc
 
 
+def _build_async_runtime_config(raw: dict | None = None) -> AsyncRuntimeConfig:
+    raw = dict(raw or {})
+    raw.update(
+        {
+            "enabled": _get_env_bool("ASYNC_RUNTIME_ENABLED", default=bool(raw.get("enabled", False))),
+            "mode": _get_env("ASYNC_RUNTIME_MODE", default=str(raw.get("mode", "local"))),
+            "broker_url": _get_env("ASYNC_RUNTIME_BROKER_URL", default=str(raw.get("broker_url", "redis://localhost:6379/0"))),
+            "result_backend_url": _get_env("ASYNC_RUNTIME_RESULT_BACKEND_URL", default=str(raw.get("result_backend_url", ""))),
+            "local_fallback_enabled": _get_env_bool(
+                "ASYNC_RUNTIME_LOCAL_FALLBACK_ENABLED",
+                default=bool(raw.get("local_fallback_enabled", True)),
+            ),
+            "local_worker_enabled": _get_env_bool(
+                "ASYNC_RUNTIME_LOCAL_WORKER_ENABLED",
+                default=bool(raw.get("local_worker_enabled", True)),
+            ),
+            "default_max_retries": _get_env_int(
+                "ASYNC_RUNTIME_DEFAULT_MAX_RETRIES",
+                default=int(raw.get("default_max_retries", 3)),
+            ),
+            "default_time_limit_seconds": _get_env_int(
+                "ASYNC_RUNTIME_DEFAULT_TIME_LIMIT_SECONDS",
+                default=int(raw.get("default_time_limit_seconds", 3600)),
+            ),
+            "default_soft_time_limit_seconds": _get_env_int(
+                "ASYNC_RUNTIME_DEFAULT_SOFT_TIME_LIMIT_SECONDS",
+                default=int(raw.get("default_soft_time_limit_seconds", 3300)),
+            ),
+            "core_queue": _get_env("ASYNC_RUNTIME_CORE_QUEUE", default=str(raw.get("core", {}).get("queue", "core"))),
+            "core_concurrency": _get_env_int(
+                "ASYNC_RUNTIME_CORE_CONCURRENCY",
+                default=int(raw.get("core", {}).get("concurrency", 8)),
+            ),
+            "postprocess_queue": _get_env(
+                "ASYNC_RUNTIME_POSTPROCESS_QUEUE",
+                default=str(raw.get("postprocess", {}).get("queue", "postprocess")),
+            ),
+            "postprocess_concurrency": _get_env_int(
+                "ASYNC_RUNTIME_POSTPROCESS_CONCURRENCY",
+                default=int(raw.get("postprocess", {}).get("concurrency", 2)),
+            ),
+            "enrichment_queue": _get_env(
+                "ASYNC_RUNTIME_ENRICHMENT_QUEUE",
+                default=str(raw.get("enrichment", {}).get("queue", "enrichment")),
+            ),
+            "enrichment_concurrency": _get_env_int(
+                "ASYNC_RUNTIME_ENRICHMENT_CONCURRENCY",
+                default=int(raw.get("enrichment", {}).get("concurrency", 12)),
+            ),
+            "maintenance_queue": _get_env(
+                "ASYNC_RUNTIME_MAINTENANCE_QUEUE",
+                default=str(raw.get("maintenance", {}).get("queue", "maintenance")),
+            ),
+            "maintenance_concurrency": _get_env_int(
+                "ASYNC_RUNTIME_MAINTENANCE_CONCURRENCY",
+                default=int(raw.get("maintenance", {}).get("concurrency", 4)),
+            ),
+            "shared_queue": _get_env("ASYNC_RUNTIME_SHARED_QUEUE", default=str(raw.get("shared", {}).get("queue", "shared"))),
+            "shared_concurrency": _get_env_int(
+                "ASYNC_RUNTIME_SHARED_CONCURRENCY",
+                default=int(raw.get("shared", {}).get("concurrency", 6)),
+            ),
+            "wiki_queue": _get_env("ASYNC_RUNTIME_WIKI_QUEUE", default=str(raw.get("wiki", {}).get("queue", "wiki"))),
+            "wiki_concurrency": _get_env_int(
+                "ASYNC_RUNTIME_WIKI_CONCURRENCY",
+                default=int(raw.get("wiki", {}).get("concurrency", 8)),
+            ),
+        }
+    )
+    return AsyncRuntimeConfig.from_settings(raw)
+
+
+def _build_async_processing_queue(config: AsyncRuntimeConfig):
+    if not config.celery_enabled:
+        return DisabledProcessingQueue()
+    try:
+        from app.workers.celery_app import celery_app
+
+        return CeleryProcessingQueue(celery_app, config)
+    except Exception as exc:
+        if not config.local_fallback_enabled:
+            raise
+        logger.warning(
+            "async_runtime.celery_unavailable_falling_back",
+            extra={"error_type": exc.__class__.__name__, "error_message": str(exc)},
+        )
+        return DisabledProcessingQueue()
+
+
 def _run_background_with_trace(trace_id: str, operation: str, func, *args, **kwargs) -> None:
     with trace_context(trace_id):
         with use_observability_trace(trace_id, name=f"background.{operation}"):
@@ -348,20 +456,29 @@ def build_rag_service() -> RAGService:
         raise StorageResetRequired(
             f"Knowledge storage is in maintenance mode; inspect {maintenance_path} and rerun clean-rebuild"
         )
-    milvus_bm25_enabled = _get_env_bool("MILVUS_BM25_ENABLED", default=False)
-    vector_store = MilvusVectorStore(
-        uri=_get_env("MILVUS_URI", default=str(rag_config["vector_store"].get("url", "http://127.0.0.1:19530"))),
-        token=_get_env("MILVUS_TOKEN", default="root:Milvus"),
-        collection_name=_get_env("MILVUS_COLLECTION", default=str(rag_config["vector_store"].get("collection", "rag_chunk_vectors"))),
-        embedding_dim=int(os.getenv("EMBEDDING_DIM", "1536")),
+    postgres_database = PostgresDatabase(PostgresSettings.from_env())
+    postgres_schema = postgres_database.settings.schema
+    embedding_dim = int(os.getenv("EMBEDDING_DIM", "1536"))
+    pgvector_type = _get_env("PGVECTOR_TYPE", "POSTGRES_VECTOR_TYPE", default="vector")
+    vector_store = PostgresVectorStore(
+        database=postgres_database,
+        embedding_dim=embedding_dim,
         embedding_provider=embedding_provider,
         state_dir=vector_state_dir,
-        bm25_enabled=milvus_bm25_enabled,
+        schema=postgres_schema,
+        vector_type=pgvector_type,
     )
-    metadata_db_path = _get_env("METADATA_DB_PATH", default=str(vector_store.persist_dir / "rag_metadata.sqlite3"))
-    document_repository = DocumentRepository(metadata_db_path, defaults=knowledge_base_defaults)
-    knowledge_base_repository = KnowledgeBaseRepository(metadata_db_path, defaults=knowledge_base_defaults)
-    upload_batch_repository = UploadBatchRepository(metadata_db_path, defaults=knowledge_base_defaults)
+    document_repository = PostgresDocumentRepository(postgres_database, defaults=knowledge_base_defaults, schema=postgres_schema)
+    knowledge_base_repository = PostgresKnowledgeBaseRepository(
+        postgres_database,
+        defaults=knowledge_base_defaults,
+        schema=postgres_schema,
+    )
+    upload_batch_repository = PostgresUploadBatchRepository(
+        postgres_database,
+        defaults=knowledge_base_defaults,
+        schema=postgres_schema,
+    )
     if getattr(vector_store, "reset_required", False):
         knowledge_base_repository.update_knowledge_base(
             knowledge_base_defaults.knowledge_base_id, {"reset_required": 1}
@@ -372,11 +489,11 @@ def build_rag_service() -> RAGService:
             parser=str(rag_config.get("parser", {}).get("type", "docling")),
             embedding=str(rag_config.get("embedding", {}).get("provider", "openai")),
             reranker=str(rag_config.get("reranker", {}).get("provider", "local")),
-            vector_store=str(rag_config.get("vector_store", {}).get("type", "milvus")),
+            vector_store=str(rag_config.get("vector_store", {}).get("type", "postgres_pgvector")),
             enrichment=str(rag_config.get("llm", {}).get("provider", "openai")),
         ),
     )
-    wiki_repository = WikiRepository(metadata_db_path, defaults=knowledge_base_defaults)
+    wiki_repository = PostgresWikiRepository(postgres_database, defaults=knowledge_base_defaults, schema=postgres_schema)
     wiki_page_service = WikiPageService(
         wiki_repository,
         knowledge_base_service,
@@ -421,18 +538,19 @@ def build_rag_service() -> RAGService:
     kg_extraction_enabled = _get_env_bool("KG_EXTRACTION_ENABLED", default=False)
     kg_service = None
     if kg_extraction_enabled:
-        kg_repository = KGRepository(
-            _get_env("KG_METADATA_DB_PATH", default=str(vector_store.persist_dir / "rag_metadata.sqlite3")),
+        kg_repository = PostgresKGRepository(
+            postgres_database,
             defaults=knowledge_base_defaults,
+            schema=postgres_schema,
         )
         entity_vector_provider = None
         if _get_env_bool("KG_ENTITY_VECTOR_ENABLED", default=False):
-            entity_vector_provider = MilvusEntityVectorStore(
-                uri=_get_env("KG_MILVUS_URI", "MILVUS_URI", default=str(rag_config["vector_store"].get("url", "http://127.0.0.1:19530"))),
-                token=_get_env("KG_MILVUS_TOKEN", "MILVUS_TOKEN", default="root:Milvus"),
-                collection_name=_get_env("KG_ENTITY_COLLECTION", default="kg_entity_vectors"),
-                embedding_dim=int(os.getenv("EMBEDDING_DIM", "1536")),
+            entity_vector_provider = PostgresEntityVectorStore(
+                database=postgres_database,
+                embedding_dim=embedding_dim,
                 embedding_provider=embedding_provider,
+                schema=postgres_schema,
+                vector_type=pgvector_type,
             )
         graph_store = None
         if _get_env_bool("KG_GRAPH_ENABLED", default=False):
@@ -515,7 +633,7 @@ def build_rag_service() -> RAGService:
         chunk_overlap=int(os.getenv("CHUNK_OVERLAP", "120")),
         context_template_path=_get_env("RAG_CONTEXT_TEMPLATE_PATH", default="config/prompt_templates/context_template.yaml"),
         context_template_id=_get_env("RAG_CONTEXT_TEMPLATE_ID", default="qa_context"),
-        milvus_bm25_enabled=milvus_bm25_enabled,
+        milvus_bm25_enabled=False,
         dense_recall_top_n=_get_env_int("DENSE_RECALL_TOP_N", default=int(rag_config["retrieval"].get("dense_top_k", 50))),
         bm25_recall_top_n=_get_env_int("BM25_RECALL_TOP_N", default=int(rag_config["retrieval"].get("keyword_top_k", 50))),
         fusion_top_k=_get_env_int("FUSION_TOP_K", default=int(rag_config["retrieval"].get("fusion_top_k", 30))),
@@ -652,7 +770,23 @@ def build_rag_service() -> RAGService:
         ),
         processing_trace_recorder=ProcessingTraceRecorder.from_env(
             Path(_get_env("PROCESSING_TRACE_DIR", default=str(Path(data_dir) / "processing_traces"))),
-            span_tracker=ProcessingSpanTracker(ProcessingSpanRepository(metadata_db_path, defaults=knowledge_base_defaults)),
+            span_tracker=ProcessingSpanTracker(
+                PostgresProcessingSpanRepository(
+                    postgres_database,
+                    defaults=knowledge_base_defaults,
+                    schema=postgres_schema,
+                )
+            ),
+        ),
+        audit_repository=PostgresKnowledgeAuditRepository(
+            postgres_database,
+            defaults=knowledge_base_defaults,
+            schema=postgres_schema,
+        ),
+        image_repository=PostgresImageRepository(
+            postgres_database,
+            defaults=knowledge_base_defaults,
+            schema=postgres_schema,
         ),
     )
     agentic_config = AgenticRetrievalConfig(
@@ -788,10 +922,25 @@ def build_rag_service() -> RAGService:
             config=agent_runtime_config,
             skills_manager=skills_manager,
             graph_retriever=graph_retriever,
-            span_repository=AgentRuntimeSpanRepository(metadata_db_path, defaults=knowledge_base_defaults),
+            span_repository=PostgresAgentRuntimeSpanRepository(
+                postgres_database,
+                defaults=knowledge_base_defaults,
+                schema=postgres_schema,
+            ),
         )
     worker_config_defaults = rag_config.get("processing_worker", {})
-    processing_task_repository = ProcessingTaskRepository(metadata_db_path, defaults=knowledge_base_defaults)
+    async_runtime_config = _build_async_runtime_config(rag_config.get("async_runtime", {}))
+    async_processing_queue = _build_async_processing_queue(async_runtime_config)
+    rag_service.async_runtime_config = async_runtime_config
+    rag_service.async_processing_queue = async_processing_queue
+    processing_task_repository = PostgresProcessingTaskRepository(
+        postgres_database,
+        defaults=knowledge_base_defaults,
+        schema=postgres_schema,
+    )
+    if document_enrichment_service is not None:
+        document_enrichment_service.processing_repository = processing_task_repository
+        document_enrichment_service.async_queue = async_processing_queue
     wiki_ingest_service = WikiIngestService(
         repository=wiki_repository,
         page_service=wiki_page_service,
@@ -816,6 +965,7 @@ def build_rag_service() -> RAGService:
             language=_get_env("WIKI_LANGUAGE", default="zh-CN"),
         ),
         span_tracker=rag_service.processing_trace_recorder.span_tracker,
+        async_queue=async_processing_queue,
     )
     wiki_page_service.ingest_service = wiki_ingest_service
     rag_service.processing_worker = DocumentProcessingWorker(
@@ -851,6 +1001,8 @@ def build_rag_service() -> RAGService:
         ),
         worker_id=_get_env("PROCESSING_WORKER_ID", default="local-processing-worker"),
         wiki_ingest_service=wiki_ingest_service,
+        async_queue=async_processing_queue,
+        start_local_worker=(not async_runtime_config.celery_enabled) or async_runtime_config.local_worker_enabled,
     )
     return rag_service
 
@@ -868,16 +1020,21 @@ temporary_attachment_repository = TemporaryAttachmentRepository(
 runtime_lock_path = Path(
     _get_env("STORAGE_RUNTIME_LOCK", default=str(rag_service.vector_store.persist_dir / "runtime.lock"))
 )
-memory_db_path = _get_env("MEMORY_DB_PATH", default=str(rag_service.vector_store.persist_dir / "rag_memory.sqlite3"))
+postgres_database = rag_service.vector_store.database
+postgres_schema = rag_service.vector_store.schema
 conversation_service = ConversationService(
-    ConversationRepository(memory_db_path),
+    PostgresConversationRepository(postgres_database, schema=postgres_schema),
     recent_message_limit=_get_env_int("CONVERSATION_RECENT_MESSAGE_LIMIT", default=10),
     summary_message_threshold=_get_env_int("CONVERSATION_SUMMARY_MESSAGE_THRESHOLD", default=20),
 )
-memory_service = MemoryService(MemoryRepository(memory_db_path))
+memory_service = MemoryService(PostgresMemoryRepository(postgres_database, schema=postgres_schema))
+chat_stream_manager = MemoryStreamManager()
+chat_stream_cancellations: dict[str, threading.Event] = {}
+chat_stream_cancellations_lock = threading.Lock()
+chat_rag_pipeline_enabled = _get_env_bool("CHAT_RAG_PIPELINE_ENABLED", default=False)
 eval_dataset_dir = Path(_get_env("EVAL_DATASET_DIR", default=str(Path(__file__).resolve().parents[1] / "evalsets")))
 eval_report_dir = Path(_get_env("EVAL_REPORT_DIR", default=str(rag_service.vector_store.persist_dir / "eval_reports")))
-evaluation_repository = EvaluationRepository(_get_env("EVAL_DB_PATH", default=str(rag_service.vector_store.persist_dir / "rag_eval.sqlite3")))
+evaluation_repository = PostgresEvaluationRepository(postgres_database, schema=postgres_schema)
 evaluation_reporter = EvaluationReporter(eval_report_dir, evaluation_repository)
 evaluation_service = EvaluationService(
     EvaluationRunner(
@@ -908,6 +1065,21 @@ def startup_processing_worker() -> None:
         worker.start()
 
 
+@app.on_event("startup")
+def startup_async_runtime_reconciliation() -> None:
+    worker = getattr(rag_service, "processing_worker", None)
+    queue = getattr(rag_service, "async_processing_queue", None)
+    if worker is None or queue is None or not getattr(queue, "enabled", False):
+        return
+    try:
+        reconcile_processing_queue(worker.repository, queue, stale_broker_after_seconds=60)
+    except Exception as exc:
+        logger.warning(
+            "async_runtime.startup_reconcile_failed",
+            extra={"error_type": exc.__class__.__name__, "error_message": str(exc)},
+        )
+
+
 @app.on_event("shutdown")
 def shutdown_processing_worker() -> None:
     worker = getattr(rag_service, "processing_worker", None)
@@ -931,7 +1103,24 @@ def startup_ingest() -> None:
 
 @app.get("/health")
 def health() -> dict:
-    return {"ok": True, "observability": {"langfuse": get_observability_sink().status().to_dict()}}
+    return {
+        "ok": True,
+        "storage": {
+            "database": "postgres",
+            "schema": getattr(rag_service.vector_store, "schema", ""),
+            "vector_store": rag_service.vector_store.__class__.__name__,
+            "pgvector": {
+                "type": getattr(rag_service.vector_store, "vector_type", ""),
+                "dimension": getattr(rag_service.vector_store, "embedding_dim", None),
+            },
+            "reset_required": bool(getattr(rag_service.vector_store, "reset_required", False)),
+        },
+        "async_runtime": async_runtime_diagnostics(
+            getattr(rag_service, "async_runtime_config", AsyncRuntimeConfig()),
+            getattr(rag_service, "async_processing_queue", DisabledProcessingQueue()).health(),
+        ),
+        "observability": {"langfuse": get_observability_sink().status().to_dict()},
+    }
 
 
 @app.get("/observability/status")
@@ -1660,6 +1849,199 @@ def _stream_raw_chat_events(
         yield f"data: {json.dumps({'token': token}, ensure_ascii=False)}\n\n"
 
 
+def _infer_sse_event_type(payload: dict) -> str:
+    for key in (
+        "conversation_id",
+        "sources",
+        "reasoning",
+        "token",
+        "final",
+        "error",
+        "memory_updated",
+        "agent_trace",
+        "tool_call",
+        "tool_observation",
+        "agent_query",
+        "agent_thought",
+        "agent_tool_call",
+        "agent_tool_result",
+        "agent_reflection",
+        "agent_remedial_search",
+        "agent_references",
+        "agent_final_answer",
+        "agent_complete",
+        "agent_error",
+    ):
+        if key in payload:
+            return key
+    return "sse_payload"
+
+
+class ChatStreamStopped(Exception):
+    pass
+
+
+def _register_chat_stream(identity: StreamIdentity) -> threading.Event:
+    with chat_stream_cancellations_lock:
+        signal = threading.Event()
+        chat_stream_cancellations[identity.key] = signal
+        return signal
+
+
+def _active_chat_stream_signal(identity: StreamIdentity) -> threading.Event | None:
+    with chat_stream_cancellations_lock:
+        return chat_stream_cancellations.get(identity.key)
+
+
+def _unregister_chat_stream(identity: StreamIdentity, signal: threading.Event) -> None:
+    with chat_stream_cancellations_lock:
+        if chat_stream_cancellations.get(identity.key) is signal:
+            chat_stream_cancellations.pop(identity.key, None)
+
+
+def _request_chat_stream_stop(identity: StreamIdentity, *, reason: str = "client_requested") -> str:
+    with chat_stream_cancellations_lock:
+        signal = chat_stream_cancellations.get(identity.key)
+    if signal is not None:
+        signal.set()
+        return "stopping"
+    if chat_stream_manager.is_terminal(identity):
+        return "completed"
+    chat_stream_manager.append(identity, ChatStreamEvent(event_type="stop", payload={"stop": {"reason": reason or "client_requested"}}))
+    chat_stream_manager.append(identity, ChatStreamEvent(event_type="done", payload={}, terminal=True))
+    return "stopped"
+
+
+def _append_chat_stream_event(identity: StreamIdentity, event: ChatStreamEvent) -> ChatStreamEvent:
+    return chat_stream_manager.append(identity, event)
+
+
+def _publish_chat_stream_event(
+    identity: StreamIdentity,
+    event_bus: ChatEventBus | None,
+    event_type: str,
+    payload: dict,
+    *,
+    terminal: bool = False,
+) -> ChatStreamEvent:
+    if event_bus is not None:
+        event = event_bus.publish(event_type, payload, terminal=terminal)
+    else:
+        event = ChatStreamEvent(event_type=event_type, payload=payload, terminal=terminal)
+    return _append_chat_stream_event(identity, event)
+
+
+def _emit_stored_sse(
+    identity: StreamIdentity,
+    payload: dict,
+    *,
+    event_type: str | None = None,
+    terminal: bool = False,
+    event_bus: ChatEventBus | None = None,
+) -> str:
+    stored = _publish_chat_stream_event(
+        identity,
+        event_bus,
+        event_type or _infer_sse_event_type(payload),
+        payload,
+        terminal=terminal,
+    )
+    outbound = dict(payload)
+    outbound["_stream"] = {
+        "session_id": identity.session_id,
+        "message_id": identity.message_id,
+        "offset": stored.offset,
+        "terminal": stored.terminal,
+    }
+    return f"data: {json.dumps(outbound, ensure_ascii=False)}\n\n"
+
+
+def _stored_event_to_sse(identity: StreamIdentity, event: ChatStreamEvent) -> str:
+    if event.event_type == "done":
+        return "data: [DONE]\n\n"
+    outbound = dict(event.payload)
+    outbound["_stream"] = {
+        "session_id": identity.session_id,
+        "message_id": identity.message_id,
+        "offset": event.offset,
+        "terminal": event.terminal,
+    }
+    return f"data: {json.dumps(outbound, ensure_ascii=False)}\n\n"
+
+
+def _replay_chat_stream(identity: StreamIdentity, offset: int, *, stop_signal: threading.Event | None = None) -> object:
+    cursor = int(offset)
+    while True:
+        events = chat_stream_manager.read_after(identity, cursor)
+        if events:
+            for event in events:
+                cursor = max(cursor, int(event.offset))
+                yield _stored_event_to_sse(identity, event)
+                if event.terminal:
+                    return
+            continue
+        if chat_stream_manager.is_terminal(identity):
+            return
+        if stop_signal is None:
+            return
+        if stop_signal is not None and stop_signal.is_set():
+            return
+        time.sleep(0.1)
+
+
+def _store_raw_sse_events(
+    identity: StreamIdentity,
+    raw_events,
+    *,
+    event_bus: ChatEventBus | None = None,
+    stop_signal: threading.Event | None = None,
+) -> object:
+    for event in raw_events:
+        if stop_signal is not None and stop_signal.is_set():
+            raise ChatStreamStopped()
+        line = next((item for item in str(event).splitlines() if item.startswith("data:")), "")
+        payload = line.replace("data:", "", 1).strip() if line else ""
+        if payload == "[DONE]":
+            yield _emit_stored_sse(identity, {}, event_type="done", terminal=True, event_bus=event_bus)
+            continue
+        try:
+            decoded = json.loads(payload)
+        except json.JSONDecodeError:
+            yield event
+            continue
+        if isinstance(decoded, dict):
+            yield _emit_stored_sse(identity, decoded, event_bus=event_bus)
+        else:
+            yield event
+        if stop_signal is not None and stop_signal.is_set():
+            raise ChatStreamStopped()
+
+
+def _store_pipeline_events(
+    identity: StreamIdentity,
+    pipeline_events,
+    *,
+    event_bus: ChatEventBus | None = None,
+) -> object:
+    for event in pipeline_events:
+        event_type = getattr(event, "event_type", "")
+        payload = dict(getattr(event, "payload", {}) or {})
+        terminal = bool(getattr(event, "terminal", False))
+        if event_type == "done":
+            _publish_chat_stream_event(identity, event_bus, "done", {}, terminal=True)
+            yield "data: [DONE]\n\n"
+            return
+        yield _emit_stored_sse(
+            identity,
+            payload,
+            event_type=event_type or _infer_sse_event_type(payload),
+            terminal=terminal,
+            event_bus=event_bus,
+        )
+        if terminal:
+            return
+
+
 @app.post("/chat/attachments", response_model=ChatAttachmentResponse)
 async def upload_chat_attachment(file: UploadFile = File(...)) -> ChatAttachmentResponse:
     try:
@@ -1693,6 +2075,21 @@ def chat_stream(payload: ChatRequest) -> StreamingResponse:
     temporary_sources = _temporary_attachment_sources(temporary_attachments)
     conversation = conversation_service.get_or_create_conversation(payload.conversation_id)
     conversation_id = str(conversation["id"])
+    if payload.stream_message_id and payload.stream_offset is not None:
+        stream_identity = StreamIdentity(conversation_id, payload.stream_message_id)
+
+        def replay_event_gen():
+            try:
+                yield from _replay_chat_stream(
+                    stream_identity,
+                    int(payload.stream_offset),
+                    stop_signal=_active_chat_stream_signal(stream_identity),
+                )
+            finally:
+                temporary_attachment_repository.mark_consumed(attachment_ids)
+
+        return StreamingResponse(replay_event_gen(), media_type="text/event-stream")
+
     memory_enabled = bool(payload.memory_enabled) and not bool(payload.temporary)
     user_message = conversation_service.repository.append_message(
         conversation_id,
@@ -1704,20 +2101,15 @@ def chat_stream(payload: ChatRequest) -> StreamingResponse:
             "temporary_attachment_ids": attachment_ids,
         },
     )
-    conversation_context = conversation_service.build_context(conversation_id)
-    memories = memory_service.recall_memories(question) if memory_enabled else []
-    memory_context = _join_request_context(
-        memory_service.format_prompt_context(memories) if memory_enabled else "",
-        temporary_context,
-    )
+    stream_message_id = payload.stream_message_id or str(user_message["id"])
+    stream_identity = StreamIdentity(conversation_id, stream_message_id)
 
     def event_gen():
+        event_bus = ChatEventBus()
+        stop_signal = _register_chat_stream(stream_identity)
         answer_parts: list[str] = []
         stream_state: dict = {"sources": []}
         try:
-            conversation_data = json.dumps({"conversation_id": conversation_id}, ensure_ascii=False)
-            yield f"data: {conversation_data}\n\n"
-
             runtime_available = bool(getattr(rag_service, "agent_runtime_enabled", False)) and getattr(rag_service, "agent_runtime", None) is not None
             quick_runtime_available = (
                 bool(getattr(rag_service, "unified_chat_runtime_enabled", False))
@@ -1733,58 +2125,129 @@ def chat_stream(payload: ChatRequest) -> StreamingResponse:
                 raise ValueError("Wiki 问答模式暂不可用，请确认 Wiki runtime 已启用")
             if chat_mode == "reasoning" and not (runtime_available or agentic_available):
                 raise ValueError("智能推理暂不可用，请切换为快速问答后重试")
+            if chat_mode == "quick" and chat_rag_pipeline_enabled and not quick_runtime_available:
+                context = ChatPipelineContext(
+                    request=ChatPipelineRequest(
+                        question=question,
+                        conversation_id=conversation_id,
+                        stream_message_id=stream_message_id,
+                        scope=scope,
+                        chat_mode=chat_mode,
+                        memory_enabled=memory_enabled,
+                        user_message_id=str(user_message["id"]),
+                        temporary_attachment_ids=attachment_ids,
+                        temporary_context=temporary_context,
+                        temporary_sources=temporary_sources,
+                    ),
+                    runtime=ChatPipelineRuntime(
+                        rag_service=rag_service,
+                        conversation_service=conversation_service,
+                        memory_service=memory_service,
+                        event_bus=event_bus,
+                        stream_identity=stream_identity,
+                        stop_signal=stop_signal,
+                        trace_id=get_trace_id(),
+                    ),
+                )
+                yield from _store_pipeline_events(
+                    stream_identity,
+                    run_quick_rag_pipeline(context),
+                    event_bus=event_bus,
+                )
+                stream_state["sources"] = context.state.sources
+                answer_parts[:] = list(context.state.answer_parts)
+                return
+
+            yield _emit_stored_sse(
+                stream_identity,
+                {"conversation_id": conversation_id, "stream_message_id": stream_message_id},
+                event_type="conversation_id",
+                event_bus=event_bus,
+            )
+
+            conversation_context = conversation_service.build_context(conversation_id)
+            memories = memory_service.recall_memories(question) if memory_enabled else []
+            memory_context = _join_request_context(
+                memory_service.format_prompt_context(memories) if memory_enabled else "",
+                temporary_context,
+            )
             if chat_mode == "wiki":
-                yield from _stream_agent_runtime_chat_events(
-                    question,
-                    conversation_context,
-                    memory_context,
-                    answer_parts,
-                    stream_state,
-                    scope,
-                    temporary_sources,
-                    mode="wiki",
+                yield from _store_raw_sse_events(
+                    stream_identity,
+                    _stream_agent_runtime_chat_events(
+                        question,
+                        conversation_context,
+                        memory_context,
+                        answer_parts,
+                        stream_state,
+                        scope,
+                        temporary_sources,
+                        mode="wiki",
+                    ),
+                    event_bus=event_bus,
+                    stop_signal=stop_signal,
                 )
             elif chat_mode == "reasoning" and runtime_available:
-                yield from _stream_agent_runtime_chat_events(
-                    question,
-                    conversation_context,
-                    memory_context,
-                    answer_parts,
-                    stream_state,
-                    scope,
-                    temporary_sources,
-                    mode="reasoning",
+                yield from _store_raw_sse_events(
+                    stream_identity,
+                    _stream_agent_runtime_chat_events(
+                        question,
+                        conversation_context,
+                        memory_context,
+                        answer_parts,
+                        stream_state,
+                        scope,
+                        temporary_sources,
+                        mode="reasoning",
+                    ),
+                    event_bus=event_bus,
+                    stop_signal=stop_signal,
                 )
             elif chat_mode == "reasoning":
-                yield from _stream_agentic_chat_events(
-                    question,
-                    conversation_context,
-                    memory_context,
-                    answer_parts,
-                    stream_state,
-                    scope,
-                    temporary_sources,
+                yield from _store_raw_sse_events(
+                    stream_identity,
+                    _stream_agentic_chat_events(
+                        question,
+                        conversation_context,
+                        memory_context,
+                        answer_parts,
+                        stream_state,
+                        scope,
+                        temporary_sources,
+                    ),
+                    event_bus=event_bus,
+                    stop_signal=stop_signal,
                 )
             elif quick_runtime_available:
-                yield from _stream_agent_runtime_chat_events(
-                    question,
-                    conversation_context,
-                    memory_context,
-                    answer_parts,
-                    stream_state,
-                    scope,
-                    temporary_sources,
-                    mode="quick",
+                yield from _store_raw_sse_events(
+                    stream_identity,
+                    _stream_agent_runtime_chat_events(
+                        question,
+                        conversation_context,
+                        memory_context,
+                        answer_parts,
+                        stream_state,
+                        scope,
+                        temporary_sources,
+                        mode="quick",
+                    ),
+                    event_bus=event_bus,
+                    stop_signal=stop_signal,
                 )
             else:
-                yield from _stream_raw_chat_events(
-                    question,
-                    conversation_context,
-                    memory_context,
-                    answer_parts,
-                    stream_state,
-                    scope,
-                    temporary_sources,
+                yield from _store_raw_sse_events(
+                    stream_identity,
+                    _stream_raw_chat_events(
+                        question,
+                        conversation_context,
+                        memory_context,
+                        answer_parts,
+                        stream_state,
+                        scope,
+                        temporary_sources,
+                    ),
+                    event_bus=event_bus,
+                    stop_signal=stop_signal,
                 )
 
             answer = "".join(answer_parts)
@@ -1808,18 +2271,47 @@ def chat_stream(payload: ChatRequest) -> StreamingResponse:
                 memory_enabled=memory_enabled,
             )
             if memory_updates:
-                memory_data = json.dumps({"memory_updated": memory_updates}, ensure_ascii=False)
-                yield f"data: {memory_data}\n\n"
+                yield _emit_stored_sse(
+                    stream_identity,
+                    {"memory_updated": memory_updates},
+                    event_type="memory_updated",
+                    event_bus=event_bus,
+                )
+            _publish_chat_stream_event(stream_identity, event_bus, "done", {}, terminal=True)
+            yield "data: [DONE]\n\n"
+        except ChatStreamStopped:
+            yield _emit_stored_sse(
+                stream_identity,
+                {"stop": {"reason": "client_requested"}},
+                event_type="stop",
+                event_bus=event_bus,
+            )
+            _publish_chat_stream_event(stream_identity, event_bus, "done", {}, terminal=True)
             yield "data: [DONE]\n\n"
         except Exception as e:
             logger.exception("Chat stream failed: %s", e)
-            err = json.dumps({"error": str(e)}, ensure_ascii=False)
-            yield f"data: {err}\n\n"
+            yield _emit_stored_sse(stream_identity, {"error": str(e)}, event_type="error", event_bus=event_bus)
+            _publish_chat_stream_event(stream_identity, event_bus, "done", {}, terminal=True)
             yield "data: [DONE]\n\n"
         finally:
+            _unregister_chat_stream(stream_identity, stop_signal)
             temporary_attachment_repository.mark_consumed(attachment_ids)
 
     return StreamingResponse(event_gen(), media_type="text/event-stream")
+
+
+@app.post("/chat/stream/stop", response_model=ChatStreamStopResponse)
+def stop_chat_stream(payload: ChatStreamStopRequest) -> ChatStreamStopResponse:
+    if not payload.conversation_id.strip() or not payload.stream_message_id.strip():
+        raise HTTPException(status_code=400, detail="conversation_id and stream_message_id are required")
+    identity = StreamIdentity(payload.conversation_id.strip(), payload.stream_message_id.strip())
+    status = _request_chat_stream_stop(identity, reason=payload.reason)
+    return ChatStreamStopResponse(
+        conversation_id=identity.session_id,
+        stream_message_id=identity.message_id,
+        status=status,
+        stopped=status in {"stopping", "stopped"},
+    )
 
 
 @app.post("/documents/upload", response_model=DocumentUploadResponse)
@@ -2207,11 +2699,30 @@ def retry_document_enrichment(
         if document is None:
             raise KeyError(doc_id)
         metadata = document.get("metadata_json", {})
+        runtime_status = {}
+        get_runtime_status = getattr(rag_service, "_document_runtime_status", None)
+        if callable(get_runtime_status):
+            runtime_status = get_runtime_status(document, scope)
         return DocumentItem(
             **document,
             source=document.get("storage_path", ""),
             size=int(metadata.get("size", 0) or 0),
+            **runtime_status,
         )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Document not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/documents/{doc_id}/processing/retry", response_model=DocumentItem)
+def retry_document_processing(
+    doc_id: str,
+    knowledge_base_id: str | None = Query(default=None),
+) -> DocumentItem:
+    try:
+        scope = _resolve_request_scope([knowledge_base_id] if knowledge_base_id else None)
+        return DocumentItem(**rag_service.retry_document_processing_task(doc_id, scope))
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Document not found") from exc
     except ValueError as exc:

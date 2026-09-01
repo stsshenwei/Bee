@@ -6,7 +6,7 @@ templates:
     default_language: "zh-CN"
     placeholders: ["document_name", "source_chunks", "language"]
     content: |
-      You are a careful wiki editor. Create one source-grounded document summary page from the supplied chunks.
+      You are Bee's careful wiki editor. Create one source-grounded document summary page from the supplied source chunks.
 
       <source_chunks>
       {{source_chunks}}
@@ -19,6 +19,7 @@ templates:
       - source_chunk_ids must contain only exact IDs from [chunk:...] markers above.
       - If there is no substantive text, return empty summary/content and an empty source_chunk_ids array.
       - Write all prose in {{language}}.
+      - Do not use external product branding, external implementation details, or facts not present in Bee's source chunks.
       - Output only valid JSON. Do not place literal newlines inside JSON string values; use \n.
       </instructions>
 
@@ -32,7 +33,7 @@ templates:
     default_language: "zh-CN"
     placeholders: ["document_name", "source_chunks", "max_candidates", "language"]
     content: |
-      You are a knowledge extraction system. Analyze the source chunks and produce a lightweight candidate set. A later citation pass will attach exact supporting chunks, so focus on identity, scope, aliases, and a concise grounding description.
+      You are Bee's knowledge extraction system. Analyze the source chunks and produce a lightweight candidate set. A later citation pass will attach exact supporting chunks, so focus on identity, scope, aliases, and a concise grounding description.
 
       Candidate limit: {{max_candidates}}
       Output language: {{language}}
@@ -69,7 +70,7 @@ templates:
     default_language: "zh-CN"
     placeholders: ["document_name", "source_chunks", "candidates", "language"]
     content: |
-      You are a precise citation classifier. For every supplied candidate, identify which chunks substantively discuss that exact entity or concept.
+      You are Bee's precise citation classifier. For every supplied candidate, identify which chunks substantively discuss that exact entity or concept.
 
       <instructions>
       - A chunk is substantive only when it states at least one concrete fact, attribute, step, date, number, relationship, constraint, conclusion, or useful explanation about the candidate. A passing name mention is not enough.
@@ -101,7 +102,7 @@ templates:
     default_language: "zh-CN"
     placeholders: ["document_name", "source_chunks", "candidates", "language"]
     content: |
-      You are a wiki editor. Create a structured summary page using only the extracted document content below. The source filename is intentionally not evidence because uploaded filenames are often meaningless or misleading.
+      You are Bee's wiki editor. Create a structured summary page using only the extracted document content below. The source filename is intentionally not evidence because uploaded filenames are often meaningless or misleading.
 
       <document_content>
       {{source_chunks}}
@@ -134,7 +135,7 @@ templates:
     default_language: "zh-CN"
     placeholders: ["page_title", "page_type", "current_page", "contributions", "language"]
     content: |
-      You are a strict wiki editor updating one canonical page from active grounded contributions. Act as a compiler of evidence, not a creative writer.
+      You are Bee's strict wiki editor updating one canonical page from active grounded contributions. Act as a compiler of evidence, not a creative writer.
 
       <page_metadata>
       title: {{page_title}}
@@ -175,7 +176,7 @@ templates:
     default_language: "zh-CN"
     placeholders: ["pages", "existing_taxonomy", "language"]
     content: |
-      You are organizing a wiki knowledge base into a navigation directory. Assign every item below to a category path so the whole set lands on one coherent tree.
+      You are organizing a Bee wiki knowledge base into a navigation directory. Assign every item below to a category path so the whole set lands on one coherent tree.
 
       <existing_folders>
       {{existing_taxonomy}}
@@ -207,7 +208,7 @@ templates:
     default_language: "zh-CN"
     placeholders: ["pages", "language"]
     content: |
-      You are a strict deduplication system. Review the Wiki pages below and identify only pages that refer to the exact same real-world entity or exact same concept.
+      You are Bee's strict deduplication system. Review the Wiki pages below and identify only pages that refer to the exact same real-world entity or exact same concept.
 
       <pages>
       {{pages}}
@@ -240,7 +241,7 @@ templates:
     default_language: "zh-CN"
     placeholders: ["knowledge_base_name", "page_counts", "page_summaries", "current_introduction", "language"]
     content: |
-      You are a wiki editor maintaining the introduction of a knowledge base index.
+      You are Bee's wiki editor maintaining the introduction of a knowledge base index.
 
       <knowledge_base_name>{{knowledge_base_name}}</knowledge_base_name>
       <page_counts>{{page_counts}}</page_counts>
@@ -268,7 +269,7 @@ templates:
     default_language: "zh-CN"
     placeholders: ["document_name", "source_chunks", "max_candidates", "language"]
     content: |
-      You are a conservative knowledge extractor recovering from an invalid primary response.
+      You are Bee's conservative knowledge extractor recovering from an invalid primary response.
 
       <source_chunks>
       {{source_chunks}}
@@ -286,7 +287,7 @@ templates:
     default_language: "zh-CN"
     placeholders: ["content", "available_slugs", "aliases", "language"]
     content: |
-      You are repairing internal Wiki links without changing factual prose.
+      You are repairing Bee internal Wiki links without changing factual prose.
 
       <content>{{content}}</content>
       <available_slugs>{{available_slugs}}</available_slugs>

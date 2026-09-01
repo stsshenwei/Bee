@@ -13,5 +13,16 @@ out/
 .env
 .env.local
 
-# Data store
+# Data storeSSE 也改成 EventBus + StreamManager
 backend/chroma_db/
+backend/data/
+
+.venv/
+.venv-new/
+backend/.venv*/
+backend/log/
+backend/*.log
+backend/vector_db/
+frontend/.next/
+frontend/tsconfig.tsbuildinfo
+frontend/*.log

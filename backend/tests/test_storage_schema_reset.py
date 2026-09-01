@@ -404,6 +404,10 @@ class StorageSchemaResetTests(unittest.TestCase):
     def test_cli_dry_run_then_executes_offline_clean_rebuild(self):
         from app.scripts.rebuild_knowledge_storage import main
 
+        class FakePostgresResetProvider(RecordingResetProvider):
+            def __init__(self, *args, **kwargs):
+                super().__init__("postgres", ["postgres://user:***@localhost/db#public"])
+
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             vector = root / "vector"
@@ -425,8 +429,12 @@ class StorageSchemaResetTests(unittest.TestCase):
                 "RAG_DATA_DIR": str(data),
                 "STORAGE_RESET_STATE_DIR": str(vector / "reset-state"),
                 "STORAGE_RUNTIME_LOCK": str(vector / "runtime.lock"),
+                "DATABASE_URL": "postgresql://user:secret@localhost/db",
             }
-            with patch.dict(os.environ, env, clear=False), redirect_stdout(io.StringIO()):
+            with patch.dict(os.environ, env, clear=False), patch(
+                "app.scripts.rebuild_knowledge_storage.PostgresStorageResetProvider",
+                FakePostgresResetProvider,
+            ), redirect_stdout(io.StringIO()):
                 self.assertEqual(0, main(["--skip-milvus"]))
             with sqlite3.connect(metadata) as conn:
                 self.assertEqual("legacy", conn.execute(
@@ -434,7 +442,10 @@ class StorageSchemaResetTests(unittest.TestCase):
                 ).fetchone()[0])
             conn.close()
 
-            with patch.dict(os.environ, env, clear=False), redirect_stdout(io.StringIO()):
+            with patch.dict(os.environ, env, clear=False), patch(
+                "app.scripts.rebuild_knowledge_storage.PostgresStorageResetProvider",
+                FakePostgresResetProvider,
+            ), redirect_stdout(io.StringIO()):
                 self.assertEqual(
                     0,
                     main(
@@ -449,15 +460,7 @@ class StorageSchemaResetTests(unittest.TestCase):
                         ]
                     ),
                 )
-            with sqlite3.connect(metadata) as conn:
-                self.assertEqual(METADATA_SCHEMA_VERSION, conn.execute(
-                    "select version from storage_schema where component = 'primary'"
-                ).fetchone()[0])
-                self.assertEqual(0, conn.execute("select count(*) from knowledge_upload_batch").fetchone()[0])
-                self.assertEqual(0, conn.execute("select count(*) from knowledge_upload_file").fetchone()[0])
-                self.assertEqual(0, conn.execute("select count(*) from document_processing_task").fetchone()[0])
-                self.assertEqual(0, conn.execute("select count(*) from document_processing_dead_letter").fetchone()[0])
-            conn.close()
+            self.assertFalse(metadata.exists())
             self.assertFalse((data / "uploads").exists())
 
 

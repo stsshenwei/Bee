@@ -224,6 +224,57 @@ class ProcessingTaskRepository:
                 )
         return _decode_task(claimed) if claimed else None
 
+    def claim_task(
+        self,
+        task_id: str,
+        *,
+        worker_id: str,
+        lease_seconds: int = 60,
+        now: datetime | str | None = None,
+    ) -> dict[str, Any] | None:
+        worker_id = _required_text(worker_id, "worker_id")
+        clean_task_id = _required_text(task_id, "task_id")
+        current = _as_timestamp(now) if now else _now()
+        with self._connect(immediate=True) as conn:
+            row = conn.execute(
+                """
+                select * from document_processing_task
+                where id = ?
+                  and (
+                    status in ('pending', 'retrying')
+                    or (status = 'processing' and lease_expires_at is not null and lease_expires_at <= ?)
+                  )
+                """,
+                (clean_task_id, current),
+            ).fetchone()
+            if row is None:
+                return None
+            lease_expires_at = _add_seconds(current, lease_seconds)
+            conn.execute(
+                """
+                update document_processing_task
+                set status = 'processing',
+                    attempt = attempt + 1,
+                    lease_owner = ?,
+                    lease_expires_at = ?,
+                    started_at = coalesce(started_at, ?),
+                    updated_at = ?
+                where id = ?
+                """,
+                (worker_id, lease_expires_at, current, current, clean_task_id),
+            )
+            claimed = conn.execute("select * from document_processing_task where id = ?", (clean_task_id,)).fetchone()
+            if claimed is not None:
+                conn.execute(
+                    """
+                    insert into document_processing_task_attempt(
+                        id, task_id, attempt, worker_id, status, started_at, created_at
+                    ) values (?, ?, ?, ?, 'processing', ?, ?)
+                    """,
+                    (f"attempt-{uuid4().hex}", clean_task_id, int(claimed["attempt"] or 0), worker_id, current, current),
+                )
+        return _decode_task(claimed) if claimed else None
+
     def heartbeat(self, task_id: str, worker_id: str, *, lease_seconds: int = 60) -> dict[str, Any]:
         now = _now()
         lease_expires_at = _add_seconds(now, lease_seconds)
@@ -382,6 +433,24 @@ class ProcessingTaskRepository:
                 """,
                 (_add_seconds(now, delay_seconds), now, task_id),
                 )
+        return self.get_task(task_id)
+
+    def record_broker_dispatch(self, task_id: str, *, broker_task_id: str = "", queue_name: str = "") -> dict[str, Any]:
+        now = _now()
+        with self._connect(immediate=True) as conn:
+            row = conn.execute("select * from document_processing_task where id = ?", (task_id,)).fetchone()
+            if row is None:
+                raise KeyError(task_id)
+            payload = _json_object(str(row["payload_json"] or "{}"))
+            payload["_async_runtime"] = {
+                "broker_task_id": _optional_text(broker_task_id),
+                "queue_name": _optional_text(queue_name),
+                "dispatched_at": now,
+            }
+            conn.execute(
+                "update document_processing_task set payload_json = ?, updated_at = ? where id = ?",
+                (json.dumps(payload, ensure_ascii=False, sort_keys=True), now, task_id),
+            )
         return self.get_task(task_id)
 
     def find_by_idempotency(

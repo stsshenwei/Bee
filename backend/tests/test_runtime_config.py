@@ -3,8 +3,11 @@ import os
 import sys
 import tempfile
 import unittest
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from unittest.mock import patch
+
+from app.models.knowledge_base import KnowledgeBase, Workspace
 
 
 class FakeCollection:
@@ -15,6 +18,76 @@ class FakeCollection:
         return 0
 
 
+def _fake_workspace(repository, workspace_id: str | None = None) -> Workspace:
+    return Workspace(
+        id=workspace_id or repository.defaults.workspace_id,
+        name=repository.defaults.workspace_name,
+        status="active",
+    )
+
+
+def _fake_knowledge_base(repository, knowledge_base_id: str | None = None) -> KnowledgeBase:
+    return KnowledgeBase(
+        id=knowledge_base_id or repository.defaults.knowledge_base_id,
+        workspace_id=repository.defaults.workspace_id,
+        name=repository.defaults.knowledge_base_name,
+        is_default=True,
+        status="active",
+    )
+
+
+@contextmanager
+def postgres_runtime_patches():
+    inspection_targets = (
+        "app.services.retrieval.postgres_vector_store.inspect_postgres_startup_storage",
+        "app.services.documents.postgres_document_repository.inspect_postgres_startup_storage",
+        "app.services.knowledge.postgres_knowledge_base_repository.inspect_postgres_startup_storage",
+        "app.services.documents.postgres_upload_batch_repository.inspect_postgres_startup_storage",
+        "app.services.wiki.postgres_wiki_repository.inspect_postgres_startup_storage",
+        "app.services.kg.postgres_kg_repository.inspect_postgres_startup_storage",
+        "app.services.processing.postgres_processing_span_repository.inspect_postgres_startup_storage",
+        "app.services.documents.postgres_image_repository.inspect_postgres_startup_storage",
+        "app.services.knowledge.postgres_audit_repository.inspect_postgres_startup_storage",
+        "app.services.agent.postgres_agent_runtime_spans.inspect_postgres_startup_storage",
+        "app.services.processing.postgres_processing_task_repository.inspect_postgres_startup_storage",
+        "app.services.memory.postgres_conversation_repository.inspect_postgres_startup_storage",
+        "app.services.memory.postgres_memory_repository.inspect_postgres_startup_storage",
+        "app.services.evaluation.postgres_evaluation_repository.inspect_postgres_startup_storage",
+    )
+    with ExitStack() as stack:
+        for target in inspection_targets:
+            stack.enter_context(patch(target, return_value={"ready": True}))
+        stack.enter_context(
+            patch(
+                "app.services.knowledge.postgres_knowledge_base_repository.PostgresKnowledgeBaseRepository.get_workspace",
+                autospec=True,
+                side_effect=lambda self, workspace_id: _fake_workspace(self, workspace_id),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.knowledge.postgres_knowledge_base_repository.PostgresKnowledgeBaseRepository.get_knowledge_base",
+                autospec=True,
+                side_effect=lambda self, knowledge_base_id: _fake_knowledge_base(self, knowledge_base_id),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.knowledge.postgres_knowledge_base_repository.PostgresKnowledgeBaseRepository.get_default_knowledge_base",
+                autospec=True,
+                side_effect=lambda self, workspace_id: _fake_knowledge_base(self),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.knowledge.postgres_knowledge_base_repository.PostgresKnowledgeBaseRepository.update_knowledge_base",
+                autospec=True,
+                side_effect=lambda self, knowledge_base_id, changes: _fake_knowledge_base(self, knowledge_base_id),
+            )
+        )
+        yield
+
+
 class RuntimeConfigTests(unittest.TestCase):
     def import_main_with_env(self, env: dict[str, str]):
         sys.modules.pop("app.main", None)
@@ -23,7 +96,8 @@ class RuntimeConfigTests(unittest.TestCase):
                 "OPENAI_API_KEY": "test-key",
                 "OPENAI_BASE_URL": "",
                 "VECTOR_STORE_DIR": str(Path(tmpdir) / "vector_db"),
-                "METADATA_DB_PATH": str(Path(tmpdir) / "metadata.sqlite3"),
+                "DATABASE_URL": "postgresql://rag:rag@localhost:5432/rag_test",
+                "POSTGRES_SCHEMA": "rag",
                 "RAG_DATA_DIR": str(Path(tmpdir) / "data"),
                 "RERANKER_TOP_N": "8",
                 "AGENTIC_RETRIEVAL_ENABLED": "false",
@@ -36,10 +110,14 @@ class RuntimeConfigTests(unittest.TestCase):
                 "OCR_ENABLED": "false",
                 "OCR_PROVIDER": "docling",
                 "KG_EXTRACTION_ENABLED": "false",
+                "LOW_RECALL_QUERY_EXPANSION_ENABLED": "false",
+                "RERANKER_DEGRADATION_ENABLED": "true",
+                "MMR_ENABLED": "false",
+                "WIKI_INGEST_ENABLED": "false",
                 **env,
             }
             with patch.dict(os.environ, full_env, clear=False):
-                with patch("app.services.retrieval.vector_store._create_or_load_collection", return_value=FakeCollection()):
+                with postgres_runtime_patches():
                     module = importlib.import_module("app.main")
                     return module.build_rag_service()
 
@@ -47,7 +125,8 @@ class RuntimeConfigTests(unittest.TestCase):
         service = self.import_main_with_env({})
 
         self.assertFalse(service.milvus_bm25_enabled)
-        self.assertFalse(service.vector_store.bm25_enabled)
+        self.assertEqual("vector", service.vector_store.vector_type)
+        self.assertEqual("rag", service.vector_store.schema)
         self.assertEqual(50, service.dense_recall_top_n)
         self.assertEqual(50, service.bm25_recall_top_n)
         self.assertEqual(30, service.fusion_top_k)
@@ -108,7 +187,6 @@ class RuntimeConfigTests(unittest.TestCase):
     def test_runtime_config_reads_enabled_values(self):
         service = self.import_main_with_env(
             {
-                "MILVUS_BM25_ENABLED": "true",
                 "DENSE_RECALL_TOP_N": "11",
                 "BM25_RECALL_TOP_N": "13",
                 "FUSION_TOP_K": "17",
@@ -145,8 +223,8 @@ class RuntimeConfigTests(unittest.TestCase):
             }
         )
 
-        self.assertTrue(service.milvus_bm25_enabled)
-        self.assertTrue(service.vector_store.bm25_enabled)
+        self.assertFalse(service.milvus_bm25_enabled)
+        self.assertEqual("vector", service.vector_store.vector_type)
         self.assertEqual(11, service.dense_recall_top_n)
         self.assertEqual(13, service.bm25_recall_top_n)
         self.assertEqual(17, service.fusion_top_k)
@@ -316,11 +394,11 @@ rag:
   embedding:
     model: yaml-embedding
   vector_store:
-    type: milvus
-    url: http://127.0.0.1:19530
-    collection: yaml_chunks
+    type: postgres_pgvector
+    schema: yaml_rag
+    vector_type: halfvec
   keyword_search:
-    type: milvus
+    type: postgres_text_trigram
   reranker:
     provider: bge
     model: yaml-reranker
@@ -347,7 +425,8 @@ rag:
                 "OPENAI_API_KEY": "test-key",
                 "OPENAI_BASE_URL": "",
                 "VECTOR_STORE_DIR": str(Path(tmpdir) / "vector_db"),
-                "METADATA_DB_PATH": str(Path(tmpdir) / "metadata.sqlite3"),
+                "DATABASE_URL": "postgresql://rag:rag@localhost:5432/rag_test",
+                "POSTGRES_SCHEMA": "rag",
                 "RAG_DATA_DIR": str(Path(tmpdir) / "data"),
                 "RAG_CONFIG_PATH": str(config_path),
                 "AUTO_INGEST_ON_STARTUP": "false",
@@ -356,7 +435,7 @@ rag:
                 "RERANKER_MODEL": "",
                 "OPENAI_EMBEDDING_MODEL": "",
                 "OPENAI_CHAT_MODEL": "",
-                "MILVUS_COLLECTION": "",
+                "PGVECTOR_TYPE": "",
                 "DENSE_RECALL_TOP_N": "",
                 "BM25_RECALL_TOP_N": "",
                 "FUSION_TOP_K": "",
@@ -370,12 +449,13 @@ rag:
                 "CONTEXT_EXPANDED_CHUNK_MAX_CHARS": "",
             }
             with patch.dict(os.environ, env, clear=False):
-                with patch("app.services.retrieval.vector_store._create_or_load_collection", return_value=FakeCollection()):
+                with postgres_runtime_patches():
                     module = importlib.import_module("app.main")
                     service = module.build_rag_service()
 
         self.assertEqual("yaml-chat", service.chat_model)
-        self.assertEqual("yaml_chunks", service.vector_store.collection_name)
+        self.assertEqual("vector", service.vector_store.vector_type)
+        self.assertEqual("rag", service.vector_store.schema)
         self.assertEqual(21, service.dense_recall_top_n)
         self.assertEqual(22, service.bm25_recall_top_n)
         self.assertEqual(23, service.fusion_top_k)
@@ -397,16 +477,20 @@ rag:
                 "OPENAI_API_KEY": "test-key",
                 "OPENAI_BASE_URL": "",
                 "VECTOR_STORE_DIR": str(Path(tmpdir) / "vector_db"),
-                "METADATA_DB_PATH": str(Path(tmpdir) / "metadata.sqlite3"),
+                "DATABASE_URL": "postgresql://rag:rag@localhost:5432/rag_test",
+                "POSTGRES_SCHEMA": "rag",
                 "RAG_DATA_DIR": str(Path(tmpdir) / "data"),
                 "AUTO_INGEST_ON_STARTUP": "false",
-                "MILVUS_BM25_ENABLED": "false",
                 "RERANKER_ENABLED": "false",
                 "OCR_ENABLED": "false",
                 "KG_EXTRACTION_ENABLED": "false",
+                "LOW_RECALL_QUERY_EXPANSION_ENABLED": "false",
+                "RERANKER_DEGRADATION_ENABLED": "true",
+                "MMR_ENABLED": "false",
+                "WIKI_INGEST_ENABLED": "false",
             }
             with patch.dict(os.environ, env, clear=False):
-                with patch("app.services.retrieval.vector_store._create_or_load_collection", return_value=FakeCollection()):
+                with postgres_runtime_patches():
                     module = importlib.import_module("app.main")
                     from fastapi.testclient import TestClient
 
@@ -414,7 +498,11 @@ rag:
                         response = client.get("/health")
 
         self.assertEqual(200, response.status_code)
-        self.assertEqual({"ok": True}, response.json())
+        body = response.json()
+        self.assertTrue(body["ok"])
+        self.assertEqual("postgres", body["storage"]["database"])
+        self.assertEqual("rag", body["storage"]["schema"])
+        self.assertEqual("vector", body["storage"]["pgvector"]["type"])
 
 
 if __name__ == "__main__":

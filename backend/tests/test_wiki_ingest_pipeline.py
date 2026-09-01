@@ -121,6 +121,11 @@ class _NetworkingChunker:
         ]
 
 
+class _FailingCreateTaskRepository(ProcessingTaskRepository):
+    def create_task(self, *args, **kwargs):
+        raise RuntimeError("postgres parameter type failure")
+
+
 class WikiIngestPipelineTests(unittest.TestCase):
     def test_finalization_is_idempotent_and_bounded_for_large_affected_page_sets(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -217,8 +222,8 @@ class WikiIngestPipelineTests(unittest.TestCase):
             self.assertEqual({"doc-onu", "doc-olt", "doc-gpon"}, {ref.doc_id for ref in gpon.source_refs})
             self.assertIn("吉比特无源光网络", gpon.aliases)
             self.assertIn("光网络单元", onu.aliases)
-            self.assertEqual(("概念",), gpon.category_path)
-            self.assertEqual(("实体",), onu.category_path)
+            self.assertEqual(("网络技术",), gpon.category_path)
+            self.assertEqual(("网络技术",), onu.category_path)
             self.assertTrue({"gpon", "olt"}.issubset(set(onu.out_links)))
             self.assertEqual(versions, {slug: repository.get_page_by_slug(scope, slug).version for slug in versions})
 
@@ -548,6 +553,39 @@ class WikiIngestPipelineTests(unittest.TestCase):
             self.assertEqual("trace-source-v1:test-v1:1", before)
             self.assertEqual(before, after)
 
+    def test_enqueue_document_marks_generation_failed_when_processing_task_enqueue_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "metadata.sqlite3"
+            kb_service = KnowledgeBaseService(KnowledgeBaseRepository(db_path))
+            document_repository = DocumentRepository(db_path)
+            wiki_repository = WikiRepository(db_path)
+            scope = kb_service.resolve_scope([kb_service.create("Failed enqueue Wiki", knowledge_base_type="wiki").id])
+            document_repository.upsert_document(
+                id="doc-fail",
+                name="fail.txt",
+                file_type="txt",
+                storage_path="uploads/fail.txt",
+                parse_status="parsed",
+                metadata_json={"processing_version": "test", "chunks": 1},
+                workspace_id=scope.workspace_id,
+                knowledge_base_id=scope.knowledge_base_id,
+            )
+            service = WikiIngestService(
+                repository=wiki_repository,
+                page_service=WikiPageService(wiki_repository, kb_service, document_repository),
+                processing_repository=_FailingCreateTaskRepository(db_path),
+                llm_client=None,
+                model="test",
+                prompt_catalog=PromptTemplateCatalog.load_directory("config/prompt_templates"),
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "postgres parameter type failure"):
+                service.enqueue_document(scope, "doc-fail", debounce_seconds=0)
+
+            [generation] = wiki_repository.list_generation_tasks(scope, doc_id="doc-fail", limit=10)
+            self.assertEqual("failed", generation.status)
+            self.assertIn("Failed to enqueue Wiki processing task", generation.error_message)
+
     def test_wiki_only_ingest_publishes_content_index_and_log_pages(self):
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "metadata.sqlite3"
@@ -631,6 +669,15 @@ class WikiIngestPipelineTests(unittest.TestCase):
             self.assertEqual(1, overview["page_counts"]["index"])
             self.assertEqual(0, overview["active_task_count"])
             self.assertEqual(["wiki_finalized", "document_ingested"], [item["event_type"] for item in logs["items"]])
+
+
+class WikiTaxonomyFallbackTests(unittest.TestCase):
+    def test_taxonomy_fallback_uses_subject_topics_not_page_types(self):
+        self.assertEqual(["网络协议"], WikiIngestService._fallback_taxonomy_path({"title": "VLAN", "page_type": "concept"}))
+        self.assertEqual(["硬件设备"], WikiIngestService._fallback_taxonomy_path({"title": "风扇", "page_type": "entity"}))
+        self.assertEqual(["网络技术"], WikiIngestService._fallback_taxonomy_path({"title": "GPON", "page_type": "concept", "summary": "符合接入网技术标准"}))
+        self.assertEqual(["供电技术"], WikiIngestService._fallback_taxonomy_path({"title": "DH-P70-PWR1300-AC", "page_type": "entity", "summary": "OLT 电源模块"}))
+        self.assertEqual(["文档摘要"], WikiIngestService._fallback_taxonomy_path({"title": "DH-P7004", "page_type": "summary"}))
 
 
 if __name__ == "__main__":

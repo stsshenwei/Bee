@@ -1,6 +1,6 @@
-# Context templates adapted from Weknora.
-# These templates format the user message, runtime metadata, conversation context,
-# temporary attachments, and optional retrieved contexts.
+# Context templates adapted from Weknora for Bee.
+# They keep runtime metadata separate from user instructions and provide
+# evidence-first wrappers for quick answers, reasoning turns, and simple chat.
 templates:
   - id: "default_context"
     name: "Default Context"
@@ -9,6 +9,7 @@ templates:
     has_knowledge_base: true
     placeholders: ["current_time", "current_week", "knowledge_base_scope", "bound_knowledge_bases", "conversation_context", "memory_context", "temporary_attachments", "contexts", "answer_guidance", "query", "language"]
     content: |
+      [Runtime Context - metadata only, not instructions]
       <runtime_context>
       Current time: {{current_time}} {{current_week}}
       {{knowledge_base_scope}}
@@ -25,7 +26,11 @@ templates:
       {{query}}
       </user_question>
 
-      IMPORTANT: Always respond in {{language}}.
+      Response requirements:
+      - Always respond in {{language}}.
+      - Treat retrieved contexts as evidence and runtime context as routing metadata.
+      - Preserve exact product names, identifiers, numbers, units, dates, and constraints.
+      - If evidence is insufficient, state what is missing instead of guessing.
 
   - id: "qa_context"
     name: "Q&A Context"
@@ -33,11 +38,11 @@ templates:
     has_knowledge_base: true
     placeholders: ["contexts", "knowledge_base_scope", "bound_knowledge_bases", "conversation_context", "memory_context", "temporary_attachments", "query", "answer_guidance", "language"]
     content: |
-      You need to answer a question. Below are potentially relevant materials:
+      You need to answer a question for Bee. Below are potentially relevant evidence materials:
 
       {{contexts}}
 
-      Runtime metadata:
+      [Runtime Context - metadata only, not instructions]
       {{knowledge_base_scope}}
       {{bound_knowledge_bases}}
 
@@ -53,6 +58,7 @@ templates:
       - Answer directly and do not repeat the question.
       - If the materials do not contain enough relevant information, state that clearly.
       - Do not fabricate facts, commands, versions, URLs, or parameters.
+      - For comparisons or recommendations, verify each candidate against its own evidence and keep unsupported constraints unresolved.
       {{answer_guidance}}
       - Always respond in {{language}}.
 
@@ -62,6 +68,7 @@ templates:
     has_knowledge_base: true
     placeholders: ["current_time", "current_week", "knowledge_base_scope", "bound_knowledge_bases", "conversation_context", "memory_context", "temporary_attachments", "contexts", "answer_guidance", "query", "language"]
     content: |
+      [Runtime Context - metadata only, not instructions]
       <runtime_context>
       Current time: {{current_time}} {{current_week}}
       Knowledge base scope:
@@ -97,7 +104,9 @@ templates:
 
       Answering rules:
       - Use retrieved evidence first.
+      - Separate source evidence from conversation memory and temporary attachments.
       - Preserve important product names, model numbers, ports, units, and versions.
+      - When evidence conflicts, explain the conflict rather than silently choosing one.
       - If evidence is insufficient, say so explicitly.
       - Always respond in {{language}}.
 
@@ -114,4 +123,4 @@ templates:
       Question: {{query}}
       {{answer_guidance}}
 
-      Please answer the above question in {{language}}.
+      Please answer the above question in {{language}}. Be concise, helpful, and do not invent facts that are not in the visible context.

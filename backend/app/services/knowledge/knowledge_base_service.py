@@ -13,7 +13,8 @@ from app.models.knowledge_base import (
     ProviderReferences,
     utc_now_iso,
 )
-from app.services.knowledge.knowledge_base_repository import KnowledgeBaseRepository
+from app.services.knowledge.knowledge_base_contracts import KnowledgeBaseRepositoryProtocol
+from app.services.storage.postgres import PostgresIntegrityError
 
 
 class KnowledgeBaseValidationError(ValueError):
@@ -26,7 +27,7 @@ SUPPORTED_KNOWLEDGE_BASE_TYPES = {"document", "faq", "wiki"}
 class KnowledgeBaseService:
     def __init__(
         self,
-        repository: KnowledgeBaseRepository,
+        repository: KnowledgeBaseRepositoryProtocol,
         default_providers: ProviderReferences | None = None,
         supported_provider_refs: dict[str, set[str]] | None = None,
     ):
@@ -92,7 +93,7 @@ class KnowledgeBaseService:
         )
         try:
             return self.repository.create_knowledge_base(knowledge_base, set_as_default=is_default)
-        except sqlite3.IntegrityError as exc:
+        except (sqlite3.IntegrityError, PostgresIntegrityError) as exc:
             raise KnowledgeBaseValidationError("A knowledge base with this name already exists") from exc
 
     def list(self, workspace_id: str | None = None, include_archived: bool = False) -> list[KnowledgeBase]:
@@ -132,7 +133,7 @@ class KnowledgeBaseService:
             if is_default:
                 updated = self.repository.set_default_knowledge_base(current.id)
             return updated
-        except sqlite3.IntegrityError as exc:
+        except (sqlite3.IntegrityError, PostgresIntegrityError) as exc:
             raise KnowledgeBaseValidationError("A knowledge base with this name already exists") from exc
         except ValueError as exc:
             raise KnowledgeBaseValidationError(str(exc)) from exc

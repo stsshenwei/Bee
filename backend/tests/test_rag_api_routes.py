@@ -16,6 +16,9 @@ from app.services.knowledge.knowledge_base_service import KnowledgeBaseService
 from app.services.documents.temporary_attachment_repository import TemporaryAttachmentRepository
 from app.services.wiki.wiki_repository import WikiRepository
 from app.services.wiki.wiki_service import WikiPageService
+from app.services.chat_streaming.event_bus import ChatStreamEvent
+from app.services.chat_streaming.stream_manager import MemoryStreamManager, StreamIdentity
+from tests.test_runtime_config import postgres_runtime_patches
 
 
 class FakeCollection:
@@ -197,6 +200,34 @@ class FakeRagService:
         self.upload_batch_calls.append({"action": "retry", "scope": scope, "batch_id": batch_id, "file_id": file_id})
         return self.get_upload_batch(batch_id, scope)
 
+    def retry_document_processing_task(self, doc_id, scope):
+        return {
+            "id": doc_id,
+            "workspace_id": scope.workspace_id,
+            "knowledge_base_id": scope.knowledge_base_id,
+            "name": "manual.md",
+            "file_type": "md",
+            "storage_path": "uploads/manual.md",
+            "parse_status": "processing",
+            "created_at": "2026-01-01T00:00:00",
+            "updated_at": "2026-01-01T00:00:00",
+            "metadata_json": {},
+            "chunks": 1,
+            "source": "uploads/manual.md",
+            "size": 8,
+            "processing_task_id": "processing-1",
+            "processing_task_type": "process_document",
+            "processing_task_status": "retrying",
+            "processing_task_queue": "core",
+            "processing_broker_task_id": "broker-1",
+            "processing_task_attempt": 0,
+            "processing_task_max_attempts": 3,
+            "processing_dead_lettered": False,
+            "processing_last_error": "parser unavailable",
+            "processing_dead_letter_reason": "parser unavailable",
+            "processing_retry_available": False,
+        }
+
     def cancel_upload_batch(self, batch_id, scope):
         self.upload_batch_calls.append({"action": "cancel", "scope": scope, "batch_id": batch_id})
         batch = self.get_upload_batch(batch_id, scope)
@@ -373,12 +404,14 @@ class RagApiRouteTests(unittest.TestCase):
                 "OPENAI_API_KEY": "test-key",
                 "OPENAI_BASE_URL": "",
                 "VECTOR_STORE_DIR": str(Path(tmpdir) / "vector_db"),
-                "METADATA_DB_PATH": str(Path(tmpdir) / "metadata.sqlite3"),
+                "DATABASE_URL": "postgresql://rag:rag@localhost:5432/rag_test",
+                "POSTGRES_SCHEMA": "rag",
                 "RAG_DATA_DIR": str(Path(tmpdir) / "data"),
                 "AUTO_INGEST_ON_STARTUP": "false",
+                "WIKI_INGEST_ENABLED": "false",
             }
             with patch.dict(os.environ, env, clear=False):
-                with patch("app.services.retrieval.vector_store._create_or_load_collection", return_value=FakeCollection()):
+                with postgres_runtime_patches():
                     return importlib.import_module("app.main")
 
     def test_rag_upload_ingest_query_and_delete_routes(self):
@@ -838,6 +871,137 @@ class RagApiRouteTests(unittest.TestCase):
         self.assertIn('"conversation_id": "conv-existing"', payload)
         self.assertEqual("conv-existing", fake_conversation.appended[0]["conversation_id"])
         self.assertEqual("Earlier summary", fake_rag.stream_calls[0]["conversation_context"]["summary"])
+
+    def test_document_processing_retry_route_returns_queue_runtime_fields(self):
+        module = self.import_main()
+        module.rag_service = FakeRagService()
+
+        with TestClient(module.app) as client:
+            response = client.post("/documents/doc-1/processing/retry?knowledge_base_id=kb-a")
+
+        payload = response.json()
+        self.assertEqual(200, response.status_code)
+        self.assertEqual("retrying", payload["processing_task_status"])
+        self.assertEqual("process_document", payload["processing_task_type"])
+        self.assertEqual("core", payload["processing_task_queue"])
+        self.assertEqual("broker-1", payload["processing_broker_task_id"])
+        self.assertFalse(payload["processing_retry_available"])
+
+    def test_chat_stream_replays_existing_stream_before_completion(self):
+        module = self.import_main()
+        module.rag_service = FakeRagService()
+        module.conversation_service = FakeConversationService()
+        module.memory_service = FakeMemoryService()
+        module.chat_stream_manager = MemoryStreamManager()
+        identity = StreamIdentity("conv-existing", "msg-stream")
+        module.chat_stream_manager.append(identity, ChatStreamEvent("conversation_id", {"conversation_id": "conv-existing"}))
+        module.chat_stream_manager.append(identity, ChatStreamEvent("token", {"token": "partial"}))
+
+        with TestClient(module.app) as client:
+            response = client.post(
+                "/chat/stream",
+                json={
+                    "message": "resume",
+                    "conversation_id": "conv-existing",
+                    "stream_message_id": "msg-stream",
+                    "stream_offset": 1,
+                },
+            )
+
+        self.assertEqual(200, response.status_code)
+        self.assertIn('"token": "partial"', response.text)
+        self.assertIn('"offset": 2', response.text)
+        self.assertNotIn("[DONE]", response.text)
+        self.assertEqual([], module.rag_service.stream_calls)
+
+    def test_chat_stream_replays_completed_stream_with_done_marker(self):
+        module = self.import_main()
+        module.rag_service = FakeRagService()
+        module.conversation_service = FakeConversationService()
+        module.memory_service = FakeMemoryService()
+        module.chat_stream_manager = MemoryStreamManager()
+        identity = StreamIdentity("conv-existing", "msg-done")
+        module.chat_stream_manager.append(identity, ChatStreamEvent("token", {"token": "answer"}))
+        module.chat_stream_manager.append(identity, ChatStreamEvent("done", {}, terminal=True))
+
+        with TestClient(module.app) as client:
+            response = client.post(
+                "/chat/stream",
+                json={
+                    "message": "resume",
+                    "conversation_id": "conv-existing",
+                    "stream_message_id": "msg-done",
+                    "stream_offset": 0,
+                },
+            )
+
+        self.assertIn('"token": "answer"', response.text)
+        self.assertIn("[DONE]", response.text)
+        self.assertEqual([], module.rag_service.stream_calls)
+
+    def test_chat_stream_replays_fatal_error_before_done_marker(self):
+        module = self.import_main()
+        module.rag_service = FakeRagService()
+        module.conversation_service = FakeConversationService()
+        module.memory_service = FakeMemoryService()
+        module.chat_stream_manager = MemoryStreamManager()
+        identity = StreamIdentity("conv-existing", "msg-error")
+        module.chat_stream_manager.append(identity, ChatStreamEvent("error", {"error": "provider failed"}))
+        module.chat_stream_manager.append(identity, ChatStreamEvent("done", {}, terminal=True))
+
+        with TestClient(module.app) as client:
+            response = client.post(
+                "/chat/stream",
+                json={
+                    "message": "resume",
+                    "conversation_id": "conv-existing",
+                    "stream_message_id": "msg-error",
+                    "stream_offset": 0,
+                },
+            )
+
+        self.assertLess(response.text.index('"error": "provider failed"'), response.text.index("[DONE]"))
+
+    def test_chat_stream_stop_persists_replayable_stop_event(self):
+        module = self.import_main()
+        module.rag_service = FakeRagService()
+        module.conversation_service = FakeConversationService()
+        module.memory_service = FakeMemoryService()
+        module.chat_stream_manager = MemoryStreamManager()
+
+        with TestClient(module.app) as client:
+            stopped = client.post(
+                "/chat/stream/stop",
+                json={"conversation_id": "conv-existing", "stream_message_id": "msg-stop", "reason": "user_cancel"},
+            )
+            replay = client.post(
+                "/chat/stream",
+                json={
+                    "message": "resume",
+                    "conversation_id": "conv-existing",
+                    "stream_message_id": "msg-stop",
+                    "stream_offset": 0,
+                },
+            )
+
+        self.assertEqual("stopped", stopped.json()["status"])
+        self.assertIn('"reason": "user_cancel"', replay.text)
+        self.assertIn("[DONE]", replay.text)
+
+    def test_chat_stream_old_client_payload_still_streams_with_metadata(self):
+        module = self.import_main()
+        module.rag_service = FakeRagService()
+        module.conversation_service = FakeConversationService()
+        module.memory_service = FakeMemoryService()
+        module.chat_stream_manager = MemoryStreamManager()
+
+        with TestClient(module.app) as client:
+            response = client.post("/chat/stream", json={"message": "old client"})
+
+        self.assertIn('"conversation_id": "conv-new"', response.text)
+        self.assertIn('"stream_message_id": "msg-1"', response.text)
+        self.assertIn('"_stream"', response.text)
+        self.assertIn("[DONE]", response.text)
 
     def test_chat_stream_respects_memory_disabled(self):
         module = self.import_main()
