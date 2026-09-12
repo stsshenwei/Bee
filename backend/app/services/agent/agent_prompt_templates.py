@@ -287,10 +287,12 @@ def format_bound_knowledge_bases(items: list[dict[str, Any]]) -> str:
         return "<bound_knowledge_bases />"
     lines = ["<bound_knowledge_bases>"]
     for item in items:
+        capabilities = [str(value) for value in (item.get("capabilities") or ["chunks"]) if str(value).strip()]
         lines.append(
             f'<knowledge_base id="{_xml(str(item.get("id", "")))}" '
             f'name="{_xml(str(item.get("name", "")))}" '
             f'type="{_xml(str(item.get("type", "document")))}" '
+            f'capabilities="{_xml(",".join(capabilities or ["chunks"]))}" '
             f'doc_count="{int(item.get("doc_count", item.get("documents", 0)) or 0)}">'
         )
         description = str(item.get("description") or "").strip()
@@ -359,23 +361,38 @@ def format_available_skills(items: list[dict[str, Any]]) -> str:
 def scope_to_prompt_kbs(scope: KnowledgeBaseScope, knowledge_base_service: Any | None = None) -> list[dict[str, Any]]:
     result = []
     for kb_id in scope.selected_knowledge_base_ids:
-        info = {"id": kb_id, "name": kb_id, "type": "document", "doc_count": 0, "description": ""}
+        info = {"id": kb_id, "name": kb_id, "type": "document", "doc_count": 0, "description": "", "capabilities": ["chunks"]}
         if knowledge_base_service is not None:
             try:
                 kb = knowledge_base_service.get(kb_id)
                 data = kb.to_dict() if hasattr(kb, "to_dict") else dict(kb)
+                aggregate = data.get("aggregate") if isinstance(data.get("aggregate"), dict) else {}
                 info.update(
                     {
                         "id": data.get("id", kb_id),
                         "name": data.get("name", kb_id),
                         "type": data.get("type", "document"),
                         "description": data.get("description", ""),
+                        "doc_count": aggregate.get("document_count", data.get("doc_count", data.get("documents", 0))),
+                        "capabilities": _knowledge_base_capabilities(data),
                     }
                 )
             except Exception:
                 pass
         result.append(info)
     return result
+
+
+def _knowledge_base_capabilities(data: dict[str, Any]) -> list[str]:
+    strategy = data.get("indexing_strategy") if isinstance(data.get("indexing_strategy"), dict) else {}
+    capabilities: list[str] = []
+    if bool(strategy.get("dense_enabled", True)) or bool(strategy.get("keyword_enabled", True)):
+        capabilities.append("chunks")
+    if bool(strategy.get("wiki_enabled")) or str(data.get("type") or "").lower() == "wiki":
+        capabilities.append("wiki")
+    if bool(strategy.get("graph_enabled")):
+        capabilities.append("graph")
+    return capabilities or ["chunks"]
 
 
 def _xml(value: str) -> str:

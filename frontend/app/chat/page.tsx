@@ -1,28 +1,68 @@
 ﻿"use client";
 
 import { ChangeEvent, FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ModalSurface } from "../components/ModalSurface";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { AgentTimeline } from "../components/AgentTimeline";
 import { DocumentViewer } from "../components/DocumentViewer";
-import { LibraryIcon, SendIcon, ThumbsDownIcon, ThumbsUpIcon, UploadIcon } from "../components/Icons";
-import { API_BASE, listKnowledgeBaseDocuments, listKnowledgeBases, uploadChatAttachment } from "../lib/api";
+import { LibraryIcon, SendIcon, StopIcon, ThumbsDownIcon, ThumbsUpIcon, UploadIcon } from "../components/Icons";
+import { API_BASE, listKnowledgeBaseDocuments, listKnowledgeBases, loadSessionMessages, stopSessionGeneration, uploadChatAttachment } from "../lib/api";
 import { buildAgentTimeline, deriveAgentRunSummary, deriveSearchSummary, normalizeAgentPayload } from "../lib/agent-stream";
+import { historyMessageToChatMessage, mergeUniqueMessages } from "../lib/chat-history-state";
 import type { AgentStreamEvent, ChatAttachment, ChatMessage, FeedbackState, KnowledgeBase, MemoryRecord, MemoryUpdate, ReasoningSummary, SourceItem } from "../lib/types";
 
-type ChatMode = "quick" | "reasoning" | "wiki";
+type ChatMode = "quick" | "reasoning" | "wiki" | "rag_wiki";
+
+type StreamPayload = {
+  token?: string;
+  error?: string;
+  stop?: { reason?: string };
+  sources?: SourceItem[];
+  reasoning?: ReasoningSummary;
+  agent_trace?: Record<string, unknown>;
+  tool_call?: Record<string, unknown>;
+  tool_observation?: Record<string, unknown>;
+  agent_query?: Record<string, unknown>;
+  agent_thought?: Record<string, unknown>;
+  agent_tool_call?: Record<string, unknown>;
+  agent_tool_result?: Record<string, unknown>;
+  agent_reflection?: Record<string, unknown>;
+  agent_remedial_search?: Record<string, unknown>;
+  agent_references?: Record<string, unknown>;
+  agent_final_answer?: Record<string, unknown>;
+  agent_complete?: Record<string, unknown>;
+  agent_error?: Record<string, unknown>;
+  evidence_summary?: Record<string, unknown>;
+  citation_verification?: Record<string, unknown>;
+  conversation_id?: string;
+  session_id?: string;
+  request_id?: string;
+  stream_message_id?: string;
+  assistant_message_id?: string;
+  user_message_id?: string;
+  memory_updated?: MemoryUpdate[];
+};
 
 export default function ChatPage() {
   const endRef = useRef<HTMLDivElement | null>(null);
   const agentEventSequenceRef = useRef(0);
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const currentAssistantMessageIdRef = useRef<string | null>(null);
+  const currentRequestIdRef = useRef<string | null>(null);
+  const conversationIdRef = useRef<string | null>(null);
 
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [feedbackMap, setFeedbackMap] = useState<Record<number, FeedbackState>>({});
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const [currentAssistantMessageId, setCurrentAssistantMessageId] = useState<string | null>(null);
+  const [currentRequestId, setCurrentRequestId] = useState<string | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [hasMoreHistory, setHasMoreHistory] = useState(false);
   const [chatMode, setChatMode] = useState<ChatMode>("quick");
   const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
   const [attachmentUploading, setAttachmentUploading] = useState(false);
@@ -47,27 +87,115 @@ export default function ChatPage() {
   const [docFileUrl, setDocFileUrl] = useState("");
 
   const canSend = useMemo(() => input.trim().length > 0 && !loading && !attachmentUploading, [input, loading, attachmentUploading]);
+  const effectiveKnowledgeBaseIds = useMemo(() => {
+    if (selectedKnowledgeBaseIds.length) {
+      const selectedKnowledgeBases = selectedKnowledgeBaseIds
+        .map((id) => knowledgeBases.find((item) => item.id === id))
+        .filter(Boolean) as KnowledgeBase[];
+      const selectedOnlyEmptyDefault = selectedKnowledgeBases.length === 1
+        && Boolean(selectedKnowledgeBases[0].is_default)
+        && selectedKnowledgeBases[0].aggregate.document_count <= 0;
+      if (!selectedOnlyEmptyDefault) return selectedKnowledgeBaseIds;
+    }
+    const defaultKnowledgeBase = knowledgeBases.find((item) => item.is_default);
+    if (defaultKnowledgeBase && defaultKnowledgeBase.aggregate.document_count > 0) {
+      return [defaultKnowledgeBase.id];
+    }
+    return knowledgeBases
+      .filter((item) => item.status === "active" && item.aggregate.document_count > 0)
+      .map((item) => item.id);
+  }, [knowledgeBases, selectedKnowledgeBaseIds]);
   const knowledgeScopeLabel = useMemo(() => {
-    if (!selectedKnowledgeBaseIds.length) return "默认知识库";
-    const names = selectedKnowledgeBaseIds
+    if (!selectedKnowledgeBaseIds.length && !effectiveKnowledgeBaseIds.length) return "默认知识库";
+    const names = effectiveKnowledgeBaseIds
       .map((id) => knowledgeBases.find((item) => item.id === id)?.name)
       .filter(Boolean) as string[];
+    if (!selectedKnowledgeBaseIds.length && names.length === 1) return `${names[0]}（自动）`;
+    if (!selectedKnowledgeBaseIds.length && names.length > 1) return `有内容的知识库（${names.length} 个）`;
     if (names.length <= 2) return names.join("、") || "默认知识库";
     return `${names[0]} 等 ${names.length} 个知识库`;
-  }, [knowledgeBases, selectedKnowledgeBaseIds]);
-  const activeSuggestionKnowledgeBaseIds = useMemo(() => {
-    if (selectedKnowledgeBaseIds.length) return selectedKnowledgeBaseIds;
-    return knowledgeBases.some((item) => item.id === "default-knowledge-base") ? ["default-knowledge-base"] : [];
-  }, [knowledgeBases, selectedKnowledgeBaseIds]);
+  }, [effectiveKnowledgeBaseIds, knowledgeBases, selectedKnowledgeBaseIds]);
 
   function toggleKnowledgeBase(id: string) {
     setSelectedKnowledgeBaseIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
   }
 
+  function rememberCurrentAssistantMessageId(id: string | null) {
+    currentAssistantMessageIdRef.current = id;
+    setCurrentAssistantMessageId(id);
+  }
+
+  function rememberCurrentRequestId(id: string | null) {
+    currentRequestIdRef.current = id;
+    setCurrentRequestId(id);
+  }
+
+  function rememberConversationId(id: string | null) {
+    conversationIdRef.current = id;
+    setConversationId(id);
+  }
+
+  function notifyConversationUpdated(sessionId: string) {
+    window.dispatchEvent(new CustomEvent("bee:conversation-updated", { detail: { sessionId } }));
+  }
+
+  async function loadInitialHistory(sessionId: string) {
+    setHistoryLoading(true);
+    try {
+      const data = await loadSessionMessages(sessionId, { limit: 20 });
+      const loaded = data.items.map(historyMessageToChatMessage);
+      setMessages(loaded);
+      setHasMoreHistory(Boolean(data.hasMoreHistory));
+      const last = loaded[loaded.length - 1];
+      if (last?.role === "assistant" && last.is_completed === false && last.id) {
+        rememberCurrentAssistantMessageId(last.id);
+        rememberCurrentRequestId(last.request_id || null);
+        setLoading(true);
+        void continueAssistantStream(data.session_id, last.id, last.request_id || undefined);
+      }
+    } catch {
+      setHasMoreHistory(false);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
+  async function loadOlderHistory() {
+    if (!conversationId || historyLoading || !hasMoreHistory || !messages.length) return;
+    const oldest = messages.find((item) => item.created_at)?.created_at;
+    if (!oldest) return;
+    setHistoryLoading(true);
+    try {
+      const data = await loadSessionMessages(conversationId, { beforeTime: oldest, limit: 20 });
+      const loaded = data.items.map(historyMessageToChatMessage);
+      setMessages((current) => mergeUniqueMessages(current, loaded, true));
+      setHasMoreHistory(Boolean(data.hasMoreHistory));
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
+  async function continueAssistantStream(sessionId: string, assistantMessageId: string, requestId?: string) {
+    const res = await fetch(`${API_BASE}/api/v1/sessions/${encodeURIComponent(sessionId)}/continue-stream?message_id=${encodeURIComponent(assistantMessageId)}&offset=0`);
+    if (!res.ok || !res.body) {
+      setLoading(false);
+      return;
+    }
+    await consumeSseResponse(res, assistantMessageId, requestId);
+    markAssistantCompleted(assistantMessageId);
+    notifyConversationUpdated(sessionId);
+    setLoading(false);
+  }
+
   useEffect(() => {
     const saved = JSON.parse(window.localStorage.getItem("bee:selectedKnowledgeBaseIds") || "[]") as string[];
     const prefill = window.localStorage.getItem("bee:prefillQuestion") || "";
+    const savedConversationId = window.localStorage.getItem("bee:conversationId") || "";
     setSelectedKnowledgeBaseIds(saved);
+    if (savedConversationId) {
+      rememberConversationId(savedConversationId);
+      void loadInitialHistory(savedConversationId);
+    }
     if (prefill) {
       setInput(prefill);
       window.localStorage.removeItem("bee:prefillQuestion");
@@ -83,15 +211,23 @@ export default function ChatPage() {
   }, [selectedKnowledgeBaseIds]);
 
   useEffect(() => {
+    if (conversationId) {
+      window.localStorage.setItem("bee:conversationId", conversationId);
+    } else {
+      window.localStorage.removeItem("bee:conversationId");
+    }
+  }, [conversationId]);
+
+  useEffect(() => {
     let canceled = false;
     async function loadSuggestedQuestions() {
-      if (!activeSuggestionKnowledgeBaseIds.length) {
+      if (!effectiveKnowledgeBaseIds.length) {
         setSuggestedQuestions([]);
         return;
       }
       try {
         const batches = await Promise.all(
-          activeSuggestionKnowledgeBaseIds.map((id) => listKnowledgeBaseDocuments(id)),
+          effectiveKnowledgeBaseIds.map((id) => listKnowledgeBaseDocuments(id)),
         );
         if (canceled) return;
         const unique: string[] = [];
@@ -114,7 +250,7 @@ export default function ChatPage() {
     return () => {
       canceled = true;
     };
-  }, [activeSuggestionKnowledgeBaseIds]);
+  }, [effectiveKnowledgeBaseIds]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -122,9 +258,13 @@ export default function ChatPage() {
 
   useEffect(() => {
     function handleNewChat() {
+      abortControllerRef.current?.abort();
       setMessages([]);
       setFeedbackMap({});
-      setConversationId(null);
+      rememberConversationId(null);
+      rememberCurrentAssistantMessageId(null);
+      rememberCurrentRequestId(null);
+      setHasMoreHistory(false);
       setMemoryNotice("");
       setInput("");
       setPendingAttachments([]);
@@ -135,18 +275,151 @@ export default function ChatPage() {
     return () => window.removeEventListener("bee:new-chat", handleNewChat);
   }, []);
 
+  useEffect(() => {
+    function handleOpenConversation(event: Event) {
+      const sessionId = (event as CustomEvent<{ sessionId?: string }>).detail?.sessionId || window.localStorage.getItem("bee:conversationId") || "";
+      if (!sessionId) return;
+      abortControllerRef.current?.abort();
+      setFeedbackMap({});
+      rememberConversationId(sessionId);
+      rememberCurrentAssistantMessageId(null);
+      rememberCurrentRequestId(null);
+      setMemoryNotice("");
+      setAttachmentError("");
+      void loadInitialHistory(sessionId);
+    }
+    window.addEventListener("bee:open-conversation", handleOpenConversation);
+    return () => window.removeEventListener("bee:open-conversation", handleOpenConversation);
+  }, []);
+
+  async function consumeSseResponse(res: Response, fallbackAssistantId?: string, fallbackRequestId?: string) {
+    if (!res.body) return;
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const events = buffer.split("\n\n");
+      buffer = events.pop() || "";
+      for (const item of events) {
+        const line = item.split("\n").find((entry) => entry.startsWith("data:"));
+        if (!line) continue;
+        const payload = line.replace(/^data:\s*/, "");
+        if (payload === "[DONE]") continue;
+        handleStreamPayload(JSON.parse(payload) as StreamPayload, fallbackAssistantId, fallbackRequestId);
+      }
+    }
+  }
+
+  function handleStreamPayload(data: StreamPayload, fallbackAssistantId?: string, fallbackRequestId?: string) {
+    const sessionId = data.session_id || data.conversation_id;
+    const assistantId = data.assistant_message_id || data.stream_message_id || fallbackAssistantId;
+    const requestId = data.request_id || fallbackRequestId;
+    if (sessionId) {
+      rememberConversationId(sessionId);
+      notifyConversationUpdated(sessionId);
+    }
+    if (assistantId) rememberCurrentAssistantMessageId(assistantId);
+    if (requestId) rememberCurrentRequestId(requestId);
+    if (assistantId || requestId || data.user_message_id) {
+      setMessages((prev) => updateLastAssistantIdentity(prev, assistantId, requestId));
+    }
+    if (data.error) {
+      updateAssistantMessage(assistantId, (message) => ({ ...message, content: `后端错误: ${data.error}`, agentCompleted: true, is_completed: true }));
+    } else if (data.stop) {
+      updateAssistantMessage(assistantId, (message) => ({ ...message, stopped: true, agentCompleted: true, is_completed: true }));
+    } else if (data.sources) {
+      updateAssistantMessage(assistantId, (message) => ({ ...message, sources: data.sources }));
+    } else if (data.reasoning) {
+      updateAssistantMessage(assistantId, (message) => ({ ...message, reasoning: data.reasoning }));
+    } else if (data.agent_trace) {
+      appendAgentEvent(normalizeAgentPayload("agent_trace", data.agent_trace, nextAgentEventSequence()), assistantId);
+    } else if (data.agent_query) {
+      appendAgentEvent(normalizeAgentPayload("agent_query", data.agent_query, nextAgentEventSequence()), assistantId);
+    } else if (data.agent_thought) {
+      appendAgentEvent(normalizeAgentPayload("agent_thought", data.agent_thought, nextAgentEventSequence()), assistantId);
+    } else if (data.agent_tool_call) {
+      appendAgentEvent(normalizeAgentPayload("agent_tool_call", data.agent_tool_call, nextAgentEventSequence()), assistantId);
+    } else if (data.agent_tool_result) {
+      appendAgentEvent(normalizeAgentPayload("agent_tool_result", data.agent_tool_result, nextAgentEventSequence()), assistantId);
+    } else if (data.agent_reflection) {
+      appendAgentEvent(normalizeAgentPayload("agent_reflection", data.agent_reflection, nextAgentEventSequence()), assistantId);
+    } else if (data.agent_remedial_search) {
+      appendAgentEvent(normalizeAgentPayload("agent_remedial_search", data.agent_remedial_search, nextAgentEventSequence()), assistantId);
+    } else if (data.agent_references) {
+      appendAgentEvent(normalizeAgentPayload("agent_references", data.agent_references, nextAgentEventSequence()), assistantId);
+    } else if (data.agent_final_answer) {
+      appendAgentEvent(normalizeAgentPayload("agent_final_answer", data.agent_final_answer, nextAgentEventSequence()), assistantId);
+    } else if (data.agent_complete) {
+      appendAgentEvent(normalizeAgentPayload("agent_complete", data.agent_complete, nextAgentEventSequence()), assistantId);
+    } else if (data.agent_error) {
+      appendAgentEvent(normalizeAgentPayload("agent_error", data.agent_error, nextAgentEventSequence()), assistantId);
+    } else if (data.tool_call) {
+      appendAgentEvent(normalizeAgentPayload("tool_call", data.tool_call, nextAgentEventSequence()), assistantId);
+    } else if (data.tool_observation) {
+      appendAgentEvent(normalizeAgentPayload("tool_observation", data.tool_observation, nextAgentEventSequence()), assistantId);
+    } else if (data.evidence_summary) {
+      updateAssistantMessage(assistantId, (message) => ({ ...message, evidenceSummary: data.evidence_summary }));
+      appendAgentEvent(normalizeAgentPayload("evidence_summary", data.evidence_summary, nextAgentEventSequence()), assistantId);
+    } else if (data.citation_verification) {
+      updateAssistantMessage(assistantId, (message) => ({ ...message, citationVerification: data.citation_verification }));
+      appendAgentEvent(normalizeAgentPayload("citation_verification", data.citation_verification, nextAgentEventSequence()), assistantId);
+    } else if (data.token) {
+      updateAssistantMessage(assistantId, (message) => ({ ...message, content: `${message.content}${data.token}` }));
+    } else if (data.memory_updated?.length) {
+      const first = data.memory_updated[0];
+      setMemoryNotice(`已记住：${first.content}`);
+      void loadMemories();
+    }
+  }
+
+  function updateLastAssistantIdentity(messagesToUpdate: ChatMessage[], assistantId?: string, requestId?: string): ChatMessage[] {
+    const next = [...messagesToUpdate];
+    for (let index = next.length - 1; index >= 0; index -= 1) {
+      if (next[index]?.role === "assistant") {
+        next[index] = { ...next[index], id: assistantId || next[index].id, assistant_message_id: assistantId || next[index].assistant_message_id, request_id: requestId || next[index].request_id };
+        break;
+      }
+    }
+    return next;
+  }
+
+  function updateAssistantMessage(assistantId: string | undefined, updater: (message: ChatMessage) => ChatMessage) {
+    setMessages((prev) => {
+      const next = [...prev];
+      let index = assistantId ? next.findIndex((item) => item.role === "assistant" && (item.id === assistantId || item.assistant_message_id === assistantId)) : -1;
+      if (index < 0) {
+        for (let cursor = next.length - 1; cursor >= 0; cursor -= 1) {
+          if (next[cursor]?.role === "assistant") {
+            index = cursor;
+            break;
+          }
+        }
+      }
+      if (index >= 0) next[index] = updater(next[index]);
+      return next;
+    });
+  }
+
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     const question = input.trim();
     if (!question) return;
     const submittedMode = chatMode;
+    const submittedKnowledgeBaseIds = effectiveKnowledgeBaseIds;
     const submittedAttachments = pendingAttachments.map((item) => ({ id: item.id, filename: item.filename }));
     const submittedAttachmentIds = submittedAttachments.map((item) => item.id);
 
     setInput("");
     setLoading(true);
     setAttachmentError("");
+    rememberCurrentAssistantMessageId(null);
+    rememberCurrentRequestId(null);
     agentEventSequenceRef.current = 0;
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
     setMessages((prev) => [
       ...prev,
       { role: "user", content: question, chatMode: submittedMode, attachments: submittedAttachments },
@@ -163,127 +436,50 @@ export default function ChatPage() {
           memory_enabled: true,
           temporary: false,
           chat_mode: submittedMode,
-          knowledge_base_ids: selectedKnowledgeBaseIds.length ? selectedKnowledgeBaseIds : undefined,
+          knowledge_base_ids: submittedKnowledgeBaseIds.length ? submittedKnowledgeBaseIds : undefined,
           attachment_ids: submittedAttachmentIds.length ? submittedAttachmentIds : undefined,
         }),
+        signal: controller.signal,
       });
       if (!res.ok || !res.body) throw new Error(`请求失败: ${res.status}`);
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const events = buffer.split("\n\n");
-        buffer = events.pop() || "";
-        for (const item of events) {
-          const line = item.split("\n").find((entry) => entry.startsWith("data:"));
-          if (!line) continue;
-          const payload = line.replace(/^data:\s*/, "");
-          if (payload === "[DONE]") continue;
-          const data = JSON.parse(payload) as {
-            token?: string;
-            error?: string;
-            sources?: SourceItem[];
-            reasoning?: ReasoningSummary;
-            agent_trace?: Record<string, unknown>;
-            tool_call?: Record<string, unknown>;
-            tool_observation?: Record<string, unknown>;
-            agent_query?: Record<string, unknown>;
-            agent_thought?: Record<string, unknown>;
-            agent_tool_call?: Record<string, unknown>;
-            agent_tool_result?: Record<string, unknown>;
-            agent_reflection?: Record<string, unknown>;
-            agent_remedial_search?: Record<string, unknown>;
-            agent_references?: Record<string, unknown>;
-            agent_final_answer?: Record<string, unknown>;
-            agent_complete?: Record<string, unknown>;
-            agent_error?: Record<string, unknown>;
-            evidence_summary?: Record<string, unknown>;
-            citation_verification?: Record<string, unknown>;
-            conversation_id?: string;
-            memory_updated?: MemoryUpdate[];
-          };
-          if (data.error) {
-            updateLastAssistant(`后端错误: ${data.error}`);
-          } else if (data.conversation_id) {
-            setConversationId(data.conversation_id);
-          } else if (data.sources) {
-            setMessages((prev) => {
-              const next = [...prev];
-              next[next.length - 1] = { ...next[next.length - 1], sources: data.sources };
-              return next;
-            });
-          } else if (data.reasoning) {
-            setMessages((prev) => {
-              const next = [...prev];
-              next[next.length - 1] = { ...next[next.length - 1], reasoning: data.reasoning };
-              return next;
-            });
-          } else if (data.agent_trace) {
-            appendAgentEvent(normalizeAgentPayload("agent_trace", data.agent_trace, nextAgentEventSequence()));
-          } else if (data.agent_query) {
-            appendAgentEvent(normalizeAgentPayload("agent_query", data.agent_query, nextAgentEventSequence()));
-          } else if (data.agent_thought) {
-            appendAgentEvent(normalizeAgentPayload("agent_thought", data.agent_thought, nextAgentEventSequence()));
-          } else if (data.agent_tool_call) {
-            appendAgentEvent(normalizeAgentPayload("agent_tool_call", data.agent_tool_call, nextAgentEventSequence()));
-          } else if (data.agent_tool_result) {
-            appendAgentEvent(normalizeAgentPayload("agent_tool_result", data.agent_tool_result, nextAgentEventSequence()));
-          } else if (data.agent_reflection) {
-            appendAgentEvent(normalizeAgentPayload("agent_reflection", data.agent_reflection, nextAgentEventSequence()));
-          } else if (data.agent_remedial_search) {
-            appendAgentEvent(normalizeAgentPayload("agent_remedial_search", data.agent_remedial_search, nextAgentEventSequence()));
-          } else if (data.agent_references) {
-            appendAgentEvent(normalizeAgentPayload("agent_references", data.agent_references, nextAgentEventSequence()));
-          } else if (data.agent_final_answer) {
-            appendAgentEvent(normalizeAgentPayload("agent_final_answer", data.agent_final_answer, nextAgentEventSequence()));
-          } else if (data.agent_complete) {
-            appendAgentEvent(normalizeAgentPayload("agent_complete", data.agent_complete, nextAgentEventSequence()));
-          } else if (data.agent_error) {
-            appendAgentEvent(normalizeAgentPayload("agent_error", data.agent_error, nextAgentEventSequence()));
-          } else if (data.tool_call) {
-            appendAgentEvent(normalizeAgentPayload("tool_call", data.tool_call, nextAgentEventSequence()));
-          } else if (data.tool_observation) {
-            appendAgentEvent(normalizeAgentPayload("tool_observation", data.tool_observation, nextAgentEventSequence()));
-          } else if (data.evidence_summary) {
-            setMessages((prev) => {
-              const next = [...prev];
-              next[next.length - 1] = { ...next[next.length - 1], evidenceSummary: data.evidence_summary };
-              return next;
-            });
-            appendAgentEvent(normalizeAgentPayload("evidence_summary", data.evidence_summary, nextAgentEventSequence()));
-          } else if (data.citation_verification) {
-            setMessages((prev) => {
-              const next = [...prev];
-              next[next.length - 1] = { ...next[next.length - 1], citationVerification: data.citation_verification };
-              return next;
-            });
-            appendAgentEvent(normalizeAgentPayload("citation_verification", data.citation_verification, nextAgentEventSequence()));
-          } else if (data.token) {
-            setMessages((prev) => {
-              const next = [...prev];
-              const last = next[next.length - 1];
-              next[next.length - 1] = { ...last, content: `${last.content}${data.token}` };
-              return next;
-            });
-          } else if (data.memory_updated?.length) {
-            const first = data.memory_updated[0];
-            setMemoryNotice(`已记住：${first.content}`);
-            void loadMemories();
-          }
-        }
-      }
-      markLastAssistantCompleted();
+      await consumeSseResponse(res);
+      markAssistantCompleted(currentAssistantMessageIdRef.current || currentAssistantMessageId || undefined);
+      const finishedSessionId = conversationIdRef.current;
+      if (finishedSessionId) notifyConversationUpdated(finishedSessionId);
     } catch (err) {
-      updateLastAssistant(`请求异常: ${err instanceof Error ? err.message : "unknown error"}`);
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      updateAssistantMessage(currentAssistantMessageIdRef.current || currentAssistantMessageId || undefined, (message) => ({
+        ...message,
+        content: `请求异常: ${err instanceof Error ? err.message : "unknown error"}`,
+        agentCompleted: true,
+        is_completed: true,
+      }));
     } finally {
+      if (abortControllerRef.current === controller) abortControllerRef.current = null;
       if (submittedAttachmentIds.length) {
         setPendingAttachments((prev) => prev.filter((item) => !submittedAttachmentIds.includes(item.id)));
       }
       setLoading(false);
+    }
+  }
+
+  async function handleStopGeneration() {
+    const sessionId = conversationIdRef.current || conversationId;
+    const assistantId = currentAssistantMessageIdRef.current || currentAssistantMessageId;
+    abortControllerRef.current?.abort();
+    setLoading(false);
+    updateAssistantMessage(assistantId || undefined, (message) => ({
+      ...message,
+      stopped: true,
+      is_completed: true,
+      agentCompleted: true,
+    }));
+    if (!sessionId || !assistantId) return;
+    try {
+      await stopSessionGeneration(sessionId, assistantId);
+      notifyConversationUpdated(sessionId);
+    } catch (err) {
+      setAttachmentError(err instanceof Error ? err.message : "停止生成失败");
     }
   }
 
@@ -292,19 +488,16 @@ export default function ChatPage() {
     return agentEventSequenceRef.current;
   }
 
-  function appendAgentEvent(event: AgentStreamEvent) {
-    setMessages((prev) => {
-      const next = [...prev];
-      const last = next[next.length - 1];
-      const agentEvents = [...(last.agentEvents || []), event];
+  function appendAgentEvent(event: AgentStreamEvent, assistantId?: string) {
+    updateAssistantMessage(assistantId, (message) => {
+      const agentEvents = [...(message.agentEvents || []), event];
       const agentTimeline = buildAgentTimeline(agentEvents);
-      next[next.length - 1] = {
-        ...last,
+      return {
+        ...message,
         agentEvents,
         agentTimeline,
-        agentSummary: deriveAgentRunSummary(agentEvents, agentTimeline, Boolean(last.agentCompleted)),
+        agentSummary: deriveAgentRunSummary(agentEvents, agentTimeline, Boolean(message.agentCompleted)),
       };
-      return next;
     });
   }
 
@@ -322,6 +515,24 @@ export default function ChatPage() {
         agentSummary: agentEvents.length ? deriveAgentRunSummary(agentEvents, agentTimeline, true) : last.agentSummary,
       };
       return next;
+    });
+  }
+
+  function markAssistantCompleted(assistantId?: string) {
+    if (!assistantId) {
+      markLastAssistantCompleted();
+      return;
+    }
+    updateAssistantMessage(assistantId, (message) => {
+      const agentEvents = message.agentEvents || [];
+      const agentTimeline = message.agentTimeline || buildAgentTimeline(agentEvents);
+      return {
+        ...message,
+        is_completed: true,
+        agentCompleted: true,
+        agentTimeline,
+        agentSummary: agentEvents.length ? deriveAgentRunSummary(agentEvents, agentTimeline, true) : message.agentSummary,
+      };
     });
   }
 
@@ -479,14 +690,24 @@ export default function ChatPage() {
 
   return (
     <section className={`chat-page ${messages.length === 0 ? "empty-state" : ""}`}>
-      <div className="chat-thread">
+      <div
+        className="chat-thread"
+        onScroll={(event) => {
+          if (event.currentTarget.scrollTop <= 24) void loadOlderHistory();
+        }}
+      >
+        {hasMoreHistory ? (
+          <button type="button" className="history-load-more" disabled={historyLoading} onClick={loadOlderHistory}>
+            {historyLoading ? "加载中..." : "加载更早消息"}
+          </button>
+        ) : null}
         {memoryNotice ? <div className="memory-notice">{memoryNotice}</div> : null}
         {messages.length === 0 ? (
           <div className="empty-chat">
-            <h1>Hi，我是 Bee，让你的知识触手可及</h1>
+            <div className="chat-welcome-mark" aria-hidden="true">B</div>
+            <h1>今天，想了解什么？</h1>
             {suggestedQuestions.length ? (
               <>
-                <p>你可以这样问我</p>
                 <div className="suggested-question-list">
                   {suggestedQuestions.map((question) => (
                     <button key={question} type="button" onClick={() => applySuggestedQuestion(question)}>
@@ -663,6 +884,18 @@ export default function ChatPage() {
                 >
                   Wiki 问答
                 </button>
+                <button
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={chatMode === "rag_wiki"}
+                  className={chatMode === "rag_wiki" ? "active" : ""}
+                  onClick={() => {
+                    setChatMode("rag_wiki");
+                    setModeMenuOpen(false);
+                  }}
+                >
+                  RAG + Wiki
+                </button>
               </div>
             ) : null}
           </div>
@@ -718,15 +951,21 @@ export default function ChatPage() {
               </div>
             ) : null}
           </div>
-          <button type="submit" className="composer-send" disabled={!canSend} aria-label="发送">
-            <SendIcon />
-          </button>
+          {loading ? (
+            <button type="button" className="composer-send stop" onClick={handleStopGeneration} aria-label="停止生成" title="停止生成">
+              <StopIcon />
+            </button>
+          ) : (
+            <button type="submit" className="composer-send" disabled={!canSend} aria-label="发送" title="发送">
+              <SendIcon />
+            </button>
+          )}
         </div>
       </form>
 
       {memoryPanelOpen ? (
         <div className="memory-panel-mask" role="presentation" onClick={() => setMemoryPanelOpen(false)}>
-          <section className="memory-panel" role="dialog" aria-modal="true" aria-label="记忆" onClick={(event) => event.stopPropagation()}>
+          <ModalSurface className="memory-panel" aria-label="记忆" onClose={() => setMemoryPanelOpen(false)} onClick={(event) => event.stopPropagation()}>
             <header>
               <h2>记忆</h2>
               <button type="button" onClick={() => setMemoryPanelOpen(false)}>
@@ -734,8 +973,8 @@ export default function ChatPage() {
               </button>
             </header>
             {memoryLoading ? <p className="memory-muted">加载中...</p> : null}
-            {memoryError ? <p className="feedback-err">加载失败: {memoryError}</p> : null}
-            {!memoryLoading && !memories.length ? <p className="memory-muted">暂无记忆</p> : null}
+            {memoryError ? <p className="feedback-err" role="alert">加载失败: {memoryError}</p> : null}
+            {!memoryLoading && !memoryError && !memories.length ? <p className="memory-muted">暂无记忆</p> : null}
             <ul className="memory-list">
               {memories.map((memory) => (
                 <li key={memory.id}>
@@ -749,7 +988,7 @@ export default function ChatPage() {
                 </li>
               ))}
             </ul>
-          </section>
+          </ModalSurface>
         </div>
       ) : null}
 
@@ -788,6 +1027,7 @@ function summaryIcon(status: ReturnType<typeof deriveSearchSummary>["status"]): 
 function chatModeLabel(mode: ChatMode): string {
   if (mode === "reasoning") return "智能推理";
   if (mode === "wiki") return "Wiki 问答";
+  if (mode === "rag_wiki") return "RAG + Wiki";
   return "快速问答";
 }
 

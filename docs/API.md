@@ -54,6 +54,20 @@ The backend validates every selected KB is active and belongs to one workspace. 
 
 `/rag/query` returns `answer`, `citations`, `used_chunks`, `used_entities`, `graph_paths`, `confidence`, and `debug_info`. Agentic mode may also return `agent_trace`, `tool_calls`, and `evidence_summary`. `/chat/stream` preserves the existing SSE contract while optionally emitting agent trace/tool events before answer tokens.
 
+Chat sessions and messages are durable relational history. Redis/StreamManager is auxiliary only for current SSE replay and stop propagation.
+
+- `GET /api/v1/messages/{session_id}/load?before_time=&limit=20`: loads the latest or older page of messages from PostgreSQL. Responses contain `session_id`, `conversation_id`, `items`, and `hasMoreHistory`. Items include `id`, `request_id`, `role`, `content`, `metadata_json`, `is_completed`, `created_at`, and `updated_at`.
+- `GET /api/v1/sessions/recent?limit=20`: loads recent conversation summaries for the sidebar, scoped by the current Principal. Titles use the session title when present, otherwise the latest user message preview. Each item includes `is_running` when an assistant message is still incomplete.
+- `PATCH /api/v1/sessions/{session_id}` with `{ "title": "..." }`: renames a scoped chat session for the recent-history sidebar.
+- `DELETE /api/v1/sessions/{session_id}`: soft-deletes a scoped chat session and its messages so it no longer appears in history.
+- `GET /api/v1/sessions/{session_id}/continue-stream?message_id={assistant_message_id}&offset=0`: replays retained SSE events for an incomplete assistant message and polls new events until complete, stop, or terminal error. Returns `404` when the scoped message or replay buffer is missing.
+- `GET /api/v1/sessions/continue-stream?session_id=...&message_id=...&offset=0`: compatibility convenience route for clients that only have query parameters.
+- `POST /api/v1/sessions/{session_id}/stop` with `{ "message_id": "..." }`: idempotently requests cancellation for an incomplete assistant message after ownership checks. Completed messages return success with status `completed`; unauthorized or cross-session messages return not found/forbidden without exposing other users' history.
+
+`/chat/stream` still accepts existing clients, and also accepts `session_id` as an alias for `conversation_id`. Early stream metadata now includes `session_id`, `conversation_id`, `request_id`, `user_message_id`, `assistant_message_id`, and legacy `stream_message_id`. Public SSE payloads also include `_stream.offset` for replay-aware clients.
+
+`chat_mode` accepts `quick`, `reasoning`, `wiki`, and `rag_wiki`. `rag_wiki` uses the Hybrid RAG + Wiki agent policy to combine Wiki navigation with dense/keyword chunk grounding.
+
 ## Feedback And Audit
 
 Feedback must target one active KB. Multi-KB answers require the client to provide a single correction target. Query logs and answer feedback are PostgreSQL audit records; generated feedback markdown may also be written into `backend/data/feedback/` and ingested as normal knowledge content.

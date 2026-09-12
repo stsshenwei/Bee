@@ -1,0 +1,1214 @@
+[
+  {
+    "name": "catalog-desktop",
+    "width": 1440,
+    "overflow": false,
+    "metrics": null,
+    "toolbar": null,
+    "cards": null,
+    "navigation": null,
+    "reader": null,
+    "thread": null,
+    "composer": null
+  },
+  {
+    "name": "create-desktop",
+    "width": 1440,
+    "overflow": false,
+    "metrics": null,
+    "toolbar": null,
+    "cards": null,
+    "navigation": null,
+    "reader": null,
+    "thread": null,
+    "composer": null
+  },
+  {
+    "name": "documents-desktop",
+    "width": 1440,
+    "overflow": false,
+    "metrics": {
+      "x": 260,
+      "y": 130,
+      "width": 1144,
+      "height": 44,
+      "bottom": 174,
+      "right": 1404
+    },
+    "toolbar": {
+      "x": 260,
+      "y": 256,
+      "width": 1144,
+      "height": 56,
+      "bottom": 312,
+      "right": 1404
+    },
+    "cards": {
+      "x": 260,
+      "y": 332,
+      "width": 1144,
+      "height": 270.5,
+      "bottom": 602.5,
+      "right": 1404
+    },
+    "navigation": null,
+    "reader": null,
+    "thread": null,
+    "composer": null
+  },
+  {
+    "name": "filters-desktop",
+    "width": 1440,
+    "overflow": false,
+    "metrics": {
+      "x": 260,
+      "y": 130,
+      "width": 1144,
+      "height": 44,
+      "bottom": 174,
+      "right": 1404
+    },
+    "toolbar": {
+      "x": 260,
+      "y": 256,
+      "width": 1144,
+      "height": 143.5,
+      "bottom": 399.5,
+      "right": 1404
+    },
+    "cards": {
+      "x": 260,
+      "y": 419.5,
+      "width": 1144,
+      "height": 270.5,
+      "bottom": 690,
+      "right": 1404
+    },
+    "navigation": null,
+    "reader": null,
+    "thread": null,
+    "composer": null
+  },
+  {
+    "name": "list-desktop",
+    "width": 1440,
+    "overflow": false,
+    "metrics": {
+      "x": 260,
+      "y": 130,
+      "width": 1144,
+      "height": 44,
+      "bottom": 174,
+      "right": 1404
+    },
+    "toolbar": {
+      "x": 260,
+      "y": 256,
+      "width": 1144,
+      "height": 56,
+      "bottom": 312,
+      "right": 1404
+    },
+    "cards": null,
+    "navigation": null,
+    "reader": null,
+    "thread": null,
+    "composer": null
+  },
+  {
+    "name": "preview-desktop",
+    "width": 1440,
+    "overflow": false,
+    "metrics": {
+      "x": 260,
+      "y": 130,
+      "width": 1144,
+      "height": 44,
+      "bottom": 174,
+      "right": 1404
+    },
+    "toolbar": {
+      "x": 260,
+      "y": 256,
+      "width": 1144,
+      "height": 56,
+      "bottom": 312,
+      "right": 1404
+    },
+    "cards": {
+      "x": 260,
+      "y": 332,
+      "width": 1144,
+      "height": 270.5,
+      "bottom": 602.5,
+      "right": 1404
+    },
+    "navigation": null,
+    "reader": null,
+    "thread": null,
+    "composer": null
+  },
+  {
+    "name": "trace-desktop",
+    "width": 1440,
+    "overflow": false,
+    "metrics": {
+      "x": 260,
+      "y": 130,
+      "width": 1144,
+      "height": 44,
+      "bottom": 174,
+      "right": 1404
+    },
+    "toolbar": {
+      "x": 260,
+      "y": 256,
+      "width": 1144,
+      "height": 56,
+      "bottom": 312,
+      "right": 1404
+    },
+    "cards": {
+      "x": 260,
+      "y": 332,
+      "width": 1144,
+      "height": 270.5,
+      "bottom": 602.5,
+      "right": 1404
+    },
+    "navigation": null,
+    "reader": null,
+    "thread": null,
+    "composer": null
+  },
+  {
+    "name": "settings-desktop",
+    "width": 1440,
+    "overflow": false,
+    "metrics": {
+      "x": 260,
+      "y": 130,
+      "width": 1144,
+      "height": 44,
+      "bottom": 174,
+      "right": 1404
+    },
+    "toolbar": {
+      "x": 260,
+      "y": 256,
+      "width": 1144,
+      "height": 56,
+      "bottom": 312,
+      "right": 1404
+    },
+    "cards": {
+      "x": 260,
+      "y": 332,
+      "width": 1144,
+      "height": 270.5,
+      "bottom": 602.5,
+      "right": 1404
+    },
+    "navigation": null,
+    "reader": null,
+    "thread": null,
+    "composer": null
+  },
+  {
+    "name": "upload-menu-desktop",
+    "width": 1440,
+    "overflow": false,
+    "metrics": {
+      "x": 260,
+      "y": 130,
+      "width": 1144,
+      "height": 44,
+      "bottom": 174,
+      "right": 1404
+    },
+    "toolbar": {
+      "x": 260,
+      "y": 256,
+      "width": 1144,
+      "height": 56,
+      "bottom": 312,
+      "right": 1404
+    },
+    "cards": {
+      "x": 260,
+      "y": 332,
+      "width": 1144,
+      "height": 270.5,
+      "bottom": 602.5,
+      "right": 1404
+    },
+    "navigation": null,
+    "reader": null,
+    "thread": null,
+    "composer": null
+  },
+  {
+    "name": "document-desktop",
+    "width": 1440,
+    "overflow": false,
+    "metrics": null,
+    "toolbar": null,
+    "cards": null,
+    "navigation": null,
+    "reader": null,
+    "thread": null,
+    "composer": null
+  },
+  {
+    "name": "chunks-desktop",
+    "width": 1440,
+    "overflow": false,
+    "metrics": null,
+    "toolbar": null,
+    "cards": null,
+    "navigation": null,
+    "reader": null,
+    "thread": null,
+    "composer": null
+  },
+  {
+    "name": "wiki-desktop",
+    "width": 1440,
+    "overflow": false,
+    "metrics": null,
+    "toolbar": null,
+    "cards": null,
+    "navigation": {
+      "x": 260,
+      "y": 197,
+      "width": 248,
+      "height": 629,
+      "bottom": 826,
+      "right": 508
+    },
+    "reader": {
+      "x": 508,
+      "y": 197,
+      "width": 896,
+      "height": 629,
+      "bottom": 826,
+      "right": 1404
+    },
+    "thread": null,
+    "composer": null
+  },
+  {
+    "name": "graph-desktop",
+    "width": 1440,
+    "overflow": false,
+    "metrics": null,
+    "toolbar": null,
+    "cards": null,
+    "navigation": null,
+    "reader": {
+      "x": 260,
+      "y": 197,
+      "width": 1144,
+      "height": 713.1875,
+      "bottom": 910.1875,
+      "right": 1404
+    },
+    "thread": null,
+    "composer": null
+  },
+  {
+    "name": "graph-details-desktop",
+    "width": 1440,
+    "overflow": false,
+    "metrics": null,
+    "toolbar": null,
+    "cards": null,
+    "navigation": null,
+    "reader": {
+      "x": 260,
+      "y": 197,
+      "width": 1144,
+      "height": 713.1875,
+      "bottom": 910.1875,
+      "right": 1404
+    },
+    "thread": null,
+    "composer": null
+  },
+  {
+    "name": "chat-desktop",
+    "width": 1440,
+    "overflow": false,
+    "metrics": null,
+    "toolbar": null,
+    "cards": null,
+    "navigation": null,
+    "reader": null,
+    "thread": {
+      "x": 224,
+      "y": 74,
+      "width": 1216,
+      "height": 604,
+      "bottom": 678,
+      "right": 1440
+    },
+    "composer": {
+      "x": 432,
+      "y": 704,
+      "width": 800,
+      "height": 132,
+      "bottom": 836,
+      "right": 1232
+    }
+  },
+  {
+    "name": "chat-mode-desktop",
+    "width": 1440,
+    "overflow": false,
+    "metrics": null,
+    "toolbar": null,
+    "cards": null,
+    "navigation": null,
+    "reader": null,
+    "thread": {
+      "x": 224,
+      "y": 74,
+      "width": 1216,
+      "height": 604,
+      "bottom": 678,
+      "right": 1440
+    },
+    "composer": {
+      "x": 432,
+      "y": 704,
+      "width": 800,
+      "height": 132,
+      "bottom": 836,
+      "right": 1232
+    }
+  },
+  {
+    "name": "chat-scope-desktop",
+    "width": 1440,
+    "overflow": false,
+    "metrics": null,
+    "toolbar": null,
+    "cards": null,
+    "navigation": null,
+    "reader": null,
+    "thread": {
+      "x": 224,
+      "y": 74,
+      "width": 1216,
+      "height": 604,
+      "bottom": 678,
+      "right": 1440
+    },
+    "composer": {
+      "x": 432,
+      "y": 704,
+      "width": 800,
+      "height": 132,
+      "bottom": 836,
+      "right": 1232
+    }
+  },
+  {
+    "name": "chat-history-desktop",
+    "width": 1440,
+    "overflow": false,
+    "metrics": null,
+    "toolbar": null,
+    "cards": null,
+    "navigation": null,
+    "reader": null,
+    "thread": {
+      "x": 224,
+      "y": 60,
+      "width": 1216,
+      "height": 668,
+      "bottom": 728,
+      "right": 1440
+    },
+    "composer": {
+      "x": 432,
+      "y": 740,
+      "width": 800,
+      "height": 132,
+      "bottom": 872,
+      "right": 1232
+    }
+  },
+  {
+    "name": "catalog-320",
+    "width": 320,
+    "overflow": false,
+    "metrics": null,
+    "toolbar": null,
+    "cards": null,
+    "navigation": null,
+    "reader": null,
+    "thread": null,
+    "composer": null
+  },
+  {
+    "name": "documents-320",
+    "width": 320,
+    "overflow": false,
+    "metrics": {
+      "x": 16,
+      "y": 285,
+      "width": 288,
+      "height": 60,
+      "bottom": 345,
+      "right": 304
+    },
+    "toolbar": {
+      "x": 16,
+      "y": 423,
+      "width": 288,
+      "height": 210,
+      "bottom": 633,
+      "right": 304
+    },
+    "cards": {
+      "x": 16,
+      "y": 653,
+      "width": 288,
+      "height": 1298,
+      "bottom": 1951,
+      "right": 304
+    },
+    "navigation": null,
+    "reader": null,
+    "thread": null,
+    "composer": null
+  },
+  {
+    "name": "filters-320",
+    "width": 320,
+    "overflow": false,
+    "metrics": {
+      "x": 16,
+      "y": 285,
+      "width": 288,
+      "height": 60,
+      "bottom": 345,
+      "right": 304
+    },
+    "toolbar": {
+      "x": 16,
+      "y": 423,
+      "width": 288,
+      "height": 570,
+      "bottom": 993,
+      "right": 304
+    },
+    "cards": {
+      "x": 16,
+      "y": 1013,
+      "width": 288,
+      "height": 1298,
+      "bottom": 2311,
+      "right": 304
+    },
+    "navigation": null,
+    "reader": null,
+    "thread": null,
+    "composer": null
+  },
+  {
+    "name": "wiki-320",
+    "width": 320,
+    "overflow": false,
+    "metrics": null,
+    "toolbar": null,
+    "cards": null,
+    "navigation": {
+      "x": 16,
+      "y": 348,
+      "width": 288,
+      "height": 240,
+      "bottom": 588,
+      "right": 304
+    },
+    "reader": {
+      "x": 16,
+      "y": 648,
+      "width": 288,
+      "height": 607.671875,
+      "bottom": 1255.671875,
+      "right": 304
+    },
+    "thread": null,
+    "composer": null
+  },
+  {
+    "name": "graph-320",
+    "width": 320,
+    "overflow": false,
+    "metrics": null,
+    "toolbar": null,
+    "cards": null,
+    "navigation": null,
+    "reader": {
+      "x": 16,
+      "y": 348,
+      "width": 288,
+      "height": 480,
+      "bottom": 828,
+      "right": 304
+    },
+    "thread": null,
+    "composer": null
+  },
+  {
+    "name": "document-320",
+    "width": 320,
+    "overflow": false,
+    "metrics": null,
+    "toolbar": null,
+    "cards": null,
+    "navigation": null,
+    "reader": null,
+    "thread": null,
+    "composer": null
+  },
+  {
+    "name": "chat-320",
+    "width": 320,
+    "overflow": false,
+    "metrics": null,
+    "toolbar": null,
+    "cards": null,
+    "navigation": null,
+    "reader": null,
+    "thread": {
+      "x": 0,
+      "y": 181,
+      "width": 320,
+      "height": 495,
+      "bottom": 676,
+      "right": 320
+    },
+    "composer": {
+      "x": 16,
+      "y": 698,
+      "width": 288,
+      "height": 138,
+      "bottom": 836,
+      "right": 304
+    }
+  },
+  {
+    "name": "navigation-320",
+    "width": 320,
+    "overflow": false,
+    "metrics": null,
+    "toolbar": null,
+    "cards": null,
+    "navigation": null,
+    "reader": null,
+    "thread": {
+      "x": 0,
+      "y": 472,
+      "width": 320,
+      "height": 204,
+      "bottom": 676,
+      "right": 320
+    },
+    "composer": {
+      "x": 16,
+      "y": 698,
+      "width": 288,
+      "height": 138,
+      "bottom": 836,
+      "right": 304
+    }
+  },
+  {
+    "name": "catalog-375",
+    "width": 375,
+    "overflow": false,
+    "metrics": null,
+    "toolbar": null,
+    "cards": null,
+    "navigation": null,
+    "reader": null,
+    "thread": null,
+    "composer": null
+  },
+  {
+    "name": "create-mobile",
+    "width": 375,
+    "overflow": false,
+    "metrics": null,
+    "toolbar": null,
+    "cards": null,
+    "navigation": null,
+    "reader": null,
+    "thread": null,
+    "composer": null
+  },
+  {
+    "name": "create-types-mobile",
+    "width": 375,
+    "overflow": false,
+    "metrics": null,
+    "toolbar": null,
+    "cards": null,
+    "navigation": null,
+    "reader": null,
+    "thread": null,
+    "composer": null
+  },
+  {
+    "name": "documents-375",
+    "width": 375,
+    "overflow": false,
+    "metrics": {
+      "x": 16,
+      "y": 285,
+      "width": 343,
+      "height": 44,
+      "bottom": 329,
+      "right": 359
+    },
+    "toolbar": {
+      "x": 16,
+      "y": 407,
+      "width": 343,
+      "height": 210,
+      "bottom": 617,
+      "right": 359
+    },
+    "cards": {
+      "x": 16,
+      "y": 637,
+      "width": 343,
+      "height": 1298,
+      "bottom": 1935,
+      "right": 359
+    },
+    "navigation": null,
+    "reader": null,
+    "thread": null,
+    "composer": null
+  },
+  {
+    "name": "filters-375",
+    "width": 375,
+    "overflow": false,
+    "metrics": {
+      "x": 16,
+      "y": 285,
+      "width": 343,
+      "height": 44,
+      "bottom": 329,
+      "right": 359
+    },
+    "toolbar": {
+      "x": 16,
+      "y": 407,
+      "width": 343,
+      "height": 570,
+      "bottom": 977,
+      "right": 359
+    },
+    "cards": {
+      "x": 16,
+      "y": 997,
+      "width": 343,
+      "height": 1298,
+      "bottom": 2295,
+      "right": 359
+    },
+    "navigation": null,
+    "reader": null,
+    "thread": null,
+    "composer": null
+  },
+  {
+    "name": "wiki-375",
+    "width": 375,
+    "overflow": false,
+    "metrics": null,
+    "toolbar": null,
+    "cards": null,
+    "navigation": {
+      "x": 16,
+      "y": 348,
+      "width": 343,
+      "height": 240,
+      "bottom": 588,
+      "right": 359
+    },
+    "reader": {
+      "x": 16,
+      "y": 648,
+      "width": 343,
+      "height": 607.671875,
+      "bottom": 1255.671875,
+      "right": 359
+    },
+    "thread": null,
+    "composer": null
+  },
+  {
+    "name": "graph-375",
+    "width": 375,
+    "overflow": false,
+    "metrics": null,
+    "toolbar": null,
+    "cards": null,
+    "navigation": null,
+    "reader": {
+      "x": 16,
+      "y": 348,
+      "width": 343,
+      "height": 480,
+      "bottom": 828,
+      "right": 359
+    },
+    "thread": null,
+    "composer": null
+  },
+  {
+    "name": "document-375",
+    "width": 375,
+    "overflow": false,
+    "metrics": null,
+    "toolbar": null,
+    "cards": null,
+    "navigation": null,
+    "reader": null,
+    "thread": null,
+    "composer": null
+  },
+  {
+    "name": "chat-375",
+    "width": 375,
+    "overflow": false,
+    "metrics": null,
+    "toolbar": null,
+    "cards": null,
+    "navigation": null,
+    "reader": null,
+    "thread": {
+      "x": 0,
+      "y": 181,
+      "width": 375,
+      "height": 495,
+      "bottom": 676,
+      "right": 375
+    },
+    "composer": {
+      "x": 16,
+      "y": 698,
+      "width": 343,
+      "height": 138,
+      "bottom": 836,
+      "right": 359
+    }
+  },
+  {
+    "name": "navigation-375",
+    "width": 375,
+    "overflow": false,
+    "metrics": null,
+    "toolbar": null,
+    "cards": null,
+    "navigation": null,
+    "reader": null,
+    "thread": {
+      "x": 0,
+      "y": 472,
+      "width": 375,
+      "height": 204,
+      "bottom": 676,
+      "right": 375
+    },
+    "composer": {
+      "x": 16,
+      "y": 698,
+      "width": 343,
+      "height": 138,
+      "bottom": 836,
+      "right": 359
+    }
+  },
+  {
+    "name": "catalog-414",
+    "width": 414,
+    "overflow": false,
+    "metrics": null,
+    "toolbar": null,
+    "cards": null,
+    "navigation": null,
+    "reader": null,
+    "thread": null,
+    "composer": null
+  },
+  {
+    "name": "documents-414",
+    "width": 414,
+    "overflow": false,
+    "metrics": {
+      "x": 16,
+      "y": 285,
+      "width": 382,
+      "height": 44,
+      "bottom": 329,
+      "right": 398
+    },
+    "toolbar": {
+      "x": 16,
+      "y": 407,
+      "width": 382,
+      "height": 210,
+      "bottom": 617,
+      "right": 398
+    },
+    "cards": {
+      "x": 16,
+      "y": 637,
+      "width": 382,
+      "height": 1298,
+      "bottom": 1935,
+      "right": 398
+    },
+    "navigation": null,
+    "reader": null,
+    "thread": null,
+    "composer": null
+  },
+  {
+    "name": "filters-414",
+    "width": 414,
+    "overflow": false,
+    "metrics": {
+      "x": 16,
+      "y": 285,
+      "width": 382,
+      "height": 44,
+      "bottom": 329,
+      "right": 398
+    },
+    "toolbar": {
+      "x": 16,
+      "y": 407,
+      "width": 382,
+      "height": 570,
+      "bottom": 977,
+      "right": 398
+    },
+    "cards": {
+      "x": 16,
+      "y": 997,
+      "width": 382,
+      "height": 1298,
+      "bottom": 2295,
+      "right": 398
+    },
+    "navigation": null,
+    "reader": null,
+    "thread": null,
+    "composer": null
+  },
+  {
+    "name": "wiki-414",
+    "width": 414,
+    "overflow": false,
+    "metrics": null,
+    "toolbar": null,
+    "cards": null,
+    "navigation": {
+      "x": 16,
+      "y": 348,
+      "width": 382,
+      "height": 240,
+      "bottom": 588,
+      "right": 398
+    },
+    "reader": {
+      "x": 16,
+      "y": 648,
+      "width": 382,
+      "height": 607.671875,
+      "bottom": 1255.671875,
+      "right": 398
+    },
+    "thread": null,
+    "composer": null
+  },
+  {
+    "name": "graph-414",
+    "width": 414,
+    "overflow": false,
+    "metrics": null,
+    "toolbar": null,
+    "cards": null,
+    "navigation": null,
+    "reader": {
+      "x": 16,
+      "y": 348,
+      "width": 382,
+      "height": 480,
+      "bottom": 828,
+      "right": 398
+    },
+    "thread": null,
+    "composer": null
+  },
+  {
+    "name": "document-414",
+    "width": 414,
+    "overflow": false,
+    "metrics": null,
+    "toolbar": null,
+    "cards": null,
+    "navigation": null,
+    "reader": null,
+    "thread": null,
+    "composer": null
+  },
+  {
+    "name": "chat-414",
+    "width": 414,
+    "overflow": false,
+    "metrics": null,
+    "toolbar": null,
+    "cards": null,
+    "navigation": null,
+    "reader": null,
+    "thread": {
+      "x": 0,
+      "y": 181,
+      "width": 414,
+      "height": 495,
+      "bottom": 676,
+      "right": 414
+    },
+    "composer": {
+      "x": 16,
+      "y": 698,
+      "width": 382,
+      "height": 138,
+      "bottom": 836,
+      "right": 398
+    }
+  },
+  {
+    "name": "navigation-414",
+    "width": 414,
+    "overflow": false,
+    "metrics": null,
+    "toolbar": null,
+    "cards": null,
+    "navigation": null,
+    "reader": null,
+    "thread": {
+      "x": 0,
+      "y": 472,
+      "width": 414,
+      "height": 204,
+      "bottom": 676,
+      "right": 414
+    },
+    "composer": {
+      "x": 16,
+      "y": 698,
+      "width": 382,
+      "height": 138,
+      "bottom": 836,
+      "right": 398
+    }
+  },
+  {
+    "name": "catalog-768",
+    "width": 768,
+    "overflow": false,
+    "metrics": null,
+    "toolbar": null,
+    "cards": null,
+    "navigation": null,
+    "reader": null,
+    "thread": null,
+    "composer": null
+  },
+  {
+    "name": "documents-768",
+    "width": 768,
+    "overflow": false,
+    "metrics": {
+      "x": 16,
+      "y": 287,
+      "width": 736,
+      "height": 44,
+      "bottom": 331,
+      "right": 752
+    },
+    "toolbar": {
+      "x": 16,
+      "y": 409,
+      "width": 736,
+      "height": 158,
+      "bottom": 567,
+      "right": 752
+    },
+    "cards": {
+      "x": 16,
+      "y": 587,
+      "width": 736,
+      "height": 641,
+      "bottom": 1228,
+      "right": 752
+    },
+    "navigation": null,
+    "reader": null,
+    "thread": null,
+    "composer": null
+  },
+  {
+    "name": "filters-768",
+    "width": 768,
+    "overflow": false,
+    "metrics": {
+      "x": 16,
+      "y": 287,
+      "width": 736,
+      "height": 44,
+      "bottom": 331,
+      "right": 752
+    },
+    "toolbar": {
+      "x": 16,
+      "y": 409,
+      "width": 736,
+      "height": 355,
+      "bottom": 764,
+      "right": 752
+    },
+    "cards": {
+      "x": 16,
+      "y": 784,
+      "width": 736,
+      "height": 641,
+      "bottom": 1425,
+      "right": 752
+    },
+    "navigation": null,
+    "reader": null,
+    "thread": null,
+    "composer": null
+  },
+  {
+    "name": "wiki-768",
+    "width": 768,
+    "overflow": false,
+    "metrics": null,
+    "toolbar": null,
+    "cards": null,
+    "navigation": {
+      "x": 16,
+      "y": 350,
+      "width": 736,
+      "height": 240,
+      "bottom": 590,
+      "right": 752
+    },
+    "reader": {
+      "x": 16,
+      "y": 590,
+      "width": 736,
+      "height": 333,
+      "bottom": 923,
+      "right": 752
+    },
+    "thread": null,
+    "composer": null
+  },
+  {
+    "name": "graph-768",
+    "width": 768,
+    "overflow": false,
+    "metrics": null,
+    "toolbar": null,
+    "cards": null,
+    "navigation": null,
+    "reader": {
+      "x": 16,
+      "y": 350,
+      "width": 736,
+      "height": 665.375,
+      "bottom": 1015.375,
+      "right": 752
+    },
+    "thread": null,
+    "composer": null
+  },
+  {
+    "name": "document-768",
+    "width": 768,
+    "overflow": false,
+    "metrics": null,
+    "toolbar": null,
+    "cards": null,
+    "navigation": null,
+    "reader": null,
+    "thread": null,
+    "composer": null
+  },
+  {
+    "name": "chat-768",
+    "width": 768,
+    "overflow": false,
+    "metrics": null,
+    "toolbar": null,
+    "cards": null,
+    "navigation": null,
+    "reader": null,
+    "thread": {
+      "x": 0,
+      "y": 181,
+      "width": 768,
+      "height": 495,
+      "bottom": 676,
+      "right": 768
+    },
+    "composer": {
+      "x": 16,
+      "y": 698,
+      "width": 736,
+      "height": 138,
+      "bottom": 836,
+      "right": 752
+    }
+  },
+  {
+    "name": "navigation-768",
+    "width": 768,
+    "overflow": false,
+    "metrics": null,
+    "toolbar": null,
+    "cards": null,
+    "navigation": null,
+    "reader": null,
+    "thread": {
+      "x": 0,
+      "y": 472,
+      "width": 768,
+      "height": 204,
+      "bottom": 676,
+      "right": 768
+    },
+    "composer": {
+      "x": 16,
+      "y": 698,
+      "width": 736,
+      "height": 138,
+      "bottom": 836,
+      "right": 752
+    }
+  }
+]

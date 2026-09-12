@@ -325,10 +325,10 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual("on", service.agent_runtime.config.parallel_tool_calls_mode)
         self.assertEqual("off", service.agent_runtime.config.terminal_streaming_mode)
         self.assertTrue(service.agent_runtime.config.legacy_remedial_retrieval_enabled)
-        self.assertEqual(
-            ["data_analysis", "database_query", "execute_skill", "web_fetch", "web_search"],
-            service.agent_runtime.tool_registry.list_tools(),
-        )
+        registered_tools = set(service.agent_runtime.tool_registry.list_tools())
+        self.assertTrue({"data_analysis", "database_query", "execute_skill", "web_fetch", "web_search"}.issubset(registered_tools))
+        self.assertIn("wiki_search", registered_tools)
+        self.assertIn("knowledge_search", registered_tools)
 
     def test_runtime_config_reads_unified_quick_runtime_policy_values(self):
         service = self.import_main_with_env(
@@ -356,6 +356,31 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(("thinking",), config.quick_enabled_tools)
         self.assertEqual(2, config.quick_max_iterations)
         self.assertEqual(1, config.quick_max_empty_retries)
+
+    def test_runtime_config_reads_rag_wiki_runtime_policy_values(self):
+        service = self.import_main_with_env(
+            {
+                "AGENT_RUNTIME_ENABLED": "false",
+                "AGENT_RUNTIME_WIKI_MODE_ENABLED": "false",
+                "AGENT_RUNTIME_RAG_WIKI_MODE_ENABLED": "true",
+                "AGENT_RUNTIME_RAG_WIKI_PROMPT_TEMPLATE_ID": "hybrid_rag_wiki_agent",
+                "AGENT_RUNTIME_RAG_WIKI_CONTEXT_TEMPLATE_ID": "default_context",
+                "AGENT_RUNTIME_RAG_WIKI_ENABLED_TOOLS": "wiki_search,knowledge_search,list_knowledge_chunks",
+                "AGENT_RUNTIME_RAG_WIKI_MAX_ITERATIONS": "4",
+                "AGENT_RUNTIME_RAG_WIKI_MAX_EMPTY_RETRIES": "2",
+                "AGENT_RUNTIME_RAG_WIKI_MAX_REPEATED_RESPONSES": "1",
+            }
+        )
+
+        self.assertTrue(service.rag_wiki_runtime_enabled)
+        self.assertIsNotNone(service.agent_runtime)
+        config = service.agent_runtime.config
+        self.assertEqual("hybrid_rag_wiki_agent", config.rag_wiki_prompt_template_id)
+        self.assertEqual("default_context", config.rag_wiki_context_template_id)
+        self.assertEqual(("wiki_search", "knowledge_search", "list_knowledge_chunks"), config.rag_wiki_enabled_tools)
+        self.assertEqual(4, config.rag_wiki_max_iterations)
+        self.assertEqual(2, config.rag_wiki_max_empty_retries)
+        self.assertTrue(config.wiki_tools_enabled)
 
     def test_runtime_config_keeps_startup_safe_when_neo4j_driver_missing(self):
         service = self.import_main_with_env(

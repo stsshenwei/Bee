@@ -109,6 +109,19 @@ class PostgresDocumentRepositoryTests(unittest.TestCase):
         self.assertIn("%ERR_CODE_42%", params[2])
         self.assertEqual(5, params[-1])
 
+    def test_keyword_search_includes_document_level_fields(self):
+        repo = RecordingDocumentRepository()
+        scope = KnowledgeBaseScope(workspace_id="workspace-1", selected_knowledge_base_ids=("kb-1",))
+
+        repo.search_keyword_chunks("DH-P7004 这是什么设备", top_k=5, scope=scope)
+
+        sql, _ = repo.fetch_all_calls[-1]
+        self.assertIn("join \"rag\".\"document\" d", sql)
+        self.assertIn("d.name ilike term.pattern", sql)
+        self.assertIn("d.summary", sql)
+        self.assertIn("d.keywords_json::text", sql)
+        self.assertIn("d.suggested_questions_json::text", sql)
+
     def test_metadata_defaults_match_sqlite_repository_contract(self):
         repo = RecordingDocumentRepository()
         child = Chunk("child-1", "doc-1", "parent-1", "child", "Manual", "text", "text", 1, 1, 1, {})

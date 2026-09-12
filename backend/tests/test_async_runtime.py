@@ -22,6 +22,11 @@ from app.services.async_runtime.task_routes import (
 
 
 class AsyncRuntimeTests(unittest.TestCase):
+    def test_config_does_not_default_to_hardcoded_redis_url(self):
+        config = AsyncRuntimeConfig.from_settings()
+
+        self.assertEqual("", config.broker_url)
+
     def test_config_normalizes_worker_pool_settings(self):
         config = AsyncRuntimeConfig.from_settings(
             {

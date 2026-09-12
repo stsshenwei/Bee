@@ -1,7 +1,28 @@
 import unittest
 
 from app.services.chat_streaming.event_bus import ChatEventBus, ChatStreamEvent
-from app.services.chat_streaming.stream_manager import MemoryStreamManager, StreamIdentity
+from app.services.chat_streaming.stream_manager import MemoryStreamManager, RedisStreamManager, StreamIdentity
+
+
+class FakeRedisClient:
+    def __init__(self):
+        self.counters = {}
+        self.rows = {}
+        self.expires = []
+        self.terminal = {}
+
+    def incr(self, key):
+        self.counters[key] = self.counters.get(key, 0) + 1
+        return self.counters[key]
+
+    def rpush(self, key, value):
+        self.rows.setdefault(key, []).append(value)
+
+    def expire(self, key, ttl):
+        self.expires.append((key, ttl))
+
+    def setex(self, key, ttl, value):
+        self.terminal[key] = (ttl, value)
 
 
 class ChatStreamingTests(unittest.TestCase):
@@ -92,6 +113,36 @@ class ChatStreamingTests(unittest.TestCase):
         self.assertEqual(["stop", "done"], [event.event_type for event in events])
         self.assertEqual("client_requested", events[0].payload["stop"]["reason"])
         self.assertTrue(events[1].terminal)
+
+    def test_event_bus_preserves_public_token_payload(self):
+        bus = ChatEventBus()
+
+        event = bus.publish("token", {"token": "visible answer token"})
+
+        self.assertEqual("visible answer token", event.payload["token"])
+
+    def test_redis_stream_manager_uses_weknora_key_shape(self):
+        manager = object.__new__(RedisStreamManager)
+        manager.key_prefix = "stream:events"
+
+        key = manager._key(StreamIdentity("session-1", "message-1"))
+
+        self.assertEqual("stream:events:session-1:message-1", key)
+
+    def test_redis_stream_manager_applies_offsets_and_ttl(self):
+        manager = object.__new__(RedisStreamManager)
+        manager.client = FakeRedisClient()
+        manager.key_prefix = "stream:events"
+        manager.ttl_seconds = 3600
+        identity = StreamIdentity("session-1", "message-1")
+
+        stored = manager.append(identity, ChatStreamEvent("done", {}, terminal=True))
+
+        self.assertEqual(1, stored.offset)
+        self.assertEqual(1, len(manager.client.rows["stream:events:session-1:message-1"]))
+        self.assertIn(("stream:events:session-1:message-1", 3600), manager.client.expires)
+        self.assertIn(("stream:events:session-1:message-1:offset", 3600), manager.client.expires)
+        self.assertEqual((3600, "1"), manager.client.terminal["stream:events:session-1:message-1:terminal"])
 
 
 if __name__ == "__main__":

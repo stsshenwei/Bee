@@ -1,22 +1,31 @@
 {
-  "scanned_at": "2026-07-22",
-  "framework": "Next.js 15 App Router",
-  "font_stack": "Plus Jakarta Sans, Inter, system-ui, PingFang SC, Microsoft YaHei",
-  "palette": "legacy CSS variables plus multiple blue/green/grey hard-coded families",
-  "motion": "CSS-only; no motion library dependency",
-  "spacing": "mostly 8px-derived spacing, previously not centralized",
-  "preserve": [
-    "Bee identity",
-    "two-column app shell",
-    "chat workflow",
-    "knowledge-base workspace",
-    "existing component ownership"
-  ],
-  "introduce": [
-    "portable token file",
-    "Operational Knowledge Console style",
-    "unified cobalt accent",
-    "restrained focus and hover states",
-    "reduced-motion fallback"
-  ]
+  "date": "2026-09-09",
+  "framework": {
+    "name": "Next.js",
+    "version": "15.2.0",
+    "source": "frontend/package.json:13"
+  },
+  "font_stack": {
+    "found": "Plus Jakarta Sans / Inter / system fallback",
+    "sources": [
+      "frontend/tokens.css:24",
+      "frontend/app/globals.css:446"
+    ],
+    "decision": "Use native sans-serif with Chinese system fallbacks; remove external font loading."
+  },
+  "palette": {
+    "found": "OKLCH custom properties",
+    "source": "frontend/tokens.css:3",
+    "decision": "Use named tokens for neutral white, graphite text, forest actions and blue file icons."
+  },
+  "motion": {
+    "found": "No motion dependency in package.json",
+    "source": "frontend/package.json:11",
+    "decision": "Use CSS-only state transitions."
+  },
+  "spacing": {
+    "found": "4px-based CSS token scale",
+    "source": "frontend/tokens.css:28",
+    "decision": "Preserve named spacing tokens."
+  }
 }

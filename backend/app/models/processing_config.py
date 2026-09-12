@@ -68,6 +68,7 @@ class ProcessingRuntimeDefaults:
     dense_enabled: bool = True
     keyword_enabled: bool = True
     graph_enabled: bool = False
+    wiki_enabled: bool = False
     question_generation_enabled: bool = False
 
 
@@ -154,6 +155,7 @@ class ProcessingRequestedConfig:
     dense_enabled: bool = True
     keyword_enabled: bool = True
     graph_enabled: bool = False
+    wiki_enabled: bool = False
     question_generation_enabled: bool = False
 
     def to_dict(self) -> dict[str, Any]:
@@ -223,6 +225,7 @@ def resolve_processing_config(
         dense_enabled=_bool(raw.get("dense_enabled"), defaults.dense_enabled),
         keyword_enabled=_bool(raw.get("keyword_enabled"), defaults.keyword_enabled),
         graph_enabled=_bool(raw.get("graph_enabled"), defaults.graph_enabled),
+        wiki_enabled=_bool(raw.get("wiki_enabled"), defaults.wiki_enabled),
         question_generation_enabled=_bool(raw.get("question_generation_enabled"), defaults.question_generation_enabled),
     )
     inactive: list[str] = []
@@ -274,6 +277,7 @@ def resolve_processing_config(
         dense_enabled=requested.dense_enabled,
         keyword_enabled=requested.keyword_enabled,
         graph_enabled=requested.graph_enabled,
+        wiki_enabled=requested.wiki_enabled,
         question_generation_enabled=requested.question_generation_enabled,
         inactive_overrides=tuple(dict.fromkeys(inactive)),
         warnings=tuple(warnings),

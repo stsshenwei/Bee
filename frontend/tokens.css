@@ -1,30 +1,46 @@
-/* Hallmark · tokens: Monochrome Knowledge Console · anchor hue: neutral */
+/* Bee Knowledge Workspace - neutral surfaces, forest accent */
 :root {
-  --color-paper: oklch(98.1% 0.004 250);
-  --color-paper-soft: oklch(95.8% 0.005 250);
-  --color-paper-raised: oklch(99.2% 0.003 250);
-  --color-paper-tint: oklch(93.4% 0.006 250);
-  --color-ink: oklch(22% 0.006 250);
-  --color-ink-strong: oklch(14.5% 0.006 250);
-  --color-muted: oklch(47% 0.006 250);
-  --color-muted-soft: oklch(62% 0.005 250);
-  --color-rule: oklch(87.5% 0.005 250);
-  --color-rule-strong: oklch(76.5% 0.006 250);
-  --color-accent: oklch(26% 0.006 250);
-  --color-accent-strong: oklch(14.5% 0.006 250);
-  --color-accent-soft: oklch(92.5% 0.006 250);
-  --color-success: oklch(30% 0.006 250);
-  --color-success-soft: oklch(93.5% 0.005 250);
-  --color-warning: oklch(38% 0.006 250);
-  --color-warning-soft: oklch(94.5% 0.005 250);
-  --color-danger: oklch(24% 0.006 250);
-  --color-danger-soft: oklch(92.8% 0.005 250);
-  --color-focus: oklch(18% 0.006 250);
+  color-scheme: light;
 
-  --font-display: "Plus Jakarta Sans", Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
-  --font-body: "Plus Jakarta Sans", Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
-  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  --color-paper: #ffffff;
+  --color-paper-soft: #f7f8f9;
+  --color-reader-canvas: #f3f5f7;
+  --color-paper-raised: #ffffff;
+  --color-paper-tint: #eef1f3;
+  --color-paper-cold: oklch(92.8% 0.012 252);
+  --color-graphite: oklch(22% 0.016 260);
+  --color-graphite-2: oklch(18% 0.018 262);
+  --color-graphite-ink: oklch(94% 0.01 250);
+  --color-scrim: oklch(18% 0.018 262 / 0.36);
 
+  --color-ink: #30363d;
+  --color-ink-strong: #20252b;
+  --color-muted: #626d78;
+  --color-muted-soft: #707b87;
+  --color-rule: #e4e8eb;
+  --color-rule-strong: #b9c3c9;
+
+  --color-accent: #18765c;
+  --color-accent-strong: #105940;
+  --color-accent-soft: #e6f2ed;
+  --color-accent-wash: #f1f8f5;
+  --color-accent-ink: oklch(99% 0.004 250);
+  --color-focus: #18765c;
+  --color-file: #406caa;
+  --color-file-soft: #edf3fb;
+
+  --color-success: oklch(51% 0.14 158);
+  --color-success-soft: oklch(95% 0.035 158);
+  --color-warning: oklch(61% 0.15 78);
+  --color-warning-soft: oklch(96% 0.04 82);
+  --color-danger: oklch(56% 0.2 26);
+  --color-danger-soft: oklch(95% 0.04 26);
+
+  --font-display: var(--font-body);
+  --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+
+  --space-3xs: 2px;
   --space-2xs: 4px;
   --space-xs: 8px;
   --space-sm: 12px;
@@ -32,6 +48,7 @@
   --space-lg: 24px;
   --space-xl: 32px;
   --space-2xl: 48px;
+  --space-3xl: 64px;
 
   --text-xs: 11px;
   --text-sm: 12px;
@@ -39,16 +56,28 @@
   --text-lg: 16px;
   --text-xl: 20px;
   --text-2xl: 28px;
-  --text-display-s: 36px;
+  --text-display-s: 32px;
 
-  --radius-xs: 6px;
-  --radius-sm: 8px;
-  --radius-md: 10px;
-  --radius-lg: 12px;
-  --radius-xl: 14px;
+  --type-page: 1.5rem;
+  --type-section: 1.125rem;
+  --type-body: 1rem;
+  --type-compact: 0.875rem;
+  --type-label: 0.8125rem;
+  --type-meta: 0.75rem;
+  --leading-heading: 1.4;
+  --leading-ui: 1.5;
+  --leading-reading: 1.85;
+  --measure-reading: 72ch;
+
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
   --rule-hairline: 1px;
-  --shadow-resting: 0 1px 2px oklch(18% 0.006 250 / 0.05), 0 14px 42px oklch(22% 0.006 250 / 0.07);
-  --shadow-raised: 0 1px 2px oklch(18% 0.006 250 / 0.06), 0 18px 54px oklch(22% 0.006 250 / 0.1);
+  --shadow-resting: 0 1px 2px oklch(24% 0.02 258 / 0.05);
+  --shadow-raised: 0 1px 2px oklch(24% 0.02 258 / 0.08), 0 18px 44px oklch(24% 0.02 258 / 0.08);
+
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);

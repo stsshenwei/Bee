@@ -1,16 +1,39 @@
 # Frontend Chat UI
 
+## Keyboard and Failure Resilience
+
+The knowledge layout revision keeps catalog cards compact (300px maximum desktop tracks) and removes the diagonal navigation arrow. Document tiles group file icon/title/actions at the top, status/selection beneath the summary, and date/type/chunk count at the bottom. Document detail puts the content first in the DOM and a supporting summary/metadata aside on the right; mobile stacks the aside after the content. Text preview uses normal page scrolling on a white surface over `--color-reader-canvas`, while raw text remains unchanged and the source path is expandable. Wiki navigation is 292px on wide screens; its article is left-aligned and uses the available reader width instead of the prior centered/narrow measure. `node scripts/knowledge-layout-smoke.mjs` covers these four surfaces at 375/1440/1880px; parse requests use a local fixture and never trigger backend processing.
+
+Final polish keeps recent-session action buttons in normal flex flow without reserving their width twice. Error feedback uses consistent padding, semantic colors, and a subdued border. Navigation announces the current page, and document menu actions focus their persistent trigger before opening preview/trace overlays so closing can restore focus even after the menu unmounts.
+
+Typography uses semantic rem-based roles in `frontend/tokens.css`: page 24px, section 18px, reading body 16px, compact body 14px, labels 13px, and metadata 12px at the default browser size. The existing system CJK sans-serif stack is retained without remote font downloads; code keeps the mono stack. Markdown prose is bounded to 72ch with 1.85 leading, and document summaries reserve three scalable lines. `node scripts/workspace-typeset-smoke.mjs` verifies computed type roles, real document/Wiki readers, long filenames, and 200% root text scaling on desktop/mobile without backend writes.
+
+Motion is limited to context and state feedback: 200ms dialog fades, a 240ms processing-detail drawer entrance, a 160ms advanced-filter reveal, and 120ms control color transitions. Closing remains immediate. Reduced-motion mode removes spatial entrances and spinner loops while retaining text/status and color feedback. Wiki graph settling runs only while its canvas intersects the viewport, the document is visible, and reduced motion is disabled; preference changes cancel the active animation frame without disabling node interaction. `node scripts/workspace-motion-smoke.mjs` checks both motion preferences and live switching on desktop/mobile, with read-only backend access.
+
+Responsive adaptation keeps the existing desktop identity. Compact viewports (up to 1100px) and coarse-pointer devices use 44px primary action targets and 16px form inputs. Phone document filters reflow to a full-width search plus type/status controls, while tablet Wiki reading keeps two columns. Phone chat uses explicit single-column viewport tracks so a shortened viewport does not push its composer below the screen. Safe-area padding and scrollable short-screen dialogs preserve access to controls.
+
+Run `node scripts/workspace-adapt-smoke.mjs` against `APP_BASE` (default `http://127.0.0.1:3105`) for 320/375/768/1024/1440px and landscape coverage, including a shortened chat viewport. The test checks screenshots, horizontal overflow, primary target sizes, and composer bounds using Chromium emulation; it is not a substitute for physical iOS/Android keyboard testing.
+
+- `components/ModalSurface.tsx` owns focus entry, Tab wrapping, background isolation, scroll locking, Escape dismissal, and restoration to a surviving opener. Creation, settings, staged upload, processing traces, document preview, and the existing memory panel share this behavior.
+- Creation/settings cannot be dismissed while saving; staged uploads retain their existing busy dismissal guard. Knowledge-base mutations use an immediate request guard in addition to disabled buttons, and form failures retain drafts and expose an alert.
+- Knowledge-base tabs have a single Tab entry, Arrow/Home/End navigation, and named panels. Switching Wiki/Graph preserves the shared workspace instance.
+- Sidebar renaming is an independent editor with explicit save/cancel, IME-safe Enter, empty-name validation, a duplicate-request guard, and retryable errors. Blur no longer submits a rename.
+- Run `node scripts/workspace-hardening-smoke.mjs` against `APP_BASE` (default `http://127.0.0.1:3103`). It checks desktop/mobile keyboard behavior and simulated mutation failures. Mutations are intercepted in the browser; real knowledge data is only read. Screenshots are generated under `frontend/.artifacts/workspace-hardening/`.
+
 ## WeKnora-like Knowledge Management Update
 
 `frontend/app/knowledge/page.tsx` is now organized around focused local components for the knowledge catalog, creation wizard, detail shell, document toolbar, grid/list document views, upload action menu, pending upload dialog, batch monitor, and settings dialog. Styling remains in `frontend/app/globals.css`; no second styling system is introduced.
 
 The create flow is a Bee-branded WeKnora-like wizard:
 
-- left configuration rail: basic information, type, model, vector storage, parser, chunking, image/OCR, audio, graph, and advanced settings
-- `Document`, `FAQ`, and `Wiki` knowledge-base metadata types can be submitted
+- left configuration rail: basic information, type, chunking, image/OCR, audio, graph, and advanced settings
+- `Document` and `Wiki` knowledge-base metadata types can be submitted from the create wizard; they can be multi-selected as `Document + Wiki`
+- create-time indexing channels are derived from selected types instead of exposed as separate toggles: `Document` enables Dense + Keyword, while `Wiki` enables Wiki
+- model, vector storage, and parser choices are not exposed in the create wizard; their defaults remain submitted for backend compatibility
 - the wizard exposes a default-knowledge-base toggle; future types, audio, multimodal, and unsupported runtime features remain disabled or unavailable
 - supported requested settings are submitted through `POST /knowledge-bases`
-- the detail page displays effective provider configuration and inactive overrides returned by the backend
+- the detail page keeps provider override diagnostics out of the primary user-facing status badges
+- the settings dialog edits name, description, and default knowledge-base status; indexing strategy toggles are intentionally not exposed there
 - validation failures keep user input in the wizard
 
 The selected KB document workspace now includes API-backed filters and two view modes:
@@ -31,6 +54,8 @@ Wiki-capable KBs now add a `Wiki` tab beside the document workspace. The tab loa
 
 The chat composer now includes a `Wiki 问答` mode. It sends `chat_mode: "wiki"` to `/chat/stream`; the backend routes this to the Wiki runtime policy, which searches Wiki pages first and drills into raw source chunks for exact facts. The frontend keeps the same SSE parser and agent timeline surface, so Wiki tool calls appear as normal safe timeline events without exposing hidden reasoning.
 
+The composer also exposes `RAG + Wiki`, sent as `chat_mode: "rag_wiki"`. This mode uses the Hybrid RAG + Wiki agent prompt: Wiki is used for concept navigation and relationship context, while dense/keyword chunk retrieval and deep reading remain mandatory for exact facts, numbers, code, tables, and source-grounded claims.
+
 The upload interaction uses a staged flow:
 
 ```text
@@ -46,6 +71,8 @@ upload action menu
 ```
 
 Provider safety boundary: selecting files or opening the pending dialog does not parse, index, embed, enrich, or call external providers. Backend processing starts only after the user confirms the upload batch. Webpage import and online editing entries are shown disabled until backend capabilities exist.
+
+Upload confirmation no longer asks users to choose Dense, Keyword, Wiki, or Graph channels. The frontend submits them as enabled defaults, while parser and chunk settings remain visible in the staged upload dialog.
 
 ## Goal
 
@@ -111,6 +138,16 @@ Evidence: `frontend/app/page.tsx:484-500`.
 - document preview mode is chosen by file extension on the client
 
 Evidence: `frontend/app/page.tsx:126-215`, `frontend/app/page.tsx:244-320`.
+
+## History, Replay, And Stop
+
+The active chat route persists `bee:conversationId` locally and uses that as the durable session id. On mount, the UI calls `GET /api/v1/messages/{session_id}/load?limit=20`, converts database rows into chronological `ChatMessage` rows, and stores `hasMoreHistory`. Loading older transcript rows uses the oldest `created_at` as `before_time`, prepends the returned page, and deduplicates by stable message id to tolerate page-boundary repeats.
+
+Historical messages come from the database; the currently generating assistant message comes from SSE. Sending a prompt immediately adds local user/assistant rows, then binds them to the backend's early `session_id`, `request_id`, `user_message_id`, and `assistant_message_id` metadata. Answer tokens, sources, reasoning summaries, agent/tool events, citation evidence, and memory updates incrementally update that local assistant row.
+
+If the latest loaded assistant row has `is_completed=false`, the UI calls `GET /api/v1/sessions/{session_id}/continue-stream?message_id=...&offset=0` and rebuilds visible partial content from retained events. If the buffer is missing, the row remains visible as recoverable history until a later reload observes the database completion.
+
+While `loading` is true, the composer replaces send with a stop control. Stop aborts the local SSE reader immediately, clears loading, marks the current assistant row stopped while retaining its durable id, and posts `POST /api/v1/sessions/{session_id}/stop` with `{ "message_id": "..." }` so the backend can cancel generation and persist the partial answer.
 
 ## State Model
 
@@ -235,6 +272,19 @@ agent_query -> agent_references -> agent_final_answer -> agent_complete
 ```
 
 Reasoning streams may additionally include thought, tool, result, reflection, and remedial-search events. `frontend/app/lib/agent-stream.ts` normalizes both shapes into the same `AgentStreamEvent` and `AgentTimelineStep` models. If a quick stream has no tool calls, the collapsed summary keeps the quick-search wording and does not synthesize fake tool steps. Legacy `sources`, `token`, `final`, `error`, `memory_updated`, and `[DONE]` events remain supported.
+
+## Knowledge Workspace Visual System
+
+The shared shell uses `.bee-workspace` in `AppFrame.tsx`, the tokens in `frontend/tokens.css`, and the scoped section at the end of `globals.css`. The design reference is `design.md`.
+
+- Catalog: compact title/action header, inline counts, local name/description search, and keyboard-accessible knowledge-base card titles.
+- Documents: breadcrumb/title/actions, inline metrics, Chinese workspace tabs, search/type/status filters, expandable advanced filters, and an icon-based card/list switch.
+- Wiki: bounded navigation beside an unframed reading column. Graph mode explicitly switches to a single full-width column with separate toolbar, filters, and canvas.
+- Document details: metadata/summary beside preview/chunks, stacked at narrow widths.
+- Chat: a single-column grid with header, scrollable thread, and an in-flow composer. Do not restore fixed positioning or inherited multi-column tracks.
+- Mobile: primary navigation remains visible, recent conversations expand with the navigation toggle. All page layouts support 320px width.
+
+Read-only visual verification: `node scripts/workspace-visual-smoke.mjs` from `frontend`, with `APP_BASE` targeting the local preview. It uses the existing `wiki` knowledge base and reads existing conversations without sending prompts or changing stored documents. Screenshots and layout measurements are written to `frontend/.artifacts/workspace-redesign/`.
 
 ## Knowledge Base Catalog And Chat Scope
 

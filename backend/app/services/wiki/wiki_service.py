@@ -18,6 +18,11 @@ class WikiValidationError(ValueError):
 logger = logging.getLogger(__name__)
 
 
+GENERATION_ACTIVE_STATES = {"pending", "queued", "running", "retrying", "finalizing"}
+PROCESSING_ACTIVE_STATES = {"pending", "retrying", "processing"}
+WIKI_PROCESSING_TASK_TYPES = {"wiki.ingest", "wiki.finalize"}
+
+
 class WikiPageService:
     LINK_PATTERN = re.compile(r"\[\[([^\]|]+)(?:\|([^\]]+))?\]\]")
     GENERATION_CHUNK_TYPES = {"parent", "table", "ocr", "image_ocr", "image_caption"}
@@ -94,10 +99,24 @@ class WikiPageService:
 
     def search_pages(self, scope: KnowledgeBaseScope, query: str, *, limit: int = 10, status: str = "published") -> list[dict[str, Any]]:
         self._assert_wiki_capable(scope)
-        pages, _ = self.repository.list_pages(scope, q=query, status=status, limit=limit)
-        if not pages and status == "published":
-            pages, _ = self.repository.list_pages(scope, q=query, status="", limit=limit)
-        return [self._page_search_item(page, query) for page in pages]
+        bounded_limit = min(100, max(1, int(limit or 10)))
+        queries = _wiki_search_queries(query)
+        status_filters = [status]
+        if status == "published":
+            status_filters.append("")
+        seen: set[str] = set()
+        results: list[tuple[WikiPage, str]] = []
+        for current_status in status_filters:
+            for candidate_query in queries:
+                pages, _ = self.repository.list_pages(scope, q=candidate_query, status=current_status, limit=bounded_limit)
+                for page in pages:
+                    if page.id in seen:
+                        continue
+                    seen.add(page.id)
+                    results.append((page, candidate_query))
+                    if len(results) >= bounded_limit:
+                        return [self._page_search_item(item, matched_query) for item, matched_query in results]
+        return [self._page_search_item(item, matched_query) for item, matched_query in results]
 
     def create_folder(self, scope: KnowledgeBaseScope, payload: dict[str, Any]):
         self._assert_wiki_capable(scope)
@@ -398,10 +417,12 @@ class WikiPageService:
 
     def list_generation_tasks(self, scope: KnowledgeBaseScope, *, doc_id: str = "", limit: int = 20) -> list[dict[str, Any]]:
         self._assert_wiki_capable(scope)
+        self._reconcile_stale_finalizing_generation_tasks(scope)
         return [task.to_dict() for task in self.repository.list_generation_tasks(scope, doc_id=doc_id, limit=limit)]
 
     def overview(self, scope: KnowledgeBaseScope) -> dict[str, Any]:
         self._assert_wiki_capable(scope)
+        self._reconcile_stale_finalizing_generation_tasks(scope)
         system_pages = []
         for slug in ("index", "log"):
             page = self.repository.get_page_by_slug(scope, slug)
@@ -410,14 +431,33 @@ class WikiPageService:
         task_states: dict[str, int] = {}
         for task in self.repository.list_generation_tasks(scope, limit=100):
             task_states[task.status] = task_states.get(task.status, 0) + 1
-        active_states = {"pending", "queued", "running", "retrying", "finalizing"}
         return {
             "page_counts": self.repository.page_type_counts(scope),
             "system_pages": system_pages,
             "open_issue_count": len(self.repository.list_issues(scope, status="open", limit=500)),
-            "active_task_count": sum(count for status, count in task_states.items() if status in active_states),
+            "active_task_count": sum(count for status, count in task_states.items() if status in GENERATION_ACTIVE_STATES),
             "task_states": task_states,
         }
+
+    def _reconcile_stale_finalizing_generation_tasks(self, scope: KnowledgeBaseScope) -> None:
+        ingest_service = getattr(self, "ingest_service", None)
+        processing_repository = getattr(ingest_service, "processing_repository", None)
+        if processing_repository is None:
+            return
+        active_processing = processing_repository.list_tasks(
+            scope,
+            statuses=PROCESSING_ACTIVE_STATES,
+            task_types=WIKI_PROCESSING_TASK_TYPES,
+        )
+        if active_processing:
+            return
+        for task in self.repository.list_generation_tasks(scope, limit=100):
+            if task.status != "finalizing":
+                continue
+            try:
+                self.repository.update_generation_task(scope, task.id, status="completed", page_slug=task.page_slug)
+            except KeyError:
+                continue
 
     def list_logs(self, scope: KnowledgeBaseScope, *, limit: int = 50, cursor: int = 0) -> dict[str, Any]:
         self._assert_wiki_capable(scope)
@@ -650,10 +690,65 @@ class WikiPageService:
             "status": page.status,
             "summary": page.summary,
             "snippet": _snippet(content, query),
+            "matched_query": query,
             "source_refs": [ref.to_dict() for ref in page.source_refs[:5]],
             "chunk_refs": list(page.chunk_refs[:10]),
             "updated_at": page.updated_at,
         }
+
+
+_WIKI_CJK_QUESTION_STOPWORDS = (
+    "请问",
+    "帮我",
+    "一下",
+    "这个",
+    "这台",
+    "该",
+    "此",
+    "设备",
+    "支持",
+    "包含",
+    "包括",
+    "哪些",
+    "什么",
+    "是否",
+    "有没有",
+    "有",
+    "能不能",
+    "可以",
+    "吗",
+    "呢",
+    "的",
+)
+
+
+def _wiki_search_queries(query: str, *, limit: int = 8) -> list[str]:
+    raw = re.sub(r"\s+", " ", str(query or "")).strip()
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    def add(value: str) -> None:
+        cleaned = re.sub(r"\s+", " ", str(value or "")).strip(" \t\r\n?？!！,，。.;；:：、/\\()[]{}【】\"'“”‘’")
+        if len(cleaned) < 2 or cleaned.lower() in seen:
+            return
+        candidates.append(cleaned)
+        seen.add(cleaned.lower())
+
+    add(raw)
+    normalized = re.sub(r"[|,，。.;；:：?？!！、/\\()\[\]{}【】\"'“”‘’]+", " ", raw)
+    terms = re.findall(r"[A-Za-z0-9][A-Za-z0-9_.+-]*|[\u4e00-\u9fff]+", normalized, flags=re.UNICODE)
+    for term in terms:
+        if re.search(r"[\u4e00-\u9fff]", term):
+            compact = term
+            for stopword in _WIKI_CJK_QUESTION_STOPWORDS:
+                compact = compact.replace(stopword, "")
+            add(compact)
+            if len(compact) > 2:
+                add(compact[-2:])
+                add(compact[:2])
+        else:
+            add(term)
+    return candidates[:limit] or [raw]
 
 
 def _snippet(content: str, query: str, limit: int = 360) -> str:

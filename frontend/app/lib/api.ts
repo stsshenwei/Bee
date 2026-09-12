@@ -1,11 +1,13 @@
 import type {
   ChatAttachment,
+  ChatSessionSummary,
   DocumentFilters,
   DocumentItem,
   DocumentProcessingTrace,
   DocumentProcessingPreview,
   KnowledgeBase,
   KnowledgeBaseType,
+  MessagesLoadResponse,
   ParserEngineInfo,
   ParserEnginesResponse,
   UploadBatch,
@@ -51,6 +53,54 @@ export async function uploadChatAttachment(file: File): Promise<ChatAttachment> 
     await fetch(`${API_BASE}/chat/attachments`, {
       method: "POST",
       body: form,
+    }),
+  );
+}
+
+export async function loadSessionMessages(
+  sessionId: string,
+  input?: { beforeTime?: string; limit?: number },
+): Promise<MessagesLoadResponse> {
+  const params = new URLSearchParams();
+  if (input?.beforeTime) params.set("before_time", input.beforeTime);
+  params.set("limit", String(input?.limit || 20));
+  return readJson<MessagesLoadResponse>(
+    await fetch(`${API_BASE}/api/v1/messages/${encodeURIComponent(sessionId)}/load?${params.toString()}`),
+  );
+}
+
+export async function listRecentSessions(limit = 20): Promise<ChatSessionSummary[]> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  const data = await readJson<{ items?: ChatSessionSummary[] }>(
+    await fetch(`${API_BASE}/api/v1/sessions/recent?${params.toString()}`),
+  );
+  return data.items || [];
+}
+
+export async function renameSession(sessionId: string, title: string): Promise<ChatSessionSummary> {
+  return readJson<ChatSessionSummary>(
+    await fetch(`${API_BASE}/api/v1/sessions/${encodeURIComponent(sessionId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title }),
+    }),
+  );
+}
+
+export async function deleteSession(sessionId: string): Promise<{ session_id: string; deleted: boolean }> {
+  return readJson<{ session_id: string; deleted: boolean }>(
+    await fetch(`${API_BASE}/api/v1/sessions/${encodeURIComponent(sessionId)}`, {
+      method: "DELETE",
+    }),
+  );
+}
+
+export async function stopSessionGeneration(sessionId: string, messageId: string): Promise<{ stopped: boolean; status: string }> {
+  return readJson<{ stopped: boolean; status: string }>(
+    await fetch(`${API_BASE}/api/v1/sessions/${encodeURIComponent(sessionId)}/stop`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message_id: messageId }),
     }),
   );
 }

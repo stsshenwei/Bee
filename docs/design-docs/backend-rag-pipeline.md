@@ -40,6 +40,8 @@ Explicit `doc_ids` are retrieval constraints, not post-filters. Dense, keyword, 
 
 Upload confirmation can either enqueue durable PostgreSQL task rows for workers or run the compatibility background path. `DocumentProcessingWorker` uses PostgreSQL row claiming and leases to avoid duplicate work. Spans are stored in PostgreSQL and are the source of truth for the frontend trace drawer; local files under `PROCESSING_TRACE_DIR` remain supplemental debugging evidence.
 
+Staged upload batches always enable Dense, Keyword, Wiki, and Graph indexing channels. Upload confirmation also upgrades the target knowledge-base indexing strategy to those enabled channels before task registration so Wiki generation and graph enrichment are not blocked by older KB defaults.
+
 When `ASYNC_RUNTIME_ENABLED=true` and `ASYNC_RUNTIME_MODE=celery`, upload confirmation persists the PostgreSQL task row and dispatches a matching Celery task to Redis. Celery workers call back into the same processing worker service but claim the exact PostgreSQL task id before doing side effects. This keeps Redis as delivery infrastructure and PostgreSQL as the authoritative runtime state.
 
 Initial Redis-backed routing is coarse and compatible: `upload_file.process` runs in the Core queue and delegates to the existing parse/chunk/index/postprocess path. The runtime also defines stable task routes for staged work:
@@ -59,11 +61,21 @@ LLM Wiki adds a curated page layer after raw chunk persistence. Pages, folders, 
 
 Wiki generation reads persisted source chunks directly and does not invoke embedding or rerank models. A Wiki-only KB can skip dense/keyword embedding while still enqueueing Wiki work.
 
+Wiki page search normalizes natural-language questions into bounded recall candidates before querying storage, so Chinese questions such as "该设备支持哪些安全认证？" can fall back from the full sentence to compact terms like "安全认证" or "认证" instead of relying on one literal SQL match.
+
 In Celery mode, Wiki ingest/finalize task rows still live in PostgreSQL and are dispatched to the Wiki queue for hard isolation from document parsing and embedding work.
 
 ## Chat Event Streaming
 
 The public `/chat/stream` SSE payloads remain backwards-compatible. Internally, chat events can be appended to a StreamManager by conversation/session id and message id. The current implementation provides an in-memory StreamManager foundation and adds stream metadata to outgoing JSON payloads under `_stream`, which old clients ignore. Stored events use monotonic offsets so future clients can reconnect with a last-seen offset and replay missed events before terminal `[DONE]`.
+
+`chat_mode: "rag_wiki"` routes to the Hybrid RAG + Wiki runtime policy and the `hybrid_rag_wiki_agent` system prompt. Runtime context includes a `capabilities` attribute for each bound knowledge base so the agent can internally route between Wiki pages, raw chunk retrieval, and graph evidence without probing unavailable surfaces.
+
+Chat history is relational and authoritative. The conversation repository stores sessions with tenant/user ownership plus `agent_config`, and messages with paired `request_id` values and `is_completed`. Redis is only auxiliary for current stream event replay and temporary web-search knowledge state; history loading and prompt context never read Redis.
+
+For a new `/chat/stream` request, the backend resolves the request Principal, creates or scopes the session, saves the completed user message, and saves an empty incomplete assistant placeholder before any answer event is emitted. The first public stream metadata includes `session_id`, `conversation_id`, `request_id`, `user_message_id`, `assistant_message_id`, and legacy `stream_message_id`. Normal completion updates that assistant placeholder once with the final answer, sources, chat mode metadata, and `is_completed=true`.
+
+Prompt context and UI history now use separate repository paths. `list_recent_messages` selects the newest bounded window for prompt construction and then returns chronological order. `list_messages_before_time` implements cursor pagination for the UI with a default page size of 20, descending SQL selection, ascending service sort, user-before-assistant tie-breakers, and `hasMoreHistory`.
 
 When `CHAT_RAG_PIPELINE_ENABLED=true`, quick-answer chat uses the online Chat/RAG plugin pipeline in `backend/app/services/chat_pipeline/` instead of the raw helper in `main.py`. The first quick-RAG stage list is:
 
@@ -84,7 +96,11 @@ When `CHAT_RAG_PIPELINE_ENABLED=true`, quick-answer chat uses the online Chat/RA
 
 Stages share a typed context with immutable request data, explicit mutable state, and runtime handles for `RAGService`, conversation service, memory service, EventBus, stream identity, and stop signal. Stage progress is recorded on the context, and public stage events are converted to the existing stored SSE shape by `main.py`.
 
-Fallback and cancellation are handled at pipeline boundaries. Empty retrieval still emits compatible `sources` and reasoning metadata before answer generation delegates to the existing `RAGService.stream_answer` behavior. Rerank degradation decisions remain owned by `RAGService.hybrid_retrieve_hits` and are copied into pipeline retrieval debug state. If the stop signal is set before a stage or during token streaming, the executor emits a compatible `stop` event and terminal `[DONE]`; stopped streams do not persist an ambiguous assistant message.
+Fallback and cancellation are handled at pipeline boundaries. Empty retrieval still emits compatible `sources` and reasoning metadata before answer generation delegates to the existing `RAGService.stream_answer` behavior. Rerank degradation decisions remain owned by `RAGService.hybrid_retrieve_hits` and are copied into pipeline retrieval debug state. If the stop signal is set before a stage or during token streaming, the executor emits a compatible `stop` event and terminal `[DONE]`; the runtime completes the existing assistant placeholder with the exact accumulated partial answer and stopped metadata.
+
+Refresh recovery uses StreamManager as a transient event log. Every public event is appended before SSE delivery, and replay polls storage every 100ms from the requested offset until complete, stop, or terminal error. Redis mode stores events under `stream:events:{sessionId}:{messageId}` with a configurable TTL that defaults to 24 hours; memory mode is development-only for replay across refresh/restart/multi-replica scenarios.
+
+Stop is distributed through StreamManager rather than direct HTTP-handler cancellation. The stop endpoint validates the scoped assistant row and appends a `stop` event. The active SSE loop and an independent 300ms stop watcher both observe that event and set the runtime stop signal. Stopped partial answers are completed in the message table but are not submitted to feedback or corrective knowledge indexing.
 
 The retrieval-only subset is:
 

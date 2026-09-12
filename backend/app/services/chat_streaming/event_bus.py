@@ -33,7 +33,9 @@ class ChatEventBus:
         self._subscribers.append(handler)
 
     def publish(self, event_type: str, payload: dict[str, Any] | None = None, *, terminal: bool = False) -> ChatStreamEvent:
-        event = ChatStreamEvent(event_type=event_type, payload=_sanitize_payload(payload or {}), terminal=terminal)
+        body = dict(payload or {})
+        sanitized = body if event_type == "token" else _sanitize_payload(body)
+        event = ChatStreamEvent(event_type=event_type, payload=sanitized, terminal=terminal)
         for handler in list(self._subscribers):
             handler(event)
         return event

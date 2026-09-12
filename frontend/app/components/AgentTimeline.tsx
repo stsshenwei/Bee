@@ -42,7 +42,7 @@ export function AgentTimeline({ message, streaming }: { message: ChatMessage; st
         <div className="agent-timeline-body">
           <ol className="agent-timeline-list">
             {steps.map((step, index) => (
-              <AgentTimelineStepView key={step.id} step={step} last={index === steps.length - 1} />
+              <AgentTimelineStepView key={`${step.id}-${step.kind}-${index}`} step={step} last={index === steps.length - 1} />
             ))}
           </ol>
           <p className="agent-timeline-note">可审计执行摘要，不展示隐藏推理链。</p>

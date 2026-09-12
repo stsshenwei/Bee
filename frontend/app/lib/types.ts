@@ -47,6 +47,7 @@ export type AgentToolSummary = {
   citations?: number;
   usedChunks?: number;
   resultCount?: number;
+  queryCandidates?: number;
   docCount?: number;
   matchedChunks?: number;
   readChunks?: number;
@@ -128,9 +129,18 @@ export type MemoryUpdate = MemoryRecord & {
 };
 
 export type ChatMessage = {
+  id?: string;
+  session_id?: string;
+  conversation_id?: string;
+  request_id?: string;
+  assistant_message_id?: string;
+  created_at?: string;
+  updated_at?: string | null;
+  is_completed?: boolean;
+  stopped?: boolean;
   role: "user" | "assistant";
   content: string;
-  chatMode?: "quick" | "reasoning" | "wiki";
+  chatMode?: "quick" | "reasoning" | "wiki" | "rag_wiki";
   attachments?: ChatMessageAttachment[];
   sources?: SourceItem[];
   reasoning?: ReasoningSummary;
@@ -140,6 +150,38 @@ export type ChatMessage = {
   evidenceSummary?: Record<string, unknown>;
   citationVerification?: Record<string, unknown>;
   agentCompleted?: boolean;
+};
+
+export type ChatHistoryMessage = {
+  id: string;
+  session_id: string;
+  conversation_id: string;
+  request_id: string;
+  role: "user" | "assistant";
+  content: string;
+  metadata_json: Record<string, unknown>;
+  is_completed: boolean;
+  created_at: string;
+  updated_at?: string | null;
+};
+
+export type MessagesLoadResponse = {
+  session_id: string;
+  conversation_id: string;
+  items: ChatHistoryMessage[];
+  hasMoreHistory: boolean;
+};
+
+export type ChatSessionSummary = {
+  id: string;
+  session_id: string;
+  conversation_id: string;
+  title: string;
+  last_message_preview: string;
+  is_running: boolean;
+  agent_config: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
 };
 
 export type ChatAttachment = {
@@ -245,13 +287,11 @@ export type KnowledgeBaseAggregate = {
 };
 
 export type KnowledgeBaseType = "document" | "faq" | "wiki" | "future";
+export type KnowledgeBaseSelectableType = "document" | "wiki";
 
 export type KnowledgeBaseCreationSection =
   | "basic"
   | "type"
-  | "model"
-  | "vector"
-  | "parser"
   | "chunking"
   | "image_ocr"
   | "audio"
@@ -270,6 +310,7 @@ export type KnowledgeCreationWizardSettings = {
   name: string;
   description: string;
   type: KnowledgeBaseType;
+  selectedTypes?: KnowledgeBaseSelectableType[];
   isDefault: boolean;
   activeSection: KnowledgeBaseCreationSection;
   indexingStrategy: {
@@ -389,6 +430,7 @@ export type UploadBatchSettings = {
   embedding_token_limit?: number;
   dense_enabled?: boolean;
   keyword_enabled?: boolean;
+  wiki_enabled?: boolean;
   question_generation_enabled?: boolean;
   graph_enabled?: boolean;
   ocr_enabled?: boolean;

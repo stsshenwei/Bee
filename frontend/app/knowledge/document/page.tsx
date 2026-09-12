@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { LibraryIcon } from "../../components/Icons";
+import { ArrowLeft, FileText } from "lucide-react";
 import { API_BASE, listKnowledgeBaseDocuments, listKnowledgeBases, previewDocument, readJson } from "../../lib/api";
 import type { DocumentItem, DocumentProcessingPreview, KnowledgeBase, ProcessingPreviewChunk } from "../../lib/types";
 
@@ -128,14 +128,13 @@ export default function KnowledgeDocumentDetailPage() {
     <section className="knowledge-document-detail-page">
       <header className="document-detail-hero">
         <button type="button" className="kb-back" onClick={() => router.push(routeParams.knowledgeBaseId ? `/knowledge?kb=${encodeURIComponent(routeParams.knowledgeBaseId)}` : "/knowledge")}>
-          ← 返回文档
+          <ArrowLeft size={16} /> 返回文档
         </button>
         <div className="document-detail-title-row">
-          <span className="document-detail-file-icon"><LibraryIcon /></span>
+          <span className="document-detail-file-icon"><FileText size={22} /></span>
           <div>
-            <p className="trace-eyebrow">文档详情</p>
             <h1>{documentItem?.name || "文档"}</h1>
-            {source ? <p title={source}>{source}</p> : null}
+            <p>{knowledgeBase?.name || "知识库"} · {documentItem?.file_type?.toUpperCase() || "FILE"} · {formatBytes(documentItem?.size)}</p>
           </div>
         </div>
       </header>
@@ -144,33 +143,7 @@ export default function KnowledgeDocumentDetailPage() {
       {error ? <div className="notice error">{error}</div> : null}
 
       {documentItem ? (
-        <main className="document-detail-layout">
-          <section className="document-detail-section">
-            <header>
-              <h2>基本信息</h2>
-            </header>
-            <dl className="document-detail-meta">
-              {metadataRows.map((row) => (
-                <div key={row.label}>
-                  <dt>{row.label}</dt>
-                  <dd>{row.value}</dd>
-                </div>
-              ))}
-            </dl>
-          </section>
-
-          <section className="document-detail-section">
-            <header>
-              <h2>摘要</h2>
-            </header>
-            <p className="document-detail-summary">{summaryText}</p>
-            {documentItem.keywords_json?.length ? (
-              <div className="kb-keywords">
-                {documentItem.keywords_json.map((keyword) => <span key={keyword}>{keyword}</span>)}
-              </div>
-            ) : null}
-          </section>
-
+        <div className="document-detail-layout">
           <section className="document-detail-section document-detail-content-section">
             <header className="document-detail-content-head">
               <div>
@@ -188,7 +161,19 @@ export default function KnowledgeDocumentDetailPage() {
               <ChunkPreviewPanel loading={processingPreview.loading} error={processingPreview.error} chunks={chunks} />
             )}
           </section>
-        </main>
+          <aside className="document-detail-context" aria-label="文档资料">
+            <section className="document-detail-section">
+              <header><h2>摘要</h2></header>
+              <p className="document-detail-summary">{summaryText}</p>
+              {documentItem.keywords_json?.length ? <div className="kb-keywords">{documentItem.keywords_json.map((keyword) => <span key={keyword}>{keyword}</span>)}</div> : null}
+            </section>
+            <section className="document-detail-section">
+              <header><h2>基本信息</h2></header>
+              <dl className="document-detail-meta">{metadataRows.map((row) => <div key={row.label}><dt>{row.label}</dt><dd>{row.value}</dd></div>)}</dl>
+              {source ? <details className="document-detail-source"><summary>来源路径</summary><p>{source}</p></details> : null}
+            </section>
+          </aside>
+        </div>
       ) : null}
     </section>
   );

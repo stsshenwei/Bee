@@ -109,6 +109,22 @@ class WikiAgentToolTests(unittest.TestCase):
         self.assertTrue(proposal.success)
         self.assertIn("write_page", proposal.output)
 
+    def test_wiki_search_accepts_multiple_keyword_queries(self):
+        context = self._context()
+        registry = build_default_tool_registry(
+            enabled_tools=("wiki_search",),
+            max_output_chars=4000,
+            skills_enabled=False,
+            wiki_tools_enabled=True,
+        )
+
+        search = registry.execute("wiki_search", {"queries": ["missing", "Redis|cache"], "top_k": 5}, context)
+
+        self.assertTrue(search.success)
+        self.assertIn('"queries": ["missing", "Redis", "cache"]', search.output)
+        self.assertIn("redis", search.output)
+        self.assertEqual(1, search.metadata["result_count"])
+
     def test_wiki_guided_source_fallback_and_conflict_issue_tool(self):
         context = self._context()
         registry = build_default_tool_registry(

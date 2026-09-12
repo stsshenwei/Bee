@@ -160,6 +160,41 @@ class AgentRuntimePromptsToolsTests(unittest.TestCase):
         self.assertIn("wiki_read_source_doc", policy.enabled_tools)
         self.assertTrue(policy.require_deep_read)
 
+    def test_hybrid_rag_wiki_prompt_and_runtime_policy_use_both_surfaces(self):
+        catalog = AgentPromptCatalog.load("config/prompt_templates/agent_system_prompt.yaml")
+        rendered = catalog.render(
+            "hybrid_rag_wiki_agent",
+            knowledge_bases=[
+                {
+                    "id": "kb1",
+                    "name": "Hybrid KB",
+                    "type": "document",
+                    "doc_count": 2,
+                    "capabilities": ["chunks", "wiki", "graph"],
+                }
+            ],
+            tools=[
+                {"name": "wiki_search", "description": "Search Wiki"},
+                {"name": "knowledge_search", "description": "Search chunks"},
+                {"name": "list_knowledge_chunks", "description": "Read chunks"},
+            ],
+            skills=[],
+        )
+        policy = resolve_chat_runtime_policy("rag_wiki", AgentRuntimeConfig())
+
+        self.assertIn("Hybrid RAG + Wiki agent", rendered)
+        self.assertIn('capabilities="chunks,wiki,graph"', rendered)
+        self.assertIn("wiki_search", rendered)
+        self.assertIn("knowledge_search", rendered)
+        self.assertIn("list_knowledge_chunks", rendered)
+        self.assertEqual("rag_wiki", policy.mode)
+        self.assertEqual("hybrid_rag_wiki_agent", policy.prompt_template_id)
+        self.assertIn("wiki_search", policy.enabled_tools)
+        self.assertIn("knowledge_search", policy.enabled_tools)
+        self.assertIn("query_knowledge_graph", policy.enabled_tools)
+        self.assertTrue(policy.require_deep_read)
+        self.assertFalse(policy.grep_first_enabled)
+
     def test_grep_tool_description_prefers_one_packed_alternation_call(self):
         tool = GrepChunksTool()
 

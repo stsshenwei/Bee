@@ -3,11 +3,13 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 from app.models.document_models import Chunk
 from app.services.documents.document_repository import DocumentRepository
 from app.services.knowledge.knowledge_base_repository import KnowledgeBaseRepository
 from app.services.knowledge.knowledge_base_service import KnowledgeBaseService
+from app.services.processing.processing_task_repository import ProcessingTaskRepository
 from app.services.storage.storage_schema import initialize_metadata_database
 from app.services.wiki.wiki_repository import WikiRepository, WikiVersionConflictError
 from app.services.wiki.wiki_service import WikiPageService, WikiValidationError
@@ -45,6 +47,30 @@ class WikiRepositoryServiceTests(unittest.TestCase):
                 )
             finally:
                 conn.close()
+
+    def test_overview_reconciles_finalizing_generation_after_processing_completes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "metadata.sqlite3"
+            _, wiki_service, scope = self._services(path)
+            processing_repository = ProcessingTaskRepository(path)
+            wiki_service.ingest_service = SimpleNamespace(processing_repository=processing_repository)
+            generation = wiki_service.repository.create_generation_task(scope, doc_id="doc-1")
+            wiki_service.repository.update_generation_task(scope, generation.id, status="finalizing", page_slug="index")
+            finalize = processing_repository.create_task(
+                "wiki.finalize",
+                scope,
+                payload={"generation_task_ids": [generation.id]},
+            )
+
+            active_overview = wiki_service.overview(scope)
+            self.assertEqual(1, active_overview["active_task_count"])
+            self.assertEqual("finalizing", wiki_service.repository.get_generation_task(scope, generation.id).status)
+
+            processing_repository.complete(finalize["id"])
+            completed_overview = wiki_service.overview(scope)
+
+            self.assertEqual(0, completed_overview["active_task_count"])
+            self.assertEqual("completed", wiki_service.repository.get_generation_task(scope, generation.id).status)
 
     def test_pages_are_scoped_unique_and_archived_slug_can_be_reused(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -204,6 +230,25 @@ class WikiRepositoryServiceTests(unittest.TestCase):
             self.assertEqual(["onu"], [item["slug"] for item in alias_matches])
             with self.assertRaisesRegex(ValueError, "cursor"):
                 wiki_service.list_pages(scope, cursor="not-a-cursor")
+
+    def test_search_pages_expands_chinese_questions_into_recall_terms(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, wiki_service, scope = self._services(Path(tmp) / "metadata.sqlite3")
+            wiki_service.create_page(
+                scope,
+                {
+                    "slug": "security-authentication",
+                    "title": "ONU认证机制",
+                    "status": "published",
+                    "summary": "SN认证、Password认证、Loid认证和混合认证。",
+                    "content_markdown": "设备支持 SN认证、Password认证、Loid认证和混合认证。",
+                },
+            )
+
+            matches = wiki_service.search_pages(scope, "该设备支持哪些安全认证？", limit=5)
+
+            self.assertEqual(["security-authentication"], [item["slug"] for item in matches])
+            self.assertIn("认证", matches[0]["matched_query"])
 
     def test_link_refresh_graph_issue_and_proposal_lifecycle(self):
         with tempfile.TemporaryDirectory() as tmp:

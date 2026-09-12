@@ -149,6 +149,7 @@ class ProcessingTaskRepositoryTests(unittest.TestCase):
                     "schema_version": 1,
                     "generation_run_id": "run-1",
                     "generation_run_ids": ["run-1"],
+                    "generation_task_ids": ["gen-1"],
                     "document_ids": ["doc-1"],
                     "affected_slugs": ["onu"],
                 },
@@ -156,13 +157,20 @@ class ProcessingTaskRepositoryTests(unittest.TestCase):
             merged = repo.merge_runnable_task_payload(
                 self.scope,
                 "wiki.finalize",
-                {"generation_run_id": "run-2", "generation_run_ids": ["run-2"], "document_ids": ["doc-2"], "affected_slugs": ["gpon", "onu"]},
+                {
+                    "generation_run_id": "run-2",
+                    "generation_run_ids": ["run-2"],
+                    "generation_task_ids": ["gen-2", "gen-1"],
+                    "document_ids": ["doc-2"],
+                    "affected_slugs": ["gpon", "onu"],
+                },
             )
 
             self.assertEqual(first["id"], merged["id"])
             self.assertEqual(["doc-1", "doc-2"], merged["payload"]["document_ids"])
             self.assertEqual(["onu", "gpon"], merged["payload"]["affected_slugs"])
             self.assertEqual(["run-1", "run-2"], merged["payload"]["generation_run_ids"])
+            self.assertEqual(["gen-1", "gen-2"], merged["payload"]["generation_task_ids"])
 
     def test_retry_complete_cancel_and_dead_letter_lifecycle(self):
         with tempfile.TemporaryDirectory() as tmp:

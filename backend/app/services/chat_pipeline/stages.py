@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Iterable
 
 from app.services.chat_pipeline.types import ChatPipelineContext, ChatPipelineEvent, StageId
@@ -15,7 +16,14 @@ class EmitConversationStage:
         request = context.request
         return ChatPipelineEvent(
             "conversation_id",
-            {"conversation_id": request.conversation_id, "stream_message_id": request.stream_message_id},
+            {
+                "conversation_id": request.conversation_id,
+                "session_id": request.conversation_id,
+                "stream_message_id": request.stream_message_id,
+                "assistant_message_id": request.assistant_message_id or request.stream_message_id,
+                "request_id": request.request_id,
+                "user_message_id": request.user_message_id,
+            },
         )
 
 
@@ -26,7 +34,13 @@ class LoadHistoryStage:
     def run(self, context: ChatPipelineContext) -> None:
         service = context.runtime.conversation_service
         if service is not None:
-            context.state.conversation_context = service.build_context(context.request.conversation_id)
+            try:
+                context.state.conversation_context = service.build_context(
+                    context.request.conversation_id,
+                    principal=context.request.principal,
+                )
+            except TypeError:
+                context.state.conversation_context = service.build_context(context.request.conversation_id)
 
 
 @dataclass(frozen=True)
@@ -109,6 +123,7 @@ class EmitReasoningStage:
 
     def run(self, context: ChatPipelineContext) -> ChatPipelineEvent:
         reasoning = context.runtime.rag_service.build_reasoning_summary(context.request.question, context.state.hits)
+        context.state.reasoning = dict(reasoning or {})
         return ChatPipelineEvent("reasoning", {"reasoning": reasoning})
 
 
@@ -126,10 +141,12 @@ class EmitAgentTraceStage:
             trace_kwargs["scope"] = context.request.scope
         if "sources" in trace_parameters:
             trace_kwargs["sources"] = context.state.sources
-        return (
-            ChatPipelineEvent("agent_trace", {"agent_trace": trace_step})
-            for trace_step in build_agent_trace(context.request.question, context.state.hits, **trace_kwargs)
-        )
+        def events() -> Iterable[ChatPipelineEvent]:
+            for trace_step in build_agent_trace(context.request.question, context.state.hits, **trace_kwargs):
+                _remember_agent_event(context, "agent_trace", trace_step)
+                yield ChatPipelineEvent("agent_trace", {"agent_trace": trace_step})
+
+        return events()
 
 
 @dataclass(frozen=True)
@@ -173,18 +190,37 @@ class PersistAssistantMessageStage:
         service = context.runtime.conversation_service
         if service is None:
             return
-        service.repository.append_message(
-            context.request.conversation_id,
-            "assistant",
-            context.state.answer,
-            {
-                "sources": context.state.sources,
-                "knowledge_base_scope": context.request.scope.to_dict(),
-                "chat_mode": context.request.chat_mode,
-                "temporary_attachment_ids": context.request.temporary_attachment_ids,
-            },
-        )
-        service.maybe_summarize(context.request.conversation_id)
+        metadata = {
+            "sources": context.state.sources,
+            "knowledge_base_scope": context.request.scope.to_dict(),
+            "chat_mode": context.request.chat_mode,
+            "temporary_attachment_ids": context.request.temporary_attachment_ids,
+        }
+        if context.state.reasoning:
+            metadata["reasoning"] = context.state.reasoning
+        if context.state.agent_events:
+            metadata["agent_events"] = context.state.agent_events
+        if context.state.agent_events_truncated:
+            metadata["agent_events_truncated"] = True
+        complete = getattr(service.repository, "complete_assistant_message", None)
+        if callable(complete) and (context.request.assistant_message_id or context.request.stream_message_id):
+            complete(
+                context.request.conversation_id,
+                context.request.assistant_message_id or context.request.stream_message_id,
+                context.state.answer,
+                metadata,
+            )
+        else:
+            service.repository.append_message(
+                context.request.conversation_id,
+                "assistant",
+                context.state.answer,
+                metadata,
+            )
+        try:
+            service.maybe_summarize(context.request.conversation_id, principal=context.request.principal)
+        except TypeError:
+            service.maybe_summarize(context.request.conversation_id)
         context.state.persisted_assistant_message = True
 
 
@@ -234,3 +270,17 @@ def _merge_sources(sources: list[dict[str, Any]], temporary_sources: list[dict[s
             merged.append(item)
             seen.add(key)
     return merged
+
+
+def _remember_agent_event(context: ChatPipelineContext, kind: str, payload: dict[str, Any]) -> None:
+    if len(context.state.agent_events) >= 200:
+        context.state.agent_events_truncated = True
+        return
+    context.state.agent_events.append(
+        {
+            "kind": kind,
+            "payload": dict(payload or {}),
+            "sequence": len(context.state.agent_events) + 1,
+            "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
+        }
+    )

@@ -1,11 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { applyKnowledgeBaseTypePreset, toKnowledgeBaseCreateInput, validateKnowledgeCreationSettings } from "./knowledge-validation.ts";
+import {
+  applyKnowledgeBaseTypePreset,
+  selectedKnowledgeBaseTypes,
+  toKnowledgeBaseCreateInput,
+  validateKnowledgeCreationSettings,
+} from "./knowledge-validation.ts";
 
 const baseSettings = {
   name: " 产品资料 ",
   description: " 文档知识库 ",
   type: "document",
+  selectedTypes: ["document"],
   isDefault: false,
   activeSection: "basic",
   indexingStrategy: {
@@ -42,24 +48,26 @@ test("blocks empty knowledge-base names without losing wizard section context", 
   assert.deepEqual(result, { ok: false, section: "basic", message: "请输入知识库名称" });
 });
 
-test("allows supported metadata knowledge-base types and blocks placeholders", () => {
-  const faq = validateKnowledgeCreationSettings({ ...baseSettings, type: "faq", activeSection: "type" });
-  const future = validateKnowledgeCreationSettings({ ...baseSettings, type: "future", activeSection: "type" });
+test("allows creation-selectable knowledge-base types and blocks removed placeholders", () => {
+  const wiki = validateKnowledgeCreationSettings({ ...baseSettings, type: "wiki", selectedTypes: ["wiki"], activeSection: "type" });
+  const faq = validateKnowledgeCreationSettings({ ...baseSettings, type: "faq", selectedTypes: [], activeSection: "type" });
+  const future = validateKnowledgeCreationSettings({ ...baseSettings, type: "future", selectedTypes: [], activeSection: "type" });
 
-  assert.deepEqual(faq, { ok: true });
-  assert.deepEqual(future, { ok: false, section: "type", message: "当前仅支持 Document、FAQ 或 Wiki 类型知识库" });
+  assert.deepEqual(wiki, { ok: true });
+  assert.deepEqual(faq, { ok: false, section: "type", message: "当前仅支持 Document 或 Wiki 类型知识库" });
+  assert.deepEqual(future, { ok: false, section: "type", message: "当前仅支持 Document 或 Wiki 类型知识库" });
 });
 
-test("builds supported create payload while preserving requested settings", () => {
+test("derives document and wiki indexes from multi-selected types", () => {
   const payload = toKnowledgeBaseCreateInput({
     ...baseSettings,
-    type: "wiki",
+    selectedTypes: ["document", "wiki"],
     isDefault: true,
     indexingStrategy: {
-      dense_enabled: true,
+      dense_enabled: false,
       keyword_enabled: false,
       graph_enabled: true,
-      wiki_enabled: true,
+      wiki_enabled: false,
       wiki_generation_enabled: true,
       wiki_auto_publish_enabled: false,
     },
@@ -68,12 +76,12 @@ test("builds supported create payload while preserving requested settings", () =
 
   assert.equal(payload.name, "产品资料");
   assert.equal(payload.description, "文档知识库");
-  assert.equal(payload.type, "wiki");
+  assert.equal(payload.type, "document");
   assert.equal(payload.is_default, true);
   assert.deepEqual(payload.indexing_strategy, {
     dense_enabled: true,
-    keyword_enabled: false,
-    graph_enabled: true,
+    keyword_enabled: true,
+    graph_enabled: false,
     wiki_enabled: true,
     wiki_generation_enabled: true,
     wiki_auto_publish_enabled: false,
@@ -81,21 +89,23 @@ test("builds supported create payload while preserving requested settings", () =
   assert.equal(payload.provider_config.parser, "default");
 });
 
-test("applies Wiki-only preset without preventing later explicit combinations", () => {
-  const wiki = applyKnowledgeBaseTypePreset(baseSettings, "wiki");
-  assert.deepEqual(wiki.indexingStrategy, {
-    dense_enabled: false,
-    keyword_enabled: false,
+test("toggles type cards while keeping at least one selected type", () => {
+  const combined = applyKnowledgeBaseTypePreset(baseSettings, "wiki");
+  assert.deepEqual(selectedKnowledgeBaseTypes(combined), ["document", "wiki"]);
+  assert.deepEqual(combined.indexingStrategy, {
+    dense_enabled: true,
+    keyword_enabled: true,
     graph_enabled: false,
     wiki_enabled: true,
     wiki_generation_enabled: true,
     wiki_auto_publish_enabled: false,
   });
 
-  const combined = {
-    ...wiki,
-    indexingStrategy: { ...wiki.indexingStrategy, dense_enabled: true },
-  };
-  assert.equal(toKnowledgeBaseCreateInput(combined).indexing_strategy.dense_enabled, true);
-  assert.equal(toKnowledgeBaseCreateInput(combined).indexing_strategy.wiki_enabled, true);
+  const wikiOnly = applyKnowledgeBaseTypePreset(combined, "document");
+  assert.deepEqual(selectedKnowledgeBaseTypes(wikiOnly), ["wiki"]);
+  assert.equal(wikiOnly.type, "wiki");
+  assert.equal(toKnowledgeBaseCreateInput(wikiOnly).indexing_strategy.dense_enabled, false);
+  assert.equal(toKnowledgeBaseCreateInput(wikiOnly).indexing_strategy.wiki_enabled, true);
+
+  assert.deepEqual(selectedKnowledgeBaseTypes(applyKnowledgeBaseTypePreset(wikiOnly, "wiki")), ["wiki"]);
 });

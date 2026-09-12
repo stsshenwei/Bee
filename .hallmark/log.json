@@ -1,5 +1,21 @@
 [
   {
+    "date": "2026-09-09",
+    "scope": "app",
+    "macrostructure": "Knowledge Workspace",
+    "theme": "Forest Utility",
+    "enrichment": "none",
+    "brief": "Structural redesign with compact headers, inline metrics, progressive filters, reading columns, full-width graph and in-flow chat composer."
+  },
+  {
+    "date": "2026-09-09",
+    "scope": "app",
+    "macrostructure": "Workbench",
+    "theme": "Cobalt",
+    "enrichment": "none",
+    "brief": "Full visual redesign of Bee chat, knowledge, wiki, document, and trace workspaces."
+  },
+  {
     "date": "2026-07-22",
     "macrostructure": "Workspace Shell",
     "theme": "Operational Knowledge Console",

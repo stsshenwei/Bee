@@ -430,6 +430,7 @@ class AgentRuntimeLoopTests(unittest.TestCase):
 
         quick = resolve_chat_runtime_policy("quick", config)
         reasoning = resolve_chat_runtime_policy("reasoning", config)
+        rag_wiki = resolve_chat_runtime_policy("rag_wiki", config)
 
         self.assertEqual("quick", quick.mode)
         self.assertEqual("quick_rag_agent", quick.prompt_template_id)
@@ -441,6 +442,10 @@ class AgentRuntimeLoopTests(unittest.TestCase):
         self.assertTrue(reasoning.require_deep_read)
         self.assertTrue(reasoning.grep_first_enabled)
         self.assertEqual(7, reasoning.max_iterations)
+        self.assertEqual("rag_wiki", rag_wiki.mode)
+        self.assertEqual("hybrid_rag_wiki_agent", rag_wiki.prompt_template_id)
+        self.assertIn("wiki_search", rag_wiki.enabled_tools)
+        self.assertIn("knowledge_search", rag_wiki.enabled_tools)
 
     def test_event_bus_sanitizes_publishes_and_cleans_subscribers(self):
         bus = AgentEventBus()

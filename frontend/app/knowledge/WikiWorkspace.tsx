@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -76,6 +77,36 @@ type WikiWorkspaceProps = {
 };
 
 const ACTIVE_TASK_STATES = new Set(["pending", "queued", "processing", "running", "retrying", "finalizing"]);
+const GRAPH_FIT_ZOOM = 0.78;
+const GRAPH_MIN_ZOOM = 0.48;
+const GRAPH_MAX_ZOOM = 1.6;
+const GRAPH_LAYOUT_WIDTH = 1360;
+const GRAPH_LAYOUT_HEIGHT = 680;
+const REDUNDANT_WIKI_TYPE_HEADINGS = new Set([
+  "\u6458\u8981",
+  "\u6458\u8981\u9875\u9762",
+  "\u5b9e\u4f53",
+  "\u5b9e\u4f53\u9875\u9762",
+  "\u6982\u5ff5",
+  "\u6982\u5ff5\u9875\u9762",
+  "\u624b\u5de5\u9875\u9762",
+]);
+
+type GraphPosition = { x: number; y: number; r: number };
+type GraphVelocity = { x: number; y: number };
+type GraphDragState = {
+  slug: string;
+  pointerId: number;
+  offsetX: number;
+  offsetY: number;
+  startClientX: number;
+  startClientY: number;
+  moved: boolean;
+};
+
+function isActiveWikiTaskStatus(status: string) {
+  return ACTIVE_TASK_STATES.has(String(status || "").trim().toLowerCase());
+}
 
 export function WikiWorkspace({ selected, documents, onOpenDocument, workspaceMode }: WikiWorkspaceProps) {
   const [query, setQuery] = useState("");
@@ -100,8 +131,37 @@ export function WikiWorkspace({ selected, documents, onOpenDocument, workspaceMo
   const [graphTypes, setGraphTypes] = useState(["summary", "entity", "concept", "manual"]);
   const [graphQuery, setGraphQuery] = useState("");
   const [graphSearchResults, setGraphSearchResults] = useState<WikiPage[]>([]);
-  const [graphZoom, setGraphZoom] = useState(1);
+  const [graphZoom, setGraphZoom] = useState(GRAPH_FIT_ZOOM);
+  const [graphPan, setGraphPan] = useState({
+    x: (GRAPH_LAYOUT_WIDTH / 2) * (1 - GRAPH_FIT_ZOOM),
+    y: (GRAPH_LAYOUT_HEIGHT / 2) * (1 - GRAPH_FIT_ZOOM),
+  });
   const [hoveredGraphSlug, setHoveredGraphSlug] = useState("");
+  const [dynamicGraphPositions, setDynamicGraphPositions] = useState<Map<string, GraphPosition>>(new Map());
+  const [graphSettleNonce, setGraphSettleNonce] = useState(0);
+  const graphCanvasRef = useRef<HTMLDivElement>(null);
+  const [graphMotionAllowed, setGraphMotionAllowed] = useState(false);
+
+  useEffect(() => {
+    if (workspaceMode !== "graph") {
+      setGraphMotionAllowed(false);
+      return;
+    }
+    const preference = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const update = () => setGraphMotionAllowed(!document.hidden && !preference.matches);
+    update();
+    preference.addEventListener("change", update);
+    document.addEventListener("visibilitychange", update);
+    return () => {
+      preference.removeEventListener("change", update);
+      document.removeEventListener("visibilitychange", update);
+    };
+  }, [workspaceMode]);
+  const graphVelocityRef = useRef<Map<string, GraphVelocity>>(new Map());
+  const graphPinnedRef = useRef<Set<string>>(new Set());
+  const graphDragRef = useRef<GraphDragState | null>(null);
+  const graphSuppressClickRef = useRef("");
+  const graphRootRef = useRef<SVGGElement | null>(null);
   const [drawer, setDrawer] = useState<"" | "details" | "issues" | "source">("");
   const [sourcePanel, setSourcePanel] = useState<{ title: string; chunks: Array<Record<string, unknown>>; error: string }>({ title: "", chunks: [], error: "" });
   const [loading, setLoading] = useState(false);
@@ -126,7 +186,9 @@ export function WikiWorkspace({ selected, documents, onOpenDocument, workspaceMo
     return Array.from(groups.entries()).sort(([left], [right]) => left.localeCompare(right, "zh-CN"));
   }, [visiblePages]);
 
-  const activeTasks = processingTasks.filter((task) => ACTIVE_TASK_STATES.has(task.status));
+  const activeTasks = processingTasks.filter((task) => isActiveWikiTaskStatus(task.status));
+  const activeGenerationTasks = generationTasks.filter((task) => isActiveWikiTaskStatus(task.status));
+  const activeWikiTaskCount = activeGenerationTasks.length || activeTasks.length;
 
   useEffect(() => {
     const groupNames = groupedPages.map(([group]) => group);
@@ -242,7 +304,7 @@ export function WikiWorkspace({ selected, documents, onOpenDocument, workspaceMo
   }, [graphQuery, selected.id, workspaceMode]);
 
   useEffect(() => {
-    if (!activeTasks.length && !(overview?.active_task_count || 0)) return;
+    if (!activeWikiTaskCount && !(overview?.active_task_count || 0)) return;
     const timer = window.setInterval(() => {
       void Promise.all([
         getWikiOverview(selected.id),
@@ -255,7 +317,7 @@ export function WikiWorkspace({ selected, documents, onOpenDocument, workspaceMo
       });
     }, 2500);
     return () => window.clearInterval(timer);
-  }, [selected.id, activeTasks.length, overview?.active_task_count]);
+  }, [selected.id, activeWikiTaskCount, overview?.active_task_count]);
 
   async function loadMoreLogs() {
     if (logCursor === null) return;
@@ -389,16 +451,16 @@ export function WikiWorkspace({ selected, documents, onOpenDocument, workspaceMo
     },
   };
 
-  const allGraphNodes = (graph?.nodes || []) as Array<{ slug?: string; title?: string; page_type?: string }>;
-  const graphNodes = allGraphNodes.filter((node) => {
+  const allGraphNodes = useMemo(() => (graph?.nodes || []) as Array<{ slug?: string; title?: string; page_type?: string }>, [graph]);
+  const graphNodes = useMemo(() => allGraphNodes.filter((node) => {
     const matchesType = graphTypes.includes(String(node.page_type || ""));
     const needle = graphQuery.trim().toLocaleLowerCase("zh-CN");
     return matchesType && (!needle || `${node.title || ""} ${node.slug || ""}`.toLocaleLowerCase("zh-CN").includes(needle));
-  });
-  const graphNodeSet = new Set(graphNodes.map((node) => node.slug));
-  const graphEdges = ((graph?.edges || []) as Array<{ source?: string; target?: string }>).filter((edge) => graphNodeSet.has(edge.source) && graphNodeSet.has(edge.target));
+  }), [allGraphNodes, graphQuery, graphTypes]);
+  const graphNodeSet = useMemo(() => new Set(graphNodes.map((node) => node.slug)), [graphNodes]);
+  const graphEdges = useMemo(() => ((graph?.edges || []) as Array<{ source?: string; target?: string }>).filter((edge) => graphNodeSet.has(edge.source) && graphNodeSet.has(edge.target)), [graph, graphNodeSet]);
   const graphLayout = useMemo(() => buildGraphLayout(graphNodes, graphEdges), [graphNodes, graphEdges]);
-  const graphPositions = graphLayout.positions;
+  const graphPositions = dynamicGraphPositions.size ? dynamicGraphPositions : graphLayout.positions;
   const graphNeighbors = useMemo(() => {
     const neighbors = new Map<string, Set<string>>();
     for (const node of graphNodes) {
@@ -418,6 +480,228 @@ export function WikiWorkspace({ selected, documents, onOpenDocument, workspaceMo
   }, [graphEdges, graphNodes]);
   const focusedGraphSlug = hoveredGraphSlug || (workspaceMode === "graph" && graphNeighbors.has(selectedSlug) ? selectedSlug : "");
   const focusedGraphNeighbors = focusedGraphSlug ? graphNeighbors.get(focusedGraphSlug) || new Set<string>() : null;
+  const graphTransform = `translate(${graphPan.x} ${graphPan.y}) scale(${graphZoom})`;
+
+  function fitGraphCanvas() {
+    setGraphZoom(GRAPH_FIT_ZOOM);
+    setGraphPan({
+      x: (graphLayout.width / 2) * (1 - GRAPH_FIT_ZOOM),
+      y: (graphLayout.height / 2) * (1 - GRAPH_FIT_ZOOM),
+    });
+  }
+
+  useEffect(() => {
+    const nextPositions = copyGraphPositions(graphLayout.positions);
+    const nextVelocity = new Map<string, GraphVelocity>();
+    for (const slug of nextPositions.keys()) {
+      nextVelocity.set(slug, { x: 0, y: 0 });
+    }
+    graphVelocityRef.current = nextVelocity;
+    graphPinnedRef.current = new Set(Array.from(graphPinnedRef.current).filter((slug) => nextPositions.has(slug)));
+    graphDragRef.current = null;
+    graphSuppressClickRef.current = "";
+    setDynamicGraphPositions(nextPositions);
+    setGraphZoom(GRAPH_FIT_ZOOM);
+    setGraphPan({
+      x: (graphLayout.width / 2) * (1 - GRAPH_FIT_ZOOM),
+      y: (graphLayout.height / 2) * (1 - GRAPH_FIT_ZOOM),
+    });
+    setGraphSettleNonce((value) => value + 1);
+  }, [graphLayout]);
+
+  useEffect(() => {
+    if (workspaceMode !== "graph" || !graphMotionAllowed || graphNodes.length === 0) return;
+
+    let frameId = 0;
+    let alpha = 1;
+    const nodeTypes = new Map(graphNodes.map((node) => [String(node.slug || ""), String(node.page_type || "concept")]));
+    const links = graphEdges
+      .map((edge) => ({ source: String(edge.source || ""), target: String(edge.target || "") }))
+      .filter((edge) => edge.source && edge.target);
+
+    const tick = () => {
+      alpha *= graphDragRef.current ? 0.996 : 0.982;
+      const forceAlpha = graphDragRef.current ? Math.max(alpha, 0.36) : alpha;
+
+      setDynamicGraphPositions((current) => {
+        if (!current.size) return current;
+        const next = copyGraphPositions(current);
+        const velocity = graphVelocityRef.current;
+        for (const slug of next.keys()) {
+          if (!velocity.has(slug)) velocity.set(slug, { x: 0, y: 0 });
+        }
+
+        const entries = Array.from(next.entries()).sort((left, right) => left[1].x - right[1].x);
+        const maxRepulsionDistance = 320;
+        const maxRepulsionDistanceSq = maxRepulsionDistance * maxRepulsionDistance;
+        for (let leftIndex = 0; leftIndex < entries.length; leftIndex += 1) {
+          const [leftSlug, left] = entries[leftIndex];
+          for (let rightIndex = leftIndex + 1; rightIndex < entries.length; rightIndex += 1) {
+            const [rightSlug, right] = entries[rightIndex];
+            const dx = right.x - left.x;
+            if (dx > maxRepulsionDistance) break;
+            const dy = right.y - left.y;
+            if (Math.abs(dy) > maxRepulsionDistance) continue;
+            const distanceSq = dx * dx + dy * dy;
+            if (distanceSq > maxRepulsionDistanceSq) continue;
+            const distance = Math.sqrt(Math.max(1, distanceSq));
+            const force = Math.min(14, 26000 / Math.max(900, distanceSq)) * forceAlpha;
+            const forceX = (dx / distance) * force;
+            const forceY = (dy / distance) * force;
+            const leftVelocity = velocity.get(leftSlug)!;
+            const rightVelocity = velocity.get(rightSlug)!;
+            if (!graphPinnedRef.current.has(leftSlug)) {
+              leftVelocity.x -= forceX;
+              leftVelocity.y -= forceY;
+            }
+            if (!graphPinnedRef.current.has(rightSlug)) {
+              rightVelocity.x += forceX;
+              rightVelocity.y += forceY;
+            }
+          }
+        }
+
+        for (const link of links) {
+          const source = next.get(link.source);
+          const target = next.get(link.target);
+          if (!source || !target) continue;
+          const dx = target.x - source.x;
+          const dy = target.y - source.y;
+          const distance = Math.max(1, Math.sqrt(dx * dx + dy * dy));
+          const force = (distance - 150) * 0.012 * forceAlpha;
+          const forceX = (dx / distance) * force;
+          const forceY = (dy / distance) * force;
+          const sourceVelocity = velocity.get(link.source)!;
+          const targetVelocity = velocity.get(link.target)!;
+          if (!graphPinnedRef.current.has(link.source)) {
+            sourceVelocity.x += forceX;
+            sourceVelocity.y += forceY;
+          }
+          if (!graphPinnedRef.current.has(link.target)) {
+            targetVelocity.x -= forceX;
+            targetVelocity.y -= forceY;
+          }
+        }
+
+        for (const [slug, position] of next) {
+          if (graphPinnedRef.current.has(slug)) continue;
+          const anchor = graphAnchorForType(nodeTypes.get(slug) || "concept", graphLayout.width, graphLayout.height);
+          const currentVelocity = velocity.get(slug)!;
+          currentVelocity.x += (anchor.x - position.x) * 0.006 * forceAlpha;
+          currentVelocity.y += (anchor.y - position.y) * 0.006 * forceAlpha;
+          currentVelocity.x *= 0.68;
+          currentVelocity.y *= 0.68;
+          const speed = Math.sqrt(currentVelocity.x * currentVelocity.x + currentVelocity.y * currentVelocity.y);
+          if (speed > 16) {
+            currentVelocity.x = (currentVelocity.x / speed) * 16;
+            currentVelocity.y = (currentVelocity.y / speed) * 16;
+          }
+          position.x = clamp(position.x + currentVelocity.x, 70, graphLayout.width - 70);
+          position.y = clamp(position.y + currentVelocity.y, 82, graphLayout.height - 70);
+        }
+
+        return next;
+      });
+
+      if (alpha > 0.018 || graphDragRef.current) {
+        frameId = requestAnimationFrame(tick);
+      }
+    };
+
+    frameId = requestAnimationFrame(tick);
+    return () => {
+      if (frameId) cancelAnimationFrame(frameId);
+    };
+  }, [graphEdges, graphLayout.height, graphLayout.width, graphNodes, graphSettleNonce, workspaceMode, graphMotionAllowed]);
+
+  function graphPointFromPointer(event: ReactPointerEvent<SVGElement>) {
+    const target = event.currentTarget;
+    const svg = target instanceof SVGSVGElement ? target : target.ownerSVGElement;
+    const matrix = graphRootRef.current?.getScreenCTM()?.inverse() || svg?.getScreenCTM()?.inverse();
+    if (!svg || !matrix) return null;
+    const point = svg.createSVGPoint();
+    point.x = event.clientX;
+    point.y = event.clientY;
+    const transformed = point.matrixTransform(matrix);
+    return { x: transformed.x, y: transformed.y };
+  }
+
+  function zoomGraphWithWheel(event: ReactWheelEvent<SVGSVGElement>) {
+    event.preventDefault();
+    const matrix = event.currentTarget.getScreenCTM()?.inverse();
+    if (!matrix) return;
+    const point = event.currentTarget.createSVGPoint();
+    point.x = event.clientX;
+    point.y = event.clientY;
+    const cursor = point.matrixTransform(matrix);
+    const nextZoom = clamp(graphZoom * (event.deltaY < 0 ? 1.12 : 0.88), GRAPH_MIN_ZOOM, GRAPH_MAX_ZOOM);
+    if (nextZoom === graphZoom) return;
+    const graphX = (cursor.x - graphPan.x) / graphZoom;
+    const graphY = (cursor.y - graphPan.y) / graphZoom;
+    setGraphZoom(nextZoom);
+    setGraphPan({
+      x: cursor.x - graphX * nextZoom,
+      y: cursor.y - graphY * nextZoom,
+    });
+    setGraphSettleNonce((value) => value + 1);
+  }
+
+  function beginGraphNodeDrag(event: ReactPointerEvent<SVGGElement>, slug: string) {
+    if (event.button !== 0) return;
+    const point = graphPointFromPointer(event);
+    const position = graphPositions.get(slug);
+    if (!point || !position) return;
+    event.stopPropagation();
+    graphPinnedRef.current.add(slug);
+    graphVelocityRef.current.set(slug, { x: 0, y: 0 });
+    graphDragRef.current = {
+      slug,
+      pointerId: event.pointerId,
+      offsetX: point.x - position.x,
+      offsetY: point.y - position.y,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      moved: false,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function moveGraphNodeDrag(event: ReactPointerEvent<SVGSVGElement>) {
+    const drag = graphDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const point = graphPointFromPointer(event);
+    if (!point) return;
+    const moved = Math.abs(event.clientX - drag.startClientX) > 4 || Math.abs(event.clientY - drag.startClientY) > 4;
+    graphDragRef.current = { ...drag, moved: drag.moved || moved };
+    setDynamicGraphPositions((current) => {
+      const next = current.size ? copyGraphPositions(current) : copyGraphPositions(graphLayout.positions);
+      const previous = next.get(drag.slug);
+      if (!previous) return current;
+      next.set(drag.slug, {
+        ...previous,
+        x: clamp(point.x - drag.offsetX, 70, graphLayout.width - 70),
+        y: clamp(point.y - drag.offsetY, 82, graphLayout.height - 70),
+      });
+      return next;
+    });
+    graphVelocityRef.current.set(drag.slug, { x: 0, y: 0 });
+  }
+
+  function endGraphNodeDrag(event: ReactPointerEvent<SVGSVGElement>) {
+    const drag = graphDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (drag.moved) graphSuppressClickRef.current = drag.slug;
+    graphDragRef.current = null;
+    setGraphSettleNonce((value) => value + 1);
+  }
+
+  function handleGraphNodeClick(slug: string) {
+    if (graphSuppressClickRef.current === slug) {
+      graphSuppressClickRef.current = "";
+      return;
+    }
+    void openGraphNode(slug);
+  }
 
   async function openGraphNode(slug: string) {
     await selectDestination(slug);
@@ -458,18 +742,34 @@ export function WikiWorkspace({ selected, documents, onOpenDocument, workspaceMo
               return <div className="wiki-tree-group" key={group}><button type="button" className="wiki-tree-heading" onClick={() => setExpandedGroups((current) => current.includes(group) ? current.filter((value) => value !== group) : [...current, group])}>{expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}<strong>{group}</strong><span>{items.length}</span></button>{expanded ? items.map((item) => <NavigationRow key={item.id} page={item} active={selectedSlug === item.slug} knowledgeBaseId={selected.id} onSelect={selectDestination} />) : null}</div>;
             })}
           </div>
-          <button type="button" className="wiki-issues-entry" onClick={() => void openIssueDrawer()}><AlertTriangle size={16} /><span>问题与修复</span>{overview?.open_issue_count ? <b>{overview.open_issue_count}</b> : null}</button>
         </aside>
 
         <main className="wiki-reader-v2">
           {workspaceMode === "graph" ? (
             <section className="wiki-graph-workspace">
-              <header><div><h2>知识图谱</h2><p>{graphNodes.length} 个页面，{graphEdges.length} 条连接</p></div><button type="button" title="刷新图谱" onClick={() => void getWikiGraph(selected.id, { limit: 160 }).then(setGraph)}><RefreshCw size={17} /></button></header>
-              <div className="wiki-graph-toolbar"><div className="wiki-graph-search-wrap"><label className="wiki-search"><Search size={16} /><input value={graphQuery} placeholder="查找图谱页面..." onChange={(event) => setGraphQuery(event.target.value)} /></label>{graphQuery && graphSearchResults.length ? <div className="wiki-graph-search-results">{graphSearchResults.map((item) => <button type="button" key={item.id} onClick={() => { setGraphQuery(item.title); setGraphSearchResults([]); void openGraphNode(item.slug); }}><span>{item.title}</span><small>{wikiTypeLabel(item.page_type)}</small></button>)}</div> : null}</div><div className="wiki-graph-controls"><button type="button" title="缩小" onClick={() => setGraphZoom((value) => Math.max(0.6, value - 0.2))}><ZoomOut size={17} /></button><button type="button" title="适配画布" onClick={() => setGraphZoom(1)}><Maximize2 size={17} /></button><button type="button" title="放大" onClick={() => setGraphZoom((value) => Math.min(1.8, value + 0.2))}><ZoomIn size={17} /></button></div></div>
-              <div className="wiki-graph-filters">{["summary", "entity", "concept", "manual"].map((type) => <label key={type}><input type="checkbox" checked={graphTypes.includes(type)} onChange={() => setGraphTypes((current) => current.includes(type) ? current.filter((value) => value !== type) : [...current, type])} /><span className={`wiki-legend-dot ${type}`} />{wikiTypeLabel(type)}</label>)}</div>
-              <div className="wiki-graph-canvas">
+              <div className="wiki-graph-toolbar"><div className="wiki-graph-search-wrap"><label className="wiki-search"><Search size={16} /><input value={graphQuery} placeholder="查找图谱页面..." onChange={(event) => setGraphQuery(event.target.value)} /></label>{graphQuery && graphSearchResults.length ? <div className="wiki-graph-search-results">{graphSearchResults.map((item) => <button type="button" key={item.id} onClick={() => { setGraphQuery(item.title); setGraphSearchResults([]); void openGraphNode(item.slug); }}><span>{item.title}</span><small>{wikiTypeLabel(item.page_type)}</small></button>)}</div> : null}</div><div className="wiki-graph-controls"><button type="button" title="缩小" onClick={() => setGraphZoom((value) => Math.max(GRAPH_MIN_ZOOM, value - 0.2))}><ZoomOut size={17} /></button><button type="button" title="适配画布" onClick={fitGraphCanvas}><Maximize2 size={17} /></button><button type="button" title="放大" onClick={() => setGraphZoom((value) => Math.min(GRAPH_MAX_ZOOM, value + 0.2))}><ZoomIn size={17} /></button></div></div>
+              <aside className="wiki-graph-info-tag">
+                <header>
+                  <div>
+                    <h2>知识图谱</h2>
+                    <p><span>{graphNodes.length} 页面</span><span>{graphEdges.length} 连接</span></p>
+                  </div>
+                  <button type="button" title="刷新图谱" onClick={() => void getWikiGraph(selected.id, { limit: 160 }).then(setGraph)}><RefreshCw size={17} /></button>
+                </header>
+                <div className="wiki-graph-filters">{["summary", "entity", "concept", "manual"].map((type) => <label key={type}><input type="checkbox" checked={graphTypes.includes(type)} onChange={() => setGraphTypes((current) => current.includes(type) ? current.filter((value) => value !== type) : [...current, type])} /><span className={`wiki-legend-dot ${type}`} />{wikiTypeLabel(type)}</label>)}</div>
+              </aside>
+              <div className="wiki-graph-canvas" ref={graphCanvasRef}>
                 {graphNodes.length ? (
-                  <svg viewBox={`0 0 ${graphLayout.width} ${graphLayout.height}`} role="img" aria-label="Wiki 页面关系图" onMouseLeave={() => setHoveredGraphSlug("")}>
+                  <svg
+                    viewBox={`0 0 ${graphLayout.width} ${graphLayout.height}`}
+                    role="img"
+                    aria-label="Wiki 页面关系图"
+                    onWheel={zoomGraphWithWheel}
+                    onMouseLeave={() => setHoveredGraphSlug("")}
+                    onPointerMove={moveGraphNodeDrag}
+                    onPointerUp={endGraphNodeDrag}
+                    onPointerCancel={endGraphNodeDrag}
+                  >
                     <defs>
                       <marker id="wiki-graph-arrow" viewBox="0 0 12 8" markerWidth="10" markerHeight="10" refX="10" refY="4" orient="auto" markerUnits="strokeWidth">
                         <path d="M0,0 L12,4 L0,8 L3,4 Z" />
@@ -478,7 +778,7 @@ export function WikiWorkspace({ selected, documents, onOpenDocument, workspaceMo
                         <path d="M0,0 L12,4 L0,8 L3,4 Z" />
                       </marker>
                     </defs>
-                    <g transform={`translate(${graphLayout.width / 2 * (1 - graphZoom)} ${graphLayout.height / 2 * (1 - graphZoom)}) scale(${graphZoom})`}>
+                    <g ref={graphRootRef} transform={graphTransform}>
                       {graphEdges.map((edge, index) => {
                         const sourceSlug = String(edge.source || "");
                         const targetSlug = String(edge.target || "");
@@ -518,7 +818,8 @@ export function WikiWorkspace({ selected, documents, onOpenDocument, workspaceMo
                             onMouseEnter={() => setHoveredGraphSlug(slug)}
                             onFocus={() => setHoveredGraphSlug(slug)}
                             onBlur={() => setHoveredGraphSlug("")}
-                            onClick={() => void openGraphNode(slug)}
+                            onPointerDown={(event) => beginGraphNodeDrag(event, slug)}
+                            onClick={() => handleGraphNodeClick(slug)}
                             onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") void openGraphNode(slug); }}
                           >
                             <circle className="node-halo" cx={position.x} cy={position.y} r={radius + 5} />
@@ -543,24 +844,13 @@ export function WikiWorkspace({ selected, documents, onOpenDocument, workspaceMo
           )}
         </main>
 
-        {drawer ? (
+        {drawer && drawer !== "issues" ? (
           <aside className={`wiki-detail-drawer ${workspaceMode === "graph" && drawer === "details" ? "wiki-graph-detail-drawer" : ""}`}>
             <header>
-              <strong>{drawer === "issues" ? "问题与修复" : drawer === "source" ? "来源证据" : workspaceMode === "graph" && page ? page.title : "页面详情"}</strong>
+              <strong>{drawer === "source" ? "来源证据" : workspaceMode === "graph" && page ? page.title : "页面详情"}</strong>
               <button type="button" title="关闭" onClick={() => setDrawer("")}><X size={17} /></button>
             </header>
-            {drawer === "issues" ? (
-              <>
-                <IssuePanel issues={issues} onUpdate={updateIssueStatus} onCleanup={cleanupIssue} />
-                <ProposalPanel proposals={proposals} onApply={applyProposal} onReject={rejectProposal} />
-                {processingTasks.filter((task) => ["retrying", "dead_lettered", "processing", "pending"].includes(task.status)).map((task) => (
-                  <div className="wiki-task-row" key={task.id}>
-                    <span><b>{task.task_type}</b><small>{task.status} · {task.attempt}/{task.max_attempts}</small></span>
-                    {task.status === "dead_lettered" ? <button type="button" title="重试" onClick={() => void retryTask(task.id)}><RotateCcw size={15} /></button> : !["completed", "canceled"].includes(task.status) ? <button type="button" title="取消" onClick={() => void cancelTask(task.id)}><X size={15} /></button> : null}
-                  </div>
-                ))}
-              </>
-            ) : drawer === "source" ? (
+            {drawer === "source" ? (
               <SourcePanel panel={sourcePanel} />
             ) : page ? (
               workspaceMode === "graph" ? (
@@ -572,12 +862,12 @@ export function WikiWorkspace({ selected, documents, onOpenDocument, workspaceMo
           </aside>
         ) : null}
       </div>
-      {activeTasks.length || generationTasks.some((task) => ACTIVE_TASK_STATES.has(task.status)) ? <div className="wiki-task-strip"><Clock3 size={15} /><span>{activeTasks.length || overview?.active_task_count} 个 Wiki 任务正在处理</span><span>向量化已按知识库策略跳过，不影响 Wiki 生成</span></div> : null}
     </section>
   );
 }
 
 function WikiArticle({ page, markdownComponents, onOpenDetails }: { page: WikiPage; markdownComponents: Components; onOpenDetails: () => void }) {
+  const markdown = wikiLinkMarkdown(stripRedundantWikiTypeHeading(page.content_markdown));
   return (
     <article className="wiki-article">
       <header className="wiki-article-head">
@@ -599,7 +889,7 @@ function WikiArticle({ page, markdownComponents, onOpenDetails }: { page: WikiPa
         <button type="button" title="页面详情" onClick={onOpenDetails}><Info size={18} /></button>
       </header>
       <div className="wiki-markdown-v2">
-        <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{wikiLinkMarkdown(page.content_markdown)}</ReactMarkdown>
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{markdown}</ReactMarkdown>
       </div>
     </article>
   );
@@ -607,6 +897,7 @@ function WikiArticle({ page, markdownComponents, onOpenDetails }: { page: WikiPa
 
 function GraphPageDetails({ page, markdownComponents, neighborCount, onSelect }: { page: WikiPage; markdownComponents: Components; neighborCount: number; onSelect: (slug: string) => Promise<void> }) {
   const neighbors = [...page.out_links, ...page.in_links].filter((value, index, all) => value && all.indexOf(value) === index);
+  const markdown = wikiLinkMarkdown(stripRedundantWikiTypeHeading(page.content_markdown));
   return (
     <article className="wiki-graph-page-details">
       <div className="wiki-article-meta">
@@ -622,7 +913,7 @@ function GraphPageDetails({ page, markdownComponents, neighborCount, onSelect }:
         </div>
       ) : null}
       <div className="wiki-markdown-v2 wiki-graph-markdown">
-        <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{wikiLinkMarkdown(page.content_markdown)}</ReactMarkdown>
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{markdown}</ReactMarkdown>
       </div>
       {neighbors.length ? (
         <section className="wiki-graph-related-pages">
@@ -693,6 +984,21 @@ function wikiLinkMarkdown(markdown: string): string {
   return (markdown || "").replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_match, slug: string, label?: string) => `[${label || slug}](./${encodeURIComponent(String(slug || "").trim())})`);
 }
 
+function stripRedundantWikiTypeHeading(markdown: string): string {
+  const lines = String(markdown || "").split(/\r?\n/);
+  const firstContentIndex = lines.findIndex((line) => line.trim());
+  if (firstContentIndex < 0) return "";
+  const firstContent = lines[firstContentIndex]
+    .trim()
+    .replace(/^#{1,6}\s*/, "")
+    .replace(/^[-*]\s*/, "")
+    .replace(/^\*\*(.+)\*\*$/, "$1")
+    .replace(/^__(.+)__$/, "$1")
+    .trim();
+  if (!REDUNDANT_WIKI_TYPE_HEADINGS.has(firstContent)) return markdown;
+  return lines.slice(firstContentIndex + 1).join("\n").replace(/^\s*\n+/, "");
+}
+
 function normalizeWikiSlug(value: string): string {
   const parts = String(value || "")
     .trim()
@@ -717,8 +1023,8 @@ function buildGraphLayout(
   nodes: Array<{ slug?: string; title?: string; page_type?: string }>,
   edges: Array<{ source?: string; target?: string }>,
 ) {
-  const width = 1280;
-  const height = 760;
+  const width = GRAPH_LAYOUT_WIDTH;
+  const height = GRAPH_LAYOUT_HEIGHT;
   const degree = new Map<string, number>();
   for (const edge of edges) {
     if (edge.source) degree.set(edge.source, (degree.get(edge.source) || 0) + 1);
@@ -803,6 +1109,24 @@ function buildGraphLayout(
     }
   }
   return { width, height, positions };
+}
+
+function copyGraphPositions(positions: Map<string, GraphPosition>) {
+  const next = new Map<string, GraphPosition>();
+  for (const [slug, position] of positions) {
+    next.set(slug, { ...position });
+  }
+  return next;
+}
+
+function graphAnchorForType(type: string, width: number, height: number) {
+  const anchors: Record<string, { x: number; y: number }> = {
+    summary: { x: width * 0.5, y: height * 0.5 },
+    entity: { x: width * 0.38, y: height * 0.48 },
+    concept: { x: width * 0.62, y: height * 0.5 },
+    manual: { x: width * 0.5, y: height * 0.28 },
+  };
+  return anchors[type] || anchors.concept;
 }
 
 function hashString(value: string): number {

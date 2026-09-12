@@ -338,9 +338,19 @@ class PostgresDocumentRepository:
                        ts_rank_cd(c.search_vector, websearch_to_tsquery('simple', %s)),
                        max(similarity(c.title_path, term.value)),
                        max(similarity(c.content_markdown, term.value)),
-                       max(case when c.content_markdown ilike term.pattern then 0.35 else 0 end)
+                       max(similarity(d.name, term.value)),
+                       max(case when c.content_markdown ilike term.pattern then 0.35 else 0 end),
+                       max(case when c.content ilike term.pattern then 0.35 else 0 end),
+                       max(case when d.name ilike term.pattern then 0.75 else 0 end),
+                       max(case when coalesce(d.summary, '') ilike term.pattern then 0.45 else 0 end),
+                       max(case when coalesce(d.keywords_json::text, '') ilike term.pattern then 0.50 else 0 end),
+                       max(case when coalesce(d.suggested_questions_json::text, '') ilike term.pattern then 0.40 else 0 end)
                    ) as keyword_score
             from {self._table('document_chunk')} c
+            join {self._table('document')} d
+              on d.id = c.doc_id
+             and d.workspace_id = c.workspace_id
+             and d.knowledge_base_id = c.knowledge_base_id
             cross join unnest(%s::text[], %s::text[]) as term(value, pattern)
             where {where}
               and (
@@ -348,6 +358,10 @@ class PostgresDocumentRepository:
                   or c.title_path ilike term.pattern
                   or c.content_markdown ilike term.pattern
                   or c.content ilike term.pattern
+                  or d.name ilike term.pattern
+                  or coalesce(d.summary, '') ilike term.pattern
+                  or coalesce(d.keywords_json::text, '') ilike term.pattern
+                  or coalesce(d.suggested_questions_json::text, '') ilike term.pattern
               )
             group by c.id
             order by keyword_score desc, c.created_at, c.id

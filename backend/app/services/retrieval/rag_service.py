@@ -81,6 +81,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+UPLOAD_REQUIRED_INDEXING_FLAGS = {
+    "dense_enabled": True,
+    "keyword_enabled": True,
+    "wiki_enabled": True,
+    "graph_enabled": True,
+}
+
 
 TRACE_STAGE_DEFINITIONS = [
     ("docreader", "文档解析", "load"),
@@ -1041,19 +1048,22 @@ class RAGService:
         )
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
-    def _indexing_state(self, scope: KnowledgeBaseScope) -> dict[str, bool]:
+    def _indexing_state(self, scope: KnowledgeBaseScope, processing_settings: dict[str, Any] | None = None) -> dict[str, bool]:
         indexing_strategy = None
         if self.knowledge_base_service is not None:
             indexing_strategy = self.knowledge_base_service.resolve_indexing_strategy(scope)
         dense_enabled = bool(getattr(indexing_strategy, "dense_enabled", True))
         keyword_enabled = bool(getattr(indexing_strategy, "keyword_enabled", True))
-        return {
+        state = {
             "dense_enabled": dense_enabled,
             "keyword_enabled": keyword_enabled,
             "graph_enabled": bool(getattr(indexing_strategy, "graph_enabled", self.kg_extraction_enabled)),
             "wiki_enabled": bool(getattr(indexing_strategy, "wiki_enabled", False)),
-            "needs_embedding": dense_enabled or keyword_enabled,
         }
+        if processing_settings is not None:
+            state.update(UPLOAD_REQUIRED_INDEXING_FLAGS)
+        state["needs_embedding"] = bool(state["dense_enabled"] or state["keyword_enabled"])
+        return state
 
     def _chunk_from_repository_row(self, row: dict[str, Any]) -> Chunk:
         return Chunk(
@@ -1647,19 +1657,32 @@ class RAGService:
             selected = self._apply_reranker(question, direct_hits)
             return self._finalize_retrieval_selection(selected)
 
+        dense_enabled, keyword_enabled = self._retrieval_channels_enabled(scope)
         vector_hits: list[dict[str, Any]] = []
         keyword_hits: list[dict[str, Any]] = []
+        keyword_fallback_attempted = False
         for retrieval_query in retrieval_queries:
-            vector_hits.extend(
-                self._tag_retrieval_hits(
-                    self.retrieve_hits(retrieval_query, top_k=self.dense_recall_top_n, scope=scope), retrieval_query
+            if dense_enabled:
+                vector_hits.extend(
+                    self._tag_retrieval_hits(
+                        self.retrieve_hits(retrieval_query, top_k=self.dense_recall_top_n, scope=scope), retrieval_query
+                    )
                 )
-            )
-            keyword_hits.extend(
-                self._tag_retrieval_hits(
-                    self.keyword_retrieve_hits(retrieval_query, top_k=self.bm25_recall_top_n, scope=scope), retrieval_query
+            if keyword_enabled:
+                keyword_hits.extend(
+                    self._tag_retrieval_hits(
+                        self.keyword_retrieve_hits(retrieval_query, top_k=self.bm25_recall_top_n, scope=scope), retrieval_query
+                    )
                 )
-            )
+        if not vector_hits and not keyword_hits and not keyword_enabled:
+            keyword_fallback_attempted = True
+            for retrieval_query in retrieval_queries:
+                keyword_hits.extend(
+                    self._tag_retrieval_hits(
+                        self.keyword_retrieve_hits(retrieval_query, top_k=self.bm25_recall_top_n, scope=scope),
+                        retrieval_query,
+                    )
+                )
         fused_hits = self._hydrate_retrieval_hit_content(
             self._fuse_retrieval_hits(vector_hits, keyword_hits), scope=scope
         )
@@ -1681,18 +1704,29 @@ class RAGService:
                 query_expansion_debug["used"] = True
                 query_expansion_debug["expanded_queries"] = expanded_queries
                 for retrieval_query in expanded_queries:
-                    vector_hits.extend(
-                        self._tag_retrieval_hits(
-                            self.retrieve_hits(retrieval_query, top_k=self.dense_recall_top_n, scope=scope),
-                            retrieval_query,
+                    if dense_enabled:
+                        vector_hits.extend(
+                            self._tag_retrieval_hits(
+                                self.retrieve_hits(retrieval_query, top_k=self.dense_recall_top_n, scope=scope),
+                                retrieval_query,
+                            )
                         )
-                    )
-                    keyword_hits.extend(
-                        self._tag_retrieval_hits(
-                            self.keyword_retrieve_hits(retrieval_query, top_k=self.bm25_recall_top_n, scope=scope),
-                            retrieval_query,
+                    if keyword_enabled:
+                        keyword_hits.extend(
+                            self._tag_retrieval_hits(
+                                self.keyword_retrieve_hits(retrieval_query, top_k=self.bm25_recall_top_n, scope=scope),
+                                retrieval_query,
+                            )
                         )
-                    )
+                if not vector_hits and not keyword_hits and not keyword_enabled:
+                    keyword_fallback_attempted = True
+                    for retrieval_query in expanded_queries:
+                        keyword_hits.extend(
+                            self._tag_retrieval_hits(
+                                self.keyword_retrieve_hits(retrieval_query, top_k=self.bm25_recall_top_n, scope=scope),
+                                retrieval_query,
+                            )
+                        )
                 fused_hits = self._hydrate_retrieval_hit_content(
                     self._fuse_retrieval_hits(vector_hits, keyword_hits), scope=scope
                 )
@@ -1715,8 +1749,20 @@ class RAGService:
             "duplicate_removal": self._duplicate_removal_debug(fused_hits, deduped_hits),
             "mmr": {"enabled": self.mmr_enabled, "used": False},
             "retrieval_stages": {
-                "dense": {"query_count": len(retrieval_queries), "candidate_count": len(vector_hits)},
-                "keyword": {"query_count": len(retrieval_queries), "candidate_count": len(keyword_hits)},
+                "dense": (
+                    {"query_count": len(retrieval_queries), "candidate_count": len(vector_hits)}
+                    if dense_enabled
+                    else {"skipped": True, "reason": "disabled_by_indexing_strategy", "candidate_count": 0}
+                ),
+                "keyword": (
+                    {"query_count": len(retrieval_queries), "candidate_count": len(keyword_hits)}
+                    if keyword_enabled
+                    else {
+                        "skipped": not keyword_fallback_attempted,
+                        "reason": "repository_keyword_fallback" if keyword_fallback_attempted else "disabled_by_indexing_strategy",
+                        "candidate_count": len(keyword_hits),
+                    }
+                ),
                 "query_expansion": query_expansion_debug,
                 "fusion": {"input_count": len(vector_hits) + len(keyword_hits), "output_count": len(fused_hits)},
                 "duplicate_removal": self._duplicate_removal_debug(fused_hits, deduped_hits),
@@ -1726,6 +1772,18 @@ class RAGService:
         if self.reranker_enabled and self.reranker is not None:
             return self._finalize_retrieval_selection(self._apply_reranker(question, deduped_hits))
         return self._finalize_retrieval_selection(deduped_hits)
+
+    def _retrieval_channels_enabled(self, scope: KnowledgeBaseScope) -> tuple[bool, bool]:
+        if self.knowledge_base_service is None:
+            return True, True
+        try:
+            indexing_strategy = self.knowledge_base_service.resolve_indexing_strategy(scope)
+        except Exception:
+            logger.warning("retrieval.indexing_strategy.resolve_failed", exc_info=True)
+            return True, True
+        dense_enabled = bool(getattr(indexing_strategy, "dense_enabled", True))
+        keyword_enabled = bool(getattr(indexing_strategy, "keyword_enabled", True))
+        return dense_enabled, keyword_enabled
 
     def _direct_load_selected_document_hits(self, scope: KnowledgeBaseScope) -> list[dict[str, Any]] | None:
         doc_ids = tuple(scope.document_ids)
@@ -2806,7 +2864,7 @@ class RAGService:
         )
 
     def _effective_upload_settings(self, settings: dict[str, Any] | None = None) -> dict[str, Any]:
-        resolved = self._resolve_processing_settings(settings)
+        resolved = self._resolve_processing_settings(self._normalize_upload_settings(settings))
         effective = resolved.effective.to_dict()
         requested = resolved.requested.to_dict()
         return {
@@ -2823,7 +2881,8 @@ class RAGService:
 
     def create_upload_batch(self, scope: KnowledgeBaseScope, settings: dict[str, Any] | None = None) -> dict[str, Any]:
         self._assert_upload_processing_allowed(scope)
-        result = self._with_effective_upload_settings(self.upload_batch_repository.create_batch(scope, settings or {}))
+        upload_settings = self._normalize_upload_settings(settings)
+        result = self._with_effective_upload_settings(self.upload_batch_repository.create_batch(scope, upload_settings))
         logger.info(
             "rag_service.upload_batch.created",
             extra={"workspace_id": scope.workspace_id, "knowledge_base_id": scope.knowledge_base_id, "batch_id": result.get("id")},
@@ -2841,8 +2900,11 @@ class RAGService:
         if batch["status"] not in {"draft", "uploading", "ready_to_process"}:
             raise ValueError("Upload batch settings can only be changed before processing")
         return self._with_effective_upload_settings(
-            self.upload_batch_repository.update_batch(batch_id, scope, settings=settings or {})
+            self.upload_batch_repository.update_batch(batch_id, scope, settings=self._normalize_upload_settings(settings))
         )
+
+    def _normalize_upload_settings(self, settings: dict[str, Any] | None = None) -> dict[str, Any]:
+        return {**dict(settings or {}), **UPLOAD_REQUIRED_INDEXING_FLAGS}
 
     def cancel_upload_batch(self, batch_id: str, scope: KnowledgeBaseScope) -> dict[str, Any]:
         if self.processing_worker is not None:
@@ -2933,6 +2995,7 @@ class RAGService:
             raise ValueError("Upload batch is canceled")
         if not batch["files"]:
             raise ValueError("Upload batch has no files")
+        self._ensure_upload_required_indexing_strategy(scope)
         self._register_upload_batch_documents(batch_id, scope)
         self.upload_batch_repository.update_batch(batch_id, scope, status="processing")
         self._process_upload_batch(batch_id, scope)
@@ -2950,11 +3013,21 @@ class RAGService:
             raise ValueError("Upload batch has no files")
         if batch["status"] in {"completed", "partial_failed", "failed"}:
             raise ValueError("Upload batch has already been processed")
+        self._ensure_upload_required_indexing_strategy(scope)
         self._register_upload_batch_documents(batch_id, scope)
         self.upload_batch_repository.update_batch(batch_id, scope, status="processing")
         if self.uses_durable_upload_processing():
             self.processing_worker.enqueue_upload_batch(batch_id, scope)
         return self.get_upload_batch(batch_id, scope)
+
+    def _ensure_upload_required_indexing_strategy(self, scope: KnowledgeBaseScope) -> None:
+        if self.knowledge_base_service is None:
+            return
+        knowledge_base = self.knowledge_base_service.assert_writable(scope)
+        current = knowledge_base.indexing_strategy.to_dict()
+        required = {**current, **UPLOAD_REQUIRED_INDEXING_FLAGS}
+        if required != current:
+            self.knowledge_base_service.update(scope.knowledge_base_id, indexing_strategy=required)
 
     def uses_durable_upload_processing(self) -> bool:
         worker = self.processing_worker
@@ -3090,7 +3163,7 @@ class RAGService:
         batch_id = str(file_task.get("batch_id") or "")
         source_path = self._resolve_source_path(str(file_task["storage_path"]))
         batch = self.upload_batch_repository.get_batch(batch_id, scope)
-        processing_settings = batch.get("settings") or {}
+        processing_settings = self._normalize_upload_settings(batch.get("settings") or {})
         doc_id = str(file_task.get("document_id") or "") or stable_doc_id(source_path)
         source_revision = self._source_revision_for_file(source_path, processing_settings)
         worker = getattr(self, "processing_worker", None)
@@ -3173,7 +3246,7 @@ class RAGService:
             raise ValueError("chunk.extract task is missing storage_path")
         source_path = self._resolve_source_path(storage_path)
         resolved_processing = self._resolve_processing_settings(processing_settings)
-        indexing = self._indexing_state(scope)
+        indexing = self._indexing_state(scope, processing_settings)
         doc_id = str(task.get("document_id") or payload.get("doc_id") or stable_doc_id(source_path))
         self._assert_document_revision_current(doc_id, scope, source_revision)
         file_size = source_path.stat().st_size

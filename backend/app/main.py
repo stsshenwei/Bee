@@ -15,9 +15,11 @@ from openai import OpenAI
 
 from app.schemas import (
     ChatAttachmentResponse,
+    ChatMessageResponse,
     ChatRequest,
     ChatStreamStopRequest,
     ChatStreamStopResponse,
+    ContinueStreamResponse,
     DocumentContentResponse,
     DocumentItem,
     DocumentsResponse,
@@ -37,12 +39,19 @@ from app.schemas import (
     KnowledgeBasesResponse,
     KnowledgeBaseUpdateRequest,
     MemoriesResponse,
+    MessagesLoadResponse,
     MemoryDeleteResponse,
     RagDeleteResponse,
     RagDocumentIngestResponse,
     RagDocumentUploadResponse,
     RagQueryRequest,
     RagQueryResponse,
+    ChatSessionSummaryResponse,
+    SessionDeleteResponse,
+    SessionRenameRequest,
+    SessionStopRequest,
+    SessionStopResponse,
+    SessionsRecentResponse,
     UploadBatchCreateRequest,
     UploadBatchResponse,
     UploadBatchSettingsUpdateRequest,
@@ -90,6 +99,7 @@ from app.services.retrieval.citation_verifier import CitationVerifier
 from app.services.documents.document_chunker import DocumentChunker
 from app.services.memory.postgres_conversation_repository import PostgresConversationRepository
 from app.services.memory.conversation_service import ConversationService
+from app.services.memory.principal import principal_from_request
 from app.services.documents.document_parser import PARSER_REGISTRY, RegistryDocumentParser
 from app.services.documents.postgres_document_repository import PostgresDocumentRepository
 from app.services.documents.document_enrichment import (
@@ -158,7 +168,7 @@ from app.services.agent.retrieval_planner import RetrievalPlanner
 from app.services.retrieval.postgres_vector_store import PostgresVectorStore
 from app.services.storage.postgres import PostgresDatabase, PostgresSettings
 from app.services.chat_streaming.event_bus import ChatEventBus, ChatStreamEvent
-from app.services.chat_streaming.stream_manager import MemoryStreamManager, StreamIdentity
+from app.services.chat_streaming.stream_manager import MemoryStreamManager, RedisStreamManager, StreamIdentity
 from app.services.chat_pipeline import (
     ChatPipelineContext,
     ChatPipelineRequest,
@@ -296,6 +306,27 @@ def _get_env_bool(*names: str, default: bool = False) -> bool:
     return value in {"1", "true", "yes", "on"}
 
 
+def _build_chat_stream_manager():
+    manager_type = _get_env("STREAM_MANAGER_TYPE", default="memory").lower()
+    ttl_seconds = _get_env_int("STREAM_EVENT_TTL_SECONDS", "CHAT_STREAM_TTL_SECONDS", default=24 * 60 * 60)
+    if manager_type == "redis":
+        redis_url = _get_env("REDIS_URL", "STREAM_MANAGER_REDIS_URL", "ASYNC_RUNTIME_BROKER_URL")
+        if not redis_url:
+            raise RuntimeError("STREAM_MANAGER_TYPE=redis requires REDIS_URL or STREAM_MANAGER_REDIS_URL")
+        logger.info(
+            "chat_stream_manager.redis_enabled",
+            extra={"key_prefix": "stream:events", "ttl_seconds": ttl_seconds},
+        )
+        return RedisStreamManager(redis_url, key_prefix="stream:events", ttl_seconds=ttl_seconds)
+    logger.warning(
+        "chat_stream_manager.memory_enabled",
+        extra={
+            "warning": "MemoryStreamManager is for local single-process streaming; refresh replay and stop propagation are not guaranteed across restarts or replicas.",
+        },
+    )
+    return MemoryStreamManager()
+
+
 def _raise_internal_error(message: str, exc: Exception) -> None:
     logger.exception("%s: %s", message, exc)
     raise HTTPException(status_code=500, detail=f"{message}: {exc}") from exc
@@ -307,7 +338,7 @@ def _build_async_runtime_config(raw: dict | None = None) -> AsyncRuntimeConfig:
         {
             "enabled": _get_env_bool("ASYNC_RUNTIME_ENABLED", default=bool(raw.get("enabled", False))),
             "mode": _get_env("ASYNC_RUNTIME_MODE", default=str(raw.get("mode", "local"))),
-            "broker_url": _get_env("ASYNC_RUNTIME_BROKER_URL", default=str(raw.get("broker_url", "redis://localhost:6379/0"))),
+            "broker_url": _get_env("REDIS_URL", "ASYNC_RUNTIME_BROKER_URL", default=str(raw.get("broker_url", ""))),
             "result_backend_url": _get_env("ASYNC_RUNTIME_RESULT_BACKEND_URL", default=str(raw.get("result_backend_url", ""))),
             "local_fallback_enabled": _get_env_bool(
                 "ASYNC_RUNTIME_LOCAL_FALLBACK_ENABLED",
@@ -876,6 +907,29 @@ def build_rag_service() -> RAGService:
         wiki_max_empty_retries=_get_env_int("AGENT_RUNTIME_WIKI_MAX_EMPTY_RETRIES", default=1),
         wiki_max_repeated_responses=_get_env_int("AGENT_RUNTIME_WIKI_MAX_REPEATED_RESPONSES", default=1),
         wiki_preload_retrieval=_get_env_bool("AGENT_RUNTIME_WIKI_PRELOAD_RETRIEVAL", default=False),
+        rag_wiki_runtime_enabled=_get_env_bool("AGENT_RUNTIME_RAG_WIKI_MODE_ENABLED", default=_get_env_bool("AGENT_RUNTIME_WIKI_MODE_ENABLED", default=True)),
+        rag_wiki_prompt_template_id=_get_env("AGENT_RUNTIME_RAG_WIKI_PROMPT_TEMPLATE_ID", default="hybrid_rag_wiki_agent"),
+        rag_wiki_context_template_id=_get_env("AGENT_RUNTIME_RAG_WIKI_CONTEXT_TEMPLATE_ID", default="default_context"),
+        rag_wiki_enabled_tools=_get_env_csv(
+            "AGENT_RUNTIME_RAG_WIKI_ENABLED_TOOLS",
+            (
+                "thinking",
+                "todo_write",
+                "wiki_search",
+                "wiki_read_page",
+                "wiki_read_source_doc",
+                "wiki_flag_issue",
+                "grep_chunks",
+                "knowledge_search",
+                "list_knowledge_chunks",
+                "get_document_info",
+                "query_knowledge_graph",
+            ),
+        ),
+        rag_wiki_max_iterations=_get_env_int("AGENT_RUNTIME_RAG_WIKI_MAX_ITERATIONS", default=6),
+        rag_wiki_max_empty_retries=_get_env_int("AGENT_RUNTIME_RAG_WIKI_MAX_EMPTY_RETRIES", default=1),
+        rag_wiki_max_repeated_responses=_get_env_int("AGENT_RUNTIME_RAG_WIKI_MAX_REPEATED_RESPONSES", default=1),
+        rag_wiki_preload_retrieval=_get_env_bool("AGENT_RUNTIME_RAG_WIKI_PRELOAD_RETRIEVAL", default=False),
         tool_timeout_seconds=_get_env_float("AGENT_RUNTIME_TOOL_TIMEOUT_SECONDS", default=20.0),
         web_search_enabled=_get_env_bool("AGENT_RUNTIME_WEB_SEARCH_ENABLED", default=False),
         web_search_endpoint=_get_env("AGENT_RUNTIME_WEB_SEARCH_URL", default=""),
@@ -884,7 +938,13 @@ def build_rag_service() -> RAGService:
         data_analysis_enabled=_get_env_bool("AGENT_RUNTIME_DATA_ANALYSIS_ENABLED", default=False),
         database_query_enabled=_get_env_bool("AGENT_RUNTIME_DATABASE_QUERY_ENABLED", default=False),
         database_allowed_sources=_get_env_mapping("AGENT_RUNTIME_DATABASE_SOURCES"),
-        wiki_tools_enabled=_get_env_bool("AGENT_RUNTIME_WIKI_TOOLS_ENABLED", default=_get_env_bool("AGENT_RUNTIME_WIKI_MODE_ENABLED", default=True)),
+        wiki_tools_enabled=_get_env_bool(
+            "AGENT_RUNTIME_WIKI_TOOLS_ENABLED",
+            default=(
+                _get_env_bool("AGENT_RUNTIME_WIKI_MODE_ENABLED", default=True)
+                or _get_env_bool("AGENT_RUNTIME_RAG_WIKI_MODE_ENABLED", default=_get_env_bool("AGENT_RUNTIME_WIKI_MODE_ENABLED", default=True))
+            ),
+        ),
         wiki_maintenance_tools_enabled=_get_env_bool("AGENT_RUNTIME_WIKI_MAINTENANCE_TOOLS_ENABLED", default=False),
         fallback_to_deterministic=_get_env_bool("AGENT_RUNTIME_FALLBACK_TO_DETERMINISTIC", default=True),
     )
@@ -892,11 +952,27 @@ def build_rag_service() -> RAGService:
     rag_service.unified_chat_runtime_enabled = agent_runtime_config.unified_chat_runtime_enabled
     rag_service.quick_runtime_enabled = agent_runtime_config.quick_runtime_enabled
     rag_service.wiki_runtime_enabled = agent_runtime_config.wiki_runtime_enabled
-    if agent_runtime_config.enabled or agent_runtime_config.quick_runtime_enabled or agent_runtime_config.wiki_runtime_enabled:
+    rag_service.rag_wiki_runtime_enabled = agent_runtime_config.rag_wiki_runtime_enabled
+    if (
+        agent_runtime_config.enabled
+        or agent_runtime_config.quick_runtime_enabled
+        or agent_runtime_config.wiki_runtime_enabled
+        or agent_runtime_config.rag_wiki_runtime_enabled
+    ):
         skills_manager = RuntimeSkillsManager(
             agent_runtime_config.skills_path,
             enabled=agent_runtime_config.skills_enabled,
             max_chars=_get_env_int("AGENT_RUNTIME_SKILL_MAX_CHARS", default=12000),
+        )
+        registered_agent_tools = tuple(
+            dict.fromkeys(
+                (
+                    *agent_runtime_config.enabled_tools,
+                    *agent_runtime_config.quick_enabled_tools,
+                    *agent_runtime_config.wiki_enabled_tools,
+                    *agent_runtime_config.rag_wiki_enabled_tools,
+                )
+            )
         )
         rag_service.agent_runtime = AgentRuntime(
             llm_client=client,
@@ -905,7 +981,7 @@ def build_rag_service() -> RAGService:
             prompt_catalog=AgentPromptCatalog.load(agent_runtime_config.prompt_template_path),
             context_catalog=ContextPromptCatalog.load(agent_runtime_config.context_template_path),
             tool_registry=build_default_tool_registry(
-                enabled_tools=agent_runtime_config.enabled_tools,
+                enabled_tools=registered_agent_tools,
                 max_output_chars=agent_runtime_config.max_tool_output_chars,
                 skills_enabled=agent_runtime_config.skills_enabled,
                 web_search_enabled=agent_runtime_config.web_search_enabled,
@@ -1028,7 +1104,7 @@ conversation_service = ConversationService(
     summary_message_threshold=_get_env_int("CONVERSATION_SUMMARY_MESSAGE_THRESHOLD", default=20),
 )
 memory_service = MemoryService(PostgresMemoryRepository(postgres_database, schema=postgres_schema))
-chat_stream_manager = MemoryStreamManager()
+chat_stream_manager = _build_chat_stream_manager()
 chat_stream_cancellations: dict[str, threading.Event] = {}
 chat_stream_cancellations_lock = threading.Lock()
 chat_rag_pipeline_enabled = _get_env_bool("CHAT_RAG_PIPELINE_ENABLED", default=False)
@@ -1810,6 +1886,76 @@ def _agent_runtime_sse_payloads(
     return [{event_type: payload_data}]
 
 
+_CHAT_PROCESS_EVENT_KEYS = {
+    "agent_trace",
+    "tool_call",
+    "tool_observation",
+    "agent_query",
+    "agent_thought",
+    "agent_tool_call",
+    "agent_tool_result",
+    "agent_reflection",
+    "agent_remedial_search",
+    "agent_references",
+    "agent_final_answer",
+    "agent_complete",
+    "agent_error",
+    "evidence_summary",
+    "citation_verification",
+}
+
+
+def _remember_chat_process_payload(stream_state: dict, payload: dict) -> None:
+    if "reasoning" in payload and isinstance(payload.get("reasoning"), dict):
+        stream_state["reasoning"] = payload["reasoning"]
+    if "evidence_summary" in payload and isinstance(payload.get("evidence_summary"), dict):
+        stream_state["evidence_summary"] = payload["evidence_summary"]
+    if "citation_verification" in payload and isinstance(payload.get("citation_verification"), dict):
+        stream_state["citation_verification"] = payload["citation_verification"]
+    for key in _CHAT_PROCESS_EVENT_KEYS:
+        value = payload.get(key)
+        if not isinstance(value, dict):
+            continue
+        events = stream_state.setdefault("agent_events", [])
+        if len(events) >= 200:
+            stream_state["agent_events_truncated"] = True
+            return
+        events.append(
+            {
+                "kind": key,
+                "payload": value,
+                "sequence": len(events) + 1,
+                "timestamp": int(time.time() * 1000),
+            }
+        )
+
+
+def _chat_completion_metadata(
+    stream_state: dict,
+    *,
+    scope,
+    chat_mode: str,
+    attachment_ids: list[str],
+) -> dict:
+    metadata = {
+        "sources": stream_state.get("sources", []),
+        "knowledge_base_scope": scope.to_dict(),
+        "chat_mode": chat_mode,
+        "temporary_attachment_ids": attachment_ids,
+    }
+    if isinstance(stream_state.get("reasoning"), dict):
+        metadata["reasoning"] = stream_state["reasoning"]
+    if isinstance(stream_state.get("evidence_summary"), dict):
+        metadata["evidence_summary"] = stream_state["evidence_summary"]
+    if isinstance(stream_state.get("citation_verification"), dict):
+        metadata["citation_verification"] = stream_state["citation_verification"]
+    if isinstance(stream_state.get("agent_events"), list):
+        metadata["agent_events"] = stream_state["agent_events"]
+    if stream_state.get("agent_events_truncated"):
+        metadata["agent_events_truncated"] = True
+    return metadata
+
+
 def _stream_raw_chat_events(
     question: str,
     conversation_context: str,
@@ -1857,6 +2003,7 @@ def _infer_sse_event_type(payload: dict) -> str:
         "token",
         "final",
         "error",
+        "stop",
         "memory_updated",
         "agent_trace",
         "tool_call",
@@ -1902,12 +2049,29 @@ def _unregister_chat_stream(identity: StreamIdentity, signal: threading.Event) -
 def _request_chat_stream_stop(identity: StreamIdentity, *, reason: str = "client_requested") -> str:
     with chat_stream_cancellations_lock:
         signal = chat_stream_cancellations.get(identity.key)
+    if _stream_has_event_type(identity, "stop"):
+        if signal is not None:
+            signal.set()
+        return "stopping"
     if signal is not None:
         signal.set()
+        chat_stream_manager.append(
+            identity,
+            ChatStreamEvent(
+                event_type="stop",
+                payload={"stop": {"session_id": identity.session_id, "message_id": identity.message_id, "reason": reason or "client_requested"}},
+            ),
+        )
         return "stopping"
     if chat_stream_manager.is_terminal(identity):
         return "completed"
-    chat_stream_manager.append(identity, ChatStreamEvent(event_type="stop", payload={"stop": {"reason": reason or "client_requested"}}))
+    chat_stream_manager.append(
+        identity,
+        ChatStreamEvent(
+            event_type="stop",
+            payload={"stop": {"session_id": identity.session_id, "message_id": identity.message_id, "reason": reason or "client_requested"}},
+        ),
+    )
     chat_stream_manager.append(identity, ChatStreamEvent(event_type="done", payload={}, terminal=True))
     return "stopped"
 
@@ -1969,7 +2133,13 @@ def _stored_event_to_sse(identity: StreamIdentity, event: ChatStreamEvent) -> st
     return f"data: {json.dumps(outbound, ensure_ascii=False)}\n\n"
 
 
-def _replay_chat_stream(identity: StreamIdentity, offset: int, *, stop_signal: threading.Event | None = None) -> object:
+def _replay_chat_stream(
+    identity: StreamIdentity,
+    offset: int,
+    *,
+    stop_signal: threading.Event | None = None,
+    poll_until_terminal: bool = False,
+) -> object:
     cursor = int(offset)
     while True:
         events = chat_stream_manager.read_after(identity, cursor)
@@ -1979,20 +2149,153 @@ def _replay_chat_stream(identity: StreamIdentity, offset: int, *, stop_signal: t
                 yield _stored_event_to_sse(identity, event)
                 if event.terminal:
                     return
+                if event.event_type == "stop" and stop_signal is not None:
+                    stop_signal.set()
             continue
         if chat_stream_manager.is_terminal(identity):
             return
-        if stop_signal is None:
+        if stop_signal is None and not poll_until_terminal:
             return
         if stop_signal is not None and stop_signal.is_set():
             return
         time.sleep(0.1)
 
 
+def _stream_has_events(identity: StreamIdentity) -> bool:
+    return bool(chat_stream_manager.read_after(identity, 0, limit=1))
+
+
+def _stream_has_event_type(identity: StreamIdentity, event_type: str) -> bool:
+    offset = 0
+    while True:
+        events = chat_stream_manager.read_after(identity, offset, limit=100)
+        if not events:
+            return False
+        for event in events:
+            offset = max(offset, int(event.offset))
+            if event.event_type == event_type:
+                return True
+
+
+def _message_response(message: dict) -> ChatMessageResponse:
+    session_id = str(message.get("conversation_id") or message.get("session_id") or "")
+    return ChatMessageResponse(
+        id=str(message.get("id") or ""),
+        session_id=session_id,
+        conversation_id=session_id,
+        request_id=str(message.get("request_id") or ""),
+        role=str(message.get("role") or "assistant"),
+        content=str(message.get("content") or ""),
+        metadata_json=dict(message.get("metadata_json") or {}),
+        is_completed=bool(message.get("is_completed", True)),
+        created_at=str(message.get("created_at") or ""),
+        updated_at=str(message.get("updated_at") or message.get("created_at") or ""),
+    )
+
+
+def _session_summary_response(conversation: dict) -> ChatSessionSummaryResponse:
+    session_id = str(conversation.get("id") or conversation.get("session_id") or "")
+    return ChatSessionSummaryResponse(
+        id=session_id,
+        session_id=session_id,
+        conversation_id=session_id,
+        title=str(conversation.get("display_title") or conversation.get("title") or "新对话"),
+        last_message_preview=str(conversation.get("last_message_preview") or ""),
+        is_running=bool(conversation.get("is_running")),
+        agent_config=dict(conversation.get("agent_config") or {}),
+        created_at=str(conversation.get("created_at") or ""),
+        updated_at=str(conversation.get("updated_at") or conversation.get("created_at") or ""),
+    )
+
+
+def _start_stop_watcher(identity: StreamIdentity, signal: threading.Event) -> threading.Thread:
+    def watch() -> None:
+        deadline = time.monotonic() + 2 * 60 * 60
+        offset = 0
+        while time.monotonic() < deadline:
+            events = chat_stream_manager.read_after(identity, offset)
+            for event in events:
+                offset = max(offset, int(event.offset))
+                if event.event_type == "stop":
+                    signal.set()
+                    return
+                if event.event_type == "done" or event.terminal or event.event_type == "error":
+                    return
+            if signal.is_set() or chat_stream_manager.is_terminal(identity):
+                return
+            time.sleep(0.3)
+
+    thread = threading.Thread(target=watch, name=f"chat-stop-watch:{identity.key}", daemon=True)
+    thread.start()
+    return thread
+
+
+def _get_or_create_chat_conversation(conversation_id: str | None, *, principal, agent_config: dict) -> dict:
+    try:
+        return conversation_service.get_or_create_conversation(
+            conversation_id,
+            principal=principal,
+            agent_config=agent_config,
+        )
+    except TypeError:
+        return conversation_service.get_or_create_conversation(conversation_id)
+
+
+def _build_chat_context(conversation_id: str, *, principal) -> dict:
+    try:
+        return conversation_service.build_context(conversation_id, principal=principal)
+    except TypeError:
+        return conversation_service.build_context(conversation_id)
+
+
+def _maybe_summarize_chat_conversation(conversation_id: str, *, principal) -> str:
+    try:
+        return conversation_service.maybe_summarize(conversation_id, principal=principal)
+    except TypeError:
+        return conversation_service.maybe_summarize(conversation_id)
+
+
+def _create_chat_turn(conversation_id: str, question: str, metadata: dict) -> tuple[dict, dict, str]:
+    create_turn = getattr(conversation_service.repository, "create_turn", None)
+    if callable(create_turn):
+        return create_turn(conversation_id, question, metadata)
+    request_id = f"req_{int(time.time() * 1000)}"
+    user_message = conversation_service.repository.append_message(conversation_id, "user", question, metadata)
+    assistant_message = {
+        "id": f"msg-assistant-{int(time.time() * 1000)}",
+        "conversation_id": conversation_id,
+        "role": "assistant",
+        "content": "",
+        "metadata_json": metadata,
+        "request_id": request_id,
+        "is_completed": False,
+    }
+    user_message.setdefault("request_id", request_id)
+    return user_message, assistant_message, request_id
+
+
+def _complete_chat_assistant(
+    conversation_id: str,
+    message_id: str,
+    answer: str,
+    metadata: dict,
+    *,
+    stopped: bool = False,
+) -> None:
+    complete_assistant = getattr(conversation_service.repository, "complete_assistant_message", None)
+    if callable(complete_assistant):
+        complete_assistant(conversation_id, message_id, answer, metadata, stopped=stopped)
+        return
+    if stopped:
+        metadata = {**metadata, "stopped": True}
+    conversation_service.repository.append_message(conversation_id, "assistant", answer, metadata)
+
+
 def _store_raw_sse_events(
     identity: StreamIdentity,
     raw_events,
     *,
+    stream_state: dict | None = None,
     event_bus: ChatEventBus | None = None,
     stop_signal: threading.Event | None = None,
 ) -> object:
@@ -2010,6 +2313,8 @@ def _store_raw_sse_events(
             yield event
             continue
         if isinstance(decoded, dict):
+            if stream_state is not None:
+                _remember_chat_process_payload(stream_state, decoded)
             yield _emit_stored_sse(identity, decoded, event_bus=event_bus)
         else:
             yield event
@@ -2058,8 +2363,125 @@ async def upload_chat_attachment(file: UploadFile = File(...)) -> ChatAttachment
         _raise_internal_error("Failed to upload chat attachment", exc)
 
 
+@app.get("/api/v1/messages/{session_id}/load", response_model=MessagesLoadResponse)
+def load_session_messages(
+    session_id: str,
+    request: Request,
+    before_time: str | None = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=100),
+) -> MessagesLoadResponse:
+    principal = principal_from_request(request)
+    page = conversation_service.repository.list_messages_before_time(
+        session_id,
+        before_time,
+        limit=limit,
+        principal=principal,
+    )
+    return MessagesLoadResponse(
+        session_id=session_id,
+        conversation_id=session_id,
+        items=[_message_response(item) for item in page["items"]],
+        hasMoreHistory=bool(page.get("hasMoreHistory")),
+    )
+
+
+@app.get("/api/v1/sessions/recent", response_model=SessionsRecentResponse)
+def list_recent_sessions(request: Request, limit: int = Query(default=20, ge=1, le=100)) -> SessionsRecentResponse:
+    principal = principal_from_request(request)
+    list_conversations = getattr(conversation_service.repository, "list_conversations", None)
+    if not callable(list_conversations):
+        return SessionsRecentResponse(items=[])
+    conversations = list_conversations(limit=limit, principal=principal)
+    return SessionsRecentResponse(items=[_session_summary_response(item) for item in conversations])
+
+
+@app.patch("/api/v1/sessions/{session_id}", response_model=ChatSessionSummaryResponse)
+def rename_session(session_id: str, payload: SessionRenameRequest, request: Request) -> ChatSessionSummaryResponse:
+    title = payload.title.strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="title is required")
+    principal = principal_from_request(request)
+    rename_conversation = getattr(conversation_service.repository, "rename_conversation", None)
+    if not callable(rename_conversation):
+        raise HTTPException(status_code=501, detail="Session rename is not supported")
+    conversation = rename_conversation(session_id, title, principal=principal)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return _session_summary_response(conversation)
+
+
+@app.delete("/api/v1/sessions/{session_id}", response_model=SessionDeleteResponse)
+def delete_session(session_id: str, request: Request) -> SessionDeleteResponse:
+    principal = principal_from_request(request)
+    delete_conversation = getattr(conversation_service.repository, "delete_conversation", None)
+    if not callable(delete_conversation):
+        raise HTTPException(status_code=501, detail="Session delete is not supported")
+    deleted = delete_conversation(session_id, principal=principal)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return SessionDeleteResponse(session_id=session_id, deleted=True)
+
+
+@app.get("/api/v1/sessions/{session_id}/continue-stream")
+def continue_session_stream(
+    session_id: str,
+    request: Request,
+    message_id: str = Query(..., min_length=1),
+    offset: int = Query(default=0, ge=0),
+) -> StreamingResponse:
+    principal = principal_from_request(request)
+    message = conversation_service.repository.get_message(session_id, message_id, principal=principal)
+    if message is None:
+        raise HTTPException(status_code=404, detail="Message not found")
+    identity = StreamIdentity(session_id, message_id)
+    if not _stream_has_events(identity):
+        raise HTTPException(status_code=404, detail="No stream events found")
+    return StreamingResponse(
+        _replay_chat_stream(
+            identity,
+            offset,
+            stop_signal=_active_chat_stream_signal(identity),
+            poll_until_terminal=True,
+        ),
+        media_type="text/event-stream",
+    )
+
+
+@app.get("/api/v1/sessions/continue-stream")
+def continue_session_stream_by_message(
+    request: Request,
+    message_id: str = Query(..., min_length=1),
+    session_id: str | None = Query(default=None),
+    offset: int = Query(default=0, ge=0),
+) -> StreamingResponse:
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id is required")
+    return continue_session_stream(session_id, request, message_id, offset)
+
+
+@app.post("/api/v1/sessions/{session_id}/stop", response_model=SessionStopResponse)
+def stop_session_generation(session_id: str, payload: SessionStopRequest, request: Request) -> SessionStopResponse:
+    message_id = payload.message_id.strip()
+    if not message_id:
+        raise HTTPException(status_code=400, detail="message_id is required")
+    principal = principal_from_request(request)
+    message = conversation_service.repository.get_message(session_id, message_id, principal=principal)
+    if message is None or message.get("role") != "assistant":
+        raise HTTPException(status_code=404, detail="Message not found")
+    if bool(message.get("is_completed")):
+        status = "completed"
+    else:
+        status = _request_chat_stream_stop(StreamIdentity(session_id, message_id), reason="user_requested")
+    return SessionStopResponse(
+        session_id=session_id,
+        message_id=message_id,
+        status=status,
+        stopped=status in {"stopping", "stopped", "completed"},
+    )
+
+
 @app.post("/chat/stream")
-def chat_stream(payload: ChatRequest) -> StreamingResponse:
+def chat_stream(payload: ChatRequest, request: Request) -> StreamingResponse:
     question = payload.message.strip()
     if not question:
         raise HTTPException(status_code=400, detail="Message is required")
@@ -2073,7 +2495,20 @@ def chat_stream(payload: ChatRequest) -> StreamingResponse:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     temporary_context = _temporary_attachment_context(temporary_attachments)
     temporary_sources = _temporary_attachment_sources(temporary_attachments)
-    conversation = conversation_service.get_or_create_conversation(payload.conversation_id)
+    principal = principal_from_request(request)
+    requested_conversation_id = payload.session_id or payload.conversation_id
+    agent_config = {
+        "chat_mode": chat_mode,
+        "knowledge_base_ids": list(scope.selected_knowledge_base_ids),
+        "temporary_attachment_ids": attachment_ids,
+        "memory_enabled": bool(payload.memory_enabled),
+        "temporary": bool(payload.temporary),
+    }
+    conversation = _get_or_create_chat_conversation(
+        requested_conversation_id,
+        principal=principal,
+        agent_config=agent_config,
+    )
     conversation_id = str(conversation["id"])
     if payload.stream_message_id and payload.stream_offset is not None:
         stream_identity = StreamIdentity(conversation_id, payload.stream_message_id)
@@ -2084,6 +2519,7 @@ def chat_stream(payload: ChatRequest) -> StreamingResponse:
                     stream_identity,
                     int(payload.stream_offset),
                     stop_signal=_active_chat_stream_signal(stream_identity),
+                    poll_until_terminal=False,
                 )
             finally:
                 temporary_attachment_repository.mark_consumed(attachment_ids)
@@ -2091,22 +2527,19 @@ def chat_stream(payload: ChatRequest) -> StreamingResponse:
         return StreamingResponse(replay_event_gen(), media_type="text/event-stream")
 
     memory_enabled = bool(payload.memory_enabled) and not bool(payload.temporary)
-    user_message = conversation_service.repository.append_message(
-        conversation_id,
-        "user",
-        question,
-        {
-            "knowledge_base_scope": scope.to_dict(),
-            "chat_mode": chat_mode,
-            "temporary_attachment_ids": attachment_ids,
-        },
-    )
-    stream_message_id = payload.stream_message_id or str(user_message["id"])
+    turn_metadata = {
+        "knowledge_base_scope": scope.to_dict(),
+        "chat_mode": chat_mode,
+        "temporary_attachment_ids": attachment_ids,
+    }
+    user_message, assistant_message, request_id = _create_chat_turn(conversation_id, question, turn_metadata)
+    stream_message_id = payload.stream_message_id or str(assistant_message["id"])
     stream_identity = StreamIdentity(conversation_id, stream_message_id)
 
-    def event_gen():
+    def produce_events() -> None:
         event_bus = ChatEventBus()
         stop_signal = _register_chat_stream(stream_identity)
+        _start_stop_watcher(stream_identity, stop_signal)
         answer_parts: list[str] = []
         stream_state: dict = {"sources": []}
         try:
@@ -2120,9 +2553,15 @@ def chat_stream(payload: ChatRequest) -> StreamingResponse:
                 bool(getattr(rag_service, "wiki_runtime_enabled", False))
                 and getattr(rag_service, "agent_runtime", None) is not None
             )
+            rag_wiki_runtime_available = (
+                bool(getattr(rag_service, "rag_wiki_runtime_enabled", False))
+                and getattr(rag_service, "agent_runtime", None) is not None
+            )
             agentic_available = getattr(rag_service, "agentic_workflow", None) is not None
             if chat_mode == "wiki" and not wiki_runtime_available:
                 raise ValueError("Wiki 问答模式暂不可用，请确认 Wiki runtime 已启用")
+            if chat_mode == "rag_wiki" and not rag_wiki_runtime_available:
+                raise ValueError("RAG + Wiki 模式暂不可用，请确认混合检索 runtime 已启用")
             if chat_mode == "reasoning" and not (runtime_available or agentic_available):
                 raise ValueError("智能推理暂不可用，请切换为快速问答后重试")
             if chat_mode == "quick" and chat_rag_pipeline_enabled and not quick_runtime_available:
@@ -2135,6 +2574,9 @@ def chat_stream(payload: ChatRequest) -> StreamingResponse:
                         chat_mode=chat_mode,
                         memory_enabled=memory_enabled,
                         user_message_id=str(user_message["id"]),
+                        assistant_message_id=str(assistant_message["id"]),
+                        request_id=request_id,
+                        principal=principal,
                         temporary_attachment_ids=attachment_ids,
                         temporary_context=temporary_context,
                         temporary_sources=temporary_sources,
@@ -2149,30 +2591,67 @@ def chat_stream(payload: ChatRequest) -> StreamingResponse:
                         trace_id=get_trace_id(),
                     ),
                 )
-                yield from _store_pipeline_events(
+                for _event in _store_pipeline_events(
                     stream_identity,
                     run_quick_rag_pipeline(context),
                     event_bus=event_bus,
-                )
+                ):
+                    pass
                 stream_state["sources"] = context.state.sources
+                stream_state["reasoning"] = context.state.reasoning
+                stream_state["agent_events"] = context.state.agent_events
+                stream_state["agent_events_truncated"] = context.state.agent_events_truncated
                 answer_parts[:] = list(context.state.answer_parts)
+                if context.state.stopped:
+                    _complete_chat_assistant(
+                        conversation_id,
+                        str(assistant_message["id"]),
+                        "".join(answer_parts),
+                        _chat_completion_metadata(stream_state, scope=scope, chat_mode=chat_mode, attachment_ids=attachment_ids),
+                        stopped=True,
+                    )
                 return
 
-            yield _emit_stored_sse(
+            _emit_stored_sse(
                 stream_identity,
-                {"conversation_id": conversation_id, "stream_message_id": stream_message_id},
+                {
+                    "conversation_id": conversation_id,
+                    "session_id": conversation_id,
+                    "stream_message_id": stream_message_id,
+                    "assistant_message_id": str(assistant_message["id"]),
+                    "request_id": request_id,
+                    "user_message_id": str(user_message["id"]),
+                },
                 event_type="conversation_id",
                 event_bus=event_bus,
             )
 
-            conversation_context = conversation_service.build_context(conversation_id)
+            conversation_context = _build_chat_context(conversation_id, principal=principal)
             memories = memory_service.recall_memories(question) if memory_enabled else []
             memory_context = _join_request_context(
                 memory_service.format_prompt_context(memories) if memory_enabled else "",
                 temporary_context,
             )
-            if chat_mode == "wiki":
-                yield from _store_raw_sse_events(
+            if chat_mode == "rag_wiki":
+                for _event in _store_raw_sse_events(
+                    stream_identity,
+                    _stream_agent_runtime_chat_events(
+                        question,
+                        conversation_context,
+                        memory_context,
+                        answer_parts,
+                        stream_state,
+                        scope,
+                        temporary_sources,
+                        mode="rag_wiki",
+                    ),
+                    stream_state=stream_state,
+                    event_bus=event_bus,
+                    stop_signal=stop_signal,
+                ):
+                    pass
+            elif chat_mode == "wiki":
+                for _event in _store_raw_sse_events(
                     stream_identity,
                     _stream_agent_runtime_chat_events(
                         question,
@@ -2184,11 +2663,13 @@ def chat_stream(payload: ChatRequest) -> StreamingResponse:
                         temporary_sources,
                         mode="wiki",
                     ),
+                    stream_state=stream_state,
                     event_bus=event_bus,
                     stop_signal=stop_signal,
-                )
+                ):
+                    pass
             elif chat_mode == "reasoning" and runtime_available:
-                yield from _store_raw_sse_events(
+                for _event in _store_raw_sse_events(
                     stream_identity,
                     _stream_agent_runtime_chat_events(
                         question,
@@ -2200,11 +2681,13 @@ def chat_stream(payload: ChatRequest) -> StreamingResponse:
                         temporary_sources,
                         mode="reasoning",
                     ),
+                    stream_state=stream_state,
                     event_bus=event_bus,
                     stop_signal=stop_signal,
-                )
+                ):
+                    pass
             elif chat_mode == "reasoning":
-                yield from _store_raw_sse_events(
+                for _event in _store_raw_sse_events(
                     stream_identity,
                     _stream_agentic_chat_events(
                         question,
@@ -2215,11 +2698,13 @@ def chat_stream(payload: ChatRequest) -> StreamingResponse:
                         scope,
                         temporary_sources,
                     ),
+                    stream_state=stream_state,
                     event_bus=event_bus,
                     stop_signal=stop_signal,
-                )
+                ):
+                    pass
             elif quick_runtime_available:
-                yield from _store_raw_sse_events(
+                for _event in _store_raw_sse_events(
                     stream_identity,
                     _stream_agent_runtime_chat_events(
                         question,
@@ -2231,11 +2716,13 @@ def chat_stream(payload: ChatRequest) -> StreamingResponse:
                         temporary_sources,
                         mode="quick",
                     ),
+                    stream_state=stream_state,
                     event_bus=event_bus,
                     stop_signal=stop_signal,
-                )
+                ):
+                    pass
             else:
-                yield from _store_raw_sse_events(
+                for _event in _store_raw_sse_events(
                     stream_identity,
                     _stream_raw_chat_events(
                         question,
@@ -2246,23 +2733,21 @@ def chat_stream(payload: ChatRequest) -> StreamingResponse:
                         scope,
                         temporary_sources,
                     ),
+                    stream_state=stream_state,
                     event_bus=event_bus,
                     stop_signal=stop_signal,
-                )
+                ):
+                    pass
 
             answer = "".join(answer_parts)
-            conversation_service.repository.append_message(
-                conversation_id,
-                "assistant",
-                answer,
-                {
-                    "sources": stream_state["sources"],
-                    "knowledge_base_scope": scope.to_dict(),
-                    "chat_mode": chat_mode,
-                    "temporary_attachment_ids": attachment_ids,
-                },
+            completion_metadata = _chat_completion_metadata(
+                stream_state,
+                scope=scope,
+                chat_mode=chat_mode,
+                attachment_ids=attachment_ids,
             )
-            conversation_service.maybe_summarize(conversation_id)
+            _complete_chat_assistant(conversation_id, str(assistant_message["id"]), answer, completion_metadata)
+            _maybe_summarize_chat_conversation(conversation_id, principal=principal)
             memory_updates = memory_service.process_exchange(
                 user_message=question,
                 assistant_message=answer,
@@ -2271,31 +2756,46 @@ def chat_stream(payload: ChatRequest) -> StreamingResponse:
                 memory_enabled=memory_enabled,
             )
             if memory_updates:
-                yield _emit_stored_sse(
+                _emit_stored_sse(
                     stream_identity,
                     {"memory_updated": memory_updates},
                     event_type="memory_updated",
                     event_bus=event_bus,
                 )
             _publish_chat_stream_event(stream_identity, event_bus, "done", {}, terminal=True)
-            yield "data: [DONE]\n\n"
         except ChatStreamStopped:
-            yield _emit_stored_sse(
+            partial_answer = "".join(answer_parts)
+            _complete_chat_assistant(
+                conversation_id,
+                str(assistant_message["id"]),
+                partial_answer,
+                _chat_completion_metadata(stream_state, scope=scope, chat_mode=chat_mode, attachment_ids=attachment_ids),
+                stopped=True,
+            )
+            _emit_stored_sse(
                 stream_identity,
-                {"stop": {"reason": "client_requested"}},
+                {"stop": {"session_id": conversation_id, "message_id": stream_message_id, "reason": "client_requested"}},
                 event_type="stop",
                 event_bus=event_bus,
             )
             _publish_chat_stream_event(stream_identity, event_bus, "done", {}, terminal=True)
-            yield "data: [DONE]\n\n"
         except Exception as e:
             logger.exception("Chat stream failed: %s", e)
-            yield _emit_stored_sse(stream_identity, {"error": str(e)}, event_type="error", event_bus=event_bus)
+            _emit_stored_sse(stream_identity, {"error": str(e)}, event_type="error", event_bus=event_bus)
             _publish_chat_stream_event(stream_identity, event_bus, "done", {}, terminal=True)
-            yield "data: [DONE]\n\n"
         finally:
             _unregister_chat_stream(stream_identity, stop_signal)
             temporary_attachment_repository.mark_consumed(attachment_ids)
+
+    def event_gen():
+        producer = threading.Thread(target=produce_events, name=f"chat-producer:{stream_identity.key}", daemon=True)
+        producer.start()
+        yield from _replay_chat_stream(
+            stream_identity,
+            0,
+            stop_signal=_active_chat_stream_signal(stream_identity),
+            poll_until_terminal=True,
+        )
 
     return StreamingResponse(event_gen(), media_type="text/event-stream")
 

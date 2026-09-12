@@ -112,6 +112,26 @@ class AgentRuntimeConfig:
     wiki_max_empty_retries: int = 1
     wiki_max_repeated_responses: int = 1
     wiki_preload_retrieval: bool = False
+    rag_wiki_runtime_enabled: bool = True
+    rag_wiki_prompt_template_id: str = "hybrid_rag_wiki_agent"
+    rag_wiki_context_template_id: str = "default_context"
+    rag_wiki_enabled_tools: tuple[str, ...] = (
+        "thinking",
+        "todo_write",
+        "wiki_search",
+        "wiki_read_page",
+        "wiki_read_source_doc",
+        "wiki_flag_issue",
+        "grep_chunks",
+        "knowledge_search",
+        "list_knowledge_chunks",
+        "get_document_info",
+        "query_knowledge_graph",
+    )
+    rag_wiki_max_iterations: int = 6
+    rag_wiki_max_empty_retries: int = 1
+    rag_wiki_max_repeated_responses: int = 1
+    rag_wiki_preload_retrieval: bool = False
     tool_timeout_seconds: float = 20.0
     web_search_enabled: bool = False
     web_search_endpoint: str = ""
@@ -202,6 +222,31 @@ def resolve_chat_runtime_policy(mode: str, config: AgentRuntimeConfig) -> ChatRu
             max_remedial_retrieval_attempts=0,
             tool_choice="auto" if config.wiki_enabled_tools else "none",
             preload_retrieval=bool(config.wiki_preload_retrieval),
+            remedial_retrieval_enabled=False,
+            require_deep_read=True,
+            grep_first_enabled=False,
+            emit_initial_thought=True,
+        )
+    if normalized == "rag_wiki":
+        return ChatRuntimePolicy(
+            mode="rag_wiki",
+            prompt_template_id=config.rag_wiki_prompt_template_id,
+            context_template_id=config.rag_wiki_context_template_id,
+            enabled_tools=tuple(config.rag_wiki_enabled_tools or ()),
+            max_iterations=max(1, int(config.rag_wiki_max_iterations or 6)),
+            max_empty_retries=max(0, int(config.rag_wiki_max_empty_retries or 1)),
+            max_repeated_responses=max(0, int(config.rag_wiki_max_repeated_responses or 1)),
+            max_repeated_tool_batches=max(1, int(config.max_repeated_tool_batches or 1)),
+            max_llm_calls=max(1, int(config.max_llm_calls or 8)),
+            max_tool_calls=max(1, int(config.max_tool_calls or 24)),
+            max_wall_clock_seconds=max(1.0, float(config.max_wall_clock_seconds or 120.0)),
+            max_parallel_workers=max(1, int(config.max_parallel_workers or 1)),
+            local_concurrency_enabled=bool(config.local_concurrency_enabled),
+            parallel_tool_calls_mode=_capability_mode(config.parallel_tool_calls_mode),
+            terminal_streaming_mode=_capability_mode(config.terminal_streaming_mode),
+            max_remedial_retrieval_attempts=0,
+            tool_choice="auto" if config.rag_wiki_enabled_tools else "none",
+            preload_retrieval=bool(config.rag_wiki_preload_retrieval),
             remedial_retrieval_enabled=False,
             require_deep_read=True,
             grep_first_enabled=False,

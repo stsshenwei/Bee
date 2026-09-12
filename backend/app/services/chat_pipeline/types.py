@@ -60,6 +60,9 @@ class ChatPipelineRequest:
     chat_mode: str = "quick"
     memory_enabled: bool = True
     user_message_id: str = ""
+    assistant_message_id: str = ""
+    request_id: str = ""
+    principal: Any | None = None
     temporary_attachment_ids: list[str] = field(default_factory=list)
     temporary_context: str = ""
     temporary_sources: list[dict[str, Any]] = field(default_factory=list)
@@ -74,6 +77,9 @@ class ChatPipelineState:
     child_hits: list[dict[str, Any]] = field(default_factory=list)
     hits: list[dict[str, Any]] = field(default_factory=list)
     sources: list[dict[str, Any]] = field(default_factory=list)
+    reasoning: dict[str, Any] = field(default_factory=dict)
+    agent_events: list[dict[str, Any]] = field(default_factory=list)
+    agent_events_truncated: bool = False
     prompt_ready: bool = False
     answer_parts: list[str] = field(default_factory=list)
     memory_updates: list[dict[str, Any]] = field(default_factory=list)

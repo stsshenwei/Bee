@@ -88,6 +88,34 @@ test("pairs tool call and result into one completed product timeline step", () =
   assert.deepEqual(steps[0].sourceChunkIds, ["k1", "k2", "k3"]);
 });
 
+test("describes wiki search pages and query candidates without chunk wording", () => {
+  const events = [
+    normalizeAgentPayload("agent_tool_call", { tool: "wiki_search", call_id: "w1", input_summary: "认证" }, 1, 1000),
+    normalizeAgentPayload(
+      "agent_tool_result",
+      {
+        tool: "wiki_search",
+        call_id: "w1",
+        metadata: {
+          result_count: 0,
+          query_count: 4,
+          source_titles: ["日志", "索引", "DH-P5000-08GP-AC", "ACL"],
+        },
+      },
+      2,
+      1100,
+    ),
+  ];
+
+  const steps = buildAgentTimeline(events);
+
+  assert.equal(steps[0].title, "搜索 Wiki");
+  assert.equal(steps[0].summary, "未命中 Wiki 页面");
+  assert.equal(steps[0].detail, "0 个 Wiki 页面，4 个关键词");
+  assert.doesNotMatch(steps[0].detail || "", /匹配片段|相关内容/);
+  assert.deepEqual(steps[0].sourceTitles, ["日志", "索引", "DH-P5000-08GP-AC", "ACL"]);
+});
+
 test("dedupes legacy tool events when matching domain tool events are present", () => {
   const events = [
     normalizeAgentPayload("agent_tool_call", { tool: "knowledge_search", action: "execute", call_id: "a1", input_summary: "Redis" }, 1, 1000),
@@ -255,6 +283,24 @@ test("new timeline activity closes previous non-tool running steps while streami
   assert.equal(nonToolRunning.length, 0);
   assert.equal(toolStep?.status, "running");
   assert.equal(toolStep?.title, "搜索关键词：48*SFP+ | 40G QSFP+ | 4.8T | VLAN:4K");
+});
+
+test("closed running steps do not keep stale running detail text", () => {
+  const events = [
+    normalizeAgentPayload(
+      "agent_thought",
+      { status: "running", phase: "llm_decision", summary: "thinking", completion_status: "running" },
+      1,
+      1000,
+    ),
+    normalizeAgentPayload("agent_tool_call", { tool: "wiki_search", call_id: "w1", input_summary: "security" }, 2, 1100),
+  ];
+
+  const steps = buildAgentTimeline(events);
+  const thought = steps.find((step) => step.kind === "thought");
+
+  assert.equal(thought?.status, "completed");
+  assert.doesNotMatch(thought?.detail || "", /\u8fdb\u884c\u4e2d|running/i);
 });
 
 test("batched tools complete by call id even when physical results arrive out of order", () => {

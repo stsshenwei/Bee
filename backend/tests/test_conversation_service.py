@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 from app.services.memory.conversation_repository import ConversationRepository
+from app.services.memory.principal import Principal
 from app.services.memory.conversation_service import ConversationService
 
 
@@ -80,6 +81,131 @@ class ConversationServiceTests(unittest.TestCase):
 
         self.assertEqual("", service.maybe_summarize(conversation["id"]))
         self.assertEqual([], summarizer.calls)
+
+    def test_repository_scopes_owned_and_shared_conversations(self):
+        _service, repository, _ = self.make_service()
+        owner = Principal(kind="web_user", tenant_id="tenant-a", user_id="user-1")
+        other = Principal(kind="web_user", tenant_id="tenant-a", user_id="user-2")
+        shared = Principal(kind="api_tenant", tenant_id="tenant-a")
+
+        owned_conversation = repository.create_conversation(principal=owner)
+        shared_conversation = repository.create_conversation(principal=shared)
+        repository.append_message(owned_conversation["id"], "user", "private", {})
+        repository.append_message(shared_conversation["id"], "user", "shared", {})
+
+        self.assertIsNotNone(repository.get_conversation(owned_conversation["id"], principal=owner))
+        self.assertIsNone(repository.get_conversation(owned_conversation["id"], principal=other))
+        self.assertEqual([], repository.list_messages(owned_conversation["id"], principal=other))
+        self.assertIsNotNone(repository.get_conversation(shared_conversation["id"], principal=owner))
+        self.assertEqual(["shared"], [item["content"] for item in repository.list_messages(shared_conversation["id"], principal=owner)])
+
+    def test_list_conversations_returns_recent_scoped_titles(self):
+        _service, repository, _ = self.make_service()
+        owner = Principal(kind="web_user", tenant_id="tenant-a", user_id="user-1")
+        other = Principal(kind="web_user", tenant_id="tenant-a", user_id="user-2")
+        first = repository.create_conversation(title="Pinned title", principal=owner)
+        second = repository.create_conversation(principal=owner)
+        hidden = repository.create_conversation(principal=other)
+        repository.append_message(first["id"], "user", "older question", {})
+        repository.append_message(second["id"], "user", "newer question becomes title", {})
+        repository.append_message(hidden["id"], "user", "hidden", {})
+
+        recent = repository.list_conversations(limit=10, principal=owner)
+
+        self.assertEqual([second["id"], first["id"]], [item["id"] for item in recent])
+        self.assertEqual("newer question becomes title", recent[0]["display_title"])
+        self.assertEqual("Pinned title", recent[1]["display_title"])
+        self.assertFalse(recent[0]["is_running"])
+
+    def test_list_conversations_marks_running_assistant_turns(self):
+        _service, repository, _ = self.make_service()
+        conversation = repository.create_conversation()
+        _user_message, assistant_message, _request_id = repository.create_turn(conversation["id"], "streaming question", {})
+
+        recent = repository.list_conversations(limit=10)
+
+        self.assertTrue(recent[0]["is_running"])
+        repository.complete_assistant_message(conversation["id"], assistant_message["id"], "done", {})
+        completed_recent = repository.list_conversations(limit=10)
+        self.assertFalse(completed_recent[0]["is_running"])
+
+    def test_rename_and_delete_conversation_respect_scope(self):
+        _service, repository, _ = self.make_service()
+        owner = Principal(kind="web_user", tenant_id="tenant-a", user_id="user-1")
+        other = Principal(kind="web_user", tenant_id="tenant-a", user_id="user-2")
+        conversation = repository.create_conversation(principal=owner)
+        repository.append_message(conversation["id"], "user", "hello", {}, request_id="req-1")
+
+        self.assertIsNone(repository.rename_conversation(conversation["id"], "Other", principal=other))
+        renamed = repository.rename_conversation(conversation["id"], "Renamed chat", principal=owner)
+        self.assertEqual("Renamed chat", renamed["title"])
+
+        self.assertFalse(repository.delete_conversation(conversation["id"], principal=other))
+        self.assertTrue(repository.delete_conversation(conversation["id"], principal=owner))
+        self.assertIsNone(repository.get_conversation(conversation["id"], principal=owner))
+        self.assertEqual([], repository.list_messages(conversation["id"], principal=owner))
+        self.assertEqual([], repository.list_conversations(limit=10, principal=owner))
+
+    def test_create_turn_pairs_request_and_completion_is_idempotent(self):
+        _service, repository, _ = self.make_service()
+        conversation = repository.create_conversation()
+
+        user_message, assistant_message, request_id = repository.create_turn(conversation["id"], "hello", {"chat_mode": "quick"})
+        completed = repository.complete_assistant_message(
+            conversation["id"],
+            assistant_message["id"],
+            "partial answer",
+            {"sources": [{"source": "doc.md"}]},
+            stopped=True,
+        )
+        second = repository.complete_assistant_message(conversation["id"], assistant_message["id"], "replacement", {})
+
+        self.assertEqual(request_id, user_message["request_id"])
+        self.assertEqual(request_id, assistant_message["request_id"])
+        self.assertTrue(user_message["is_completed"])
+        self.assertFalse(assistant_message["is_completed"])
+        self.assertEqual("partial answer", completed["content"])
+        self.assertTrue(completed["is_completed"])
+        self.assertTrue(completed["metadata_json"]["stopped"])
+        self.assertEqual("partial answer", second["content"])
+
+    def test_recent_and_paginated_messages_are_bounded_and_ordered(self):
+        _service, repository, _ = self.make_service()
+        conversation = repository.create_conversation()
+        messages = [
+            repository.append_message(conversation["id"], "user", f"message {index}", {})
+            for index in range(5)
+        ]
+
+        recent = repository.list_recent_messages(conversation["id"], 2)
+        latest_page = repository.list_messages_before_time(conversation["id"], limit=2)
+        older_page = repository.list_messages_before_time(
+            conversation["id"],
+            before_time=latest_page["items"][0]["created_at"],
+            limit=2,
+        )
+
+        self.assertEqual(["message 3", "message 4"], [item["content"] for item in recent])
+        self.assertEqual(["message 3", "message 4"], [item["content"] for item in latest_page["items"]])
+        self.assertTrue(latest_page["hasMoreHistory"])
+        self.assertEqual(["message 1", "message 2"], [item["content"] for item in older_page["items"]])
+        self.assertTrue(older_page["hasMoreHistory"])
+        self.assertEqual(messages[-1]["id"], recent[-1]["id"])
+
+    def test_same_timestamp_user_precedes_assistant(self):
+        _service, repository, _ = self.make_service()
+        conversation = repository.create_conversation()
+        user_message, assistant_message, _request_id = repository.create_turn(conversation["id"], "question", {})
+        same_time = "2026-01-01T00:00:00.000000"
+        with repository._connect() as conn:
+            conn.execute(
+                "update conversation_message set created_at = ? where id in (?, ?)",
+                (same_time, user_message["id"], assistant_message["id"]),
+            )
+
+        ordered = repository.list_messages(conversation["id"])
+
+        self.assertEqual(["user", "assistant"], [item["role"] for item in ordered])
 
 
 if __name__ == "__main__":

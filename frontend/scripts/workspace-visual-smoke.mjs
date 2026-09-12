@@ -1,0 +1,133 @@
+import assert from "node:assert/strict";
+import { mkdir, writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { chromium } from "playwright";
+
+const base = process.env.APP_BASE || "http://127.0.0.1:3103";
+const artifacts = resolve(".artifacts/workspace-redesign");
+await mkdir(artifacts, { recursive: true });
+const browser = await chromium.launch({ headless: true, executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe" });
+const results = [];
+try {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  async function capture(name) {
+    await page.screenshot({ path: resolve(artifacts, `${name}.png`), fullPage: true });
+    const layout = await page.evaluate(() => {
+      const rect = (selector) => {
+        const element = document.querySelector(selector);
+        if (!element || !element.getClientRects().length) return null;
+        const { x, y, width, height, bottom, right } = element.getBoundingClientRect();
+        return { x, y, width, height, bottom, right };
+      };
+      return { width: innerWidth, overflow: document.documentElement.scrollWidth > innerWidth, metrics: rect(".kb-metrics"), toolbar: rect(".document-toolbar"), cards: rect(".kb-document-grid"), navigation: rect(".wiki-navigation"), reader: rect(".wiki-reader-v2"), thread: rect(".chat-thread"), composer: rect(".chat-composer") };
+    });
+    results.push({ name, ...layout });
+    assert.equal(layout.overflow, false, `${name}: horizontal overflow`);
+    if (layout.metrics) assert.ok(layout.metrics.height < 100, `${name}: stretched metrics`);
+    if (layout.thread && layout.composer) assert.ok(layout.thread.bottom <= layout.composer.y + 1, `${name}: composer overlap`);
+    if (layout.thread && layout.width > 768) assert.ok(layout.thread.width >= layout.width - 250, `${name}: narrow chat column`);
+    if (layout.reader && layout.navigation && layout.width > 768) assert.ok(layout.navigation.right <= layout.reader.x + 1, `${name}: wiki columns overlap`);
+  }
+  await page.goto(`${base}/knowledge`, { waitUntil: "networkidle" });
+  await page.locator(".kb-card").first().waitFor();
+  await capture("catalog-desktop");
+  await page.getByRole("textbox", { name: "搜索知识库" }).fill("no-match-visual-check");
+  assert.equal(await page.locator(".kb-card").count(), 0);
+  await page.getByRole("textbox", { name: "搜索知识库" }).fill("");
+  await page.getByRole("button", { name: "创建知识库", exact: true }).click();
+  await capture("create-desktop");
+  await page.getByRole("button", { name: "取消", exact: true }).click();
+  await page.locator(".kb-card-open").filter({ hasText: /^wiki$/ }).click();
+  await page.locator(".doc-tile-card").first().waitFor();
+  const detailUrl = page.url();
+  await capture("documents-desktop");
+  await page.getByRole("button", { name: "筛选", exact: true }).click();
+  await page.locator(".document-advanced-filters").waitFor();
+  await capture("filters-desktop");
+  await page.getByRole("button", { name: "筛选", exact: true }).click();
+  await page.getByRole("button", { name: "列表视图", exact: true }).click();
+  await capture("list-desktop");
+  await page.getByRole("button", { name: "卡片视图", exact: true }).click();
+  await page.locator(".doc-tile-menu-trigger").first().click();
+  await page.getByRole("menuitem", { name: "预览文档", exact: true }).click();
+  await page.locator(".doc-viewer").waitFor();
+  await capture("preview-desktop");
+  await page.locator(".doc-close").click();
+  await page.locator(".doc-runtime-badge").first().click();
+  await page.locator(".trace-drawer").waitFor();
+  await page.getByText("正在加载处理链路...", { exact: true }).waitFor({ state: "hidden" });
+  await capture("trace-desktop");
+  await page.goto(detailUrl, { waitUntil: "networkidle" });
+  await page.getByRole("button", { name: "知识库设置", exact: true }).click();
+  await capture("settings-desktop");
+  await page.getByRole("button", { name: "取消", exact: true }).click();
+  await page.getByRole("button", { name: "上传", exact: true }).click();
+  await capture("upload-menu-desktop");
+  await page.getByRole("button", { name: "上传", exact: true }).click();
+  await page.locator(".doc-tile-title").first().click();
+  await page.locator(".document-detail-text, .document-detail-pdf").waitFor();
+  const documentUrl = page.url();
+  await capture("document-desktop");
+  await page.getByRole("button", { name: "分块", exact: true }).click();
+  await capture("chunks-desktop");
+  await page.goto(detailUrl, { waitUntil: "networkidle" });
+  await page.getByRole("tab", { name: "Wiki", exact: true }).click();
+  await page.locator(".wiki-article-head").waitFor();
+  await capture("wiki-desktop");
+  await page.getByRole("tab", { name: "图谱", exact: true }).click();
+  await page.locator(".wiki-graph-node").first().waitFor();
+  await capture("graph-desktop");
+  const graphCount = await page.locator(".wiki-graph-node").count();
+  assert.ok(graphCount > 0);
+  await page.getByRole("button", { name: "放大", exact: true }).click();
+  await page.locator(".wiki-graph-node").first().click();
+  await capture("graph-details-desktop");
+  await page.goto(`${base}/chat`, { waitUntil: "networkidle" });
+  await capture("chat-desktop");
+  await page.locator(".composer-mode-trigger").click();
+  await capture("chat-mode-desktop");
+  await page.locator(".composer-mode-trigger").click();
+  await page.locator(".kb-scope-trigger").click();
+  await capture("chat-scope-desktop");
+  await page.locator(".kb-scope-trigger").click();
+  await page.locator(".sidebar-recent-main").first().click();
+  await page.locator(".message-row").first().waitFor();
+  await capture("chat-history-desktop");
+  await page.getByRole("button", { name: "新对话", exact: true }).click();
+  for (const width of [320, 375, 414, 768]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto(`${base}/knowledge`, { waitUntil: "networkidle" });
+    await capture(`catalog-${width}`);
+    if (width === 375) {
+      await page.getByRole("button", { name: "创建知识库", exact: true }).click();
+      await capture("create-mobile");
+      await page.getByRole("button", { name: "知识库类型", exact: true }).click();
+      await capture("create-types-mobile");
+      await page.getByRole("button", { name: "取消", exact: true }).click();
+    }
+    await page.goto(detailUrl, { waitUntil: "networkidle" });
+    await capture(`documents-${width}`);
+    await page.getByRole("button", { name: "筛选", exact: true }).click();
+    await capture(`filters-${width}`);
+    await page.getByRole("tab", { name: "Wiki", exact: true }).click();
+    await page.locator(".wiki-article-head").waitFor();
+    await capture(`wiki-${width}`);
+    await page.getByRole("tab", { name: "图谱", exact: true }).click();
+    await page.locator(".wiki-graph-node").first().waitFor();
+    await capture(`graph-${width}`);
+    await page.goto(documentUrl, { waitUntil: "networkidle" });
+    await capture(`document-${width}`);
+    await page.goto(`${base}/chat`, { waitUntil: "networkidle" });
+    await capture(`chat-${width}`);
+    await page.getByRole("button", { name: "展开导航", exact: true }).click();
+    await capture(`navigation-${width}`);
+    await page.getByRole("button", { name: "收起导航", exact: true }).click();
+  }
+  assert.deepEqual(errors, [], "Browser runtime errors");
+  console.log(JSON.stringify({ captures: results.length, graphCount, errors }));
+} finally {
+  await writeFile(resolve(artifacts, "layout-results.json"), JSON.stringify(results, null, 2));
+  await browser.close();
+}

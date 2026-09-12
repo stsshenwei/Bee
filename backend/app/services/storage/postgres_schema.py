@@ -827,18 +827,26 @@ def _memory_eval_agent_ddl(config: PostgresSchemaConfig) -> str:
     return f"""
     create table {schema}.conversation (
         id text primary key,
+        tenant_id text not null default '',
+        user_id text not null default '',
         title text not null default '',
         summary text not null default '',
+        agent_config jsonb not null default '{{}}'::jsonb,
         created_at timestamptz not null,
-        updated_at timestamptz not null
+        updated_at timestamptz not null,
+        deleted_at timestamptz
     );
     create table {schema}.conversation_message (
         id text primary key,
         conversation_id text not null references {schema}.conversation(id) on delete cascade,
+        request_id text not null default '',
         role text not null,
         content text not null,
         metadata_json jsonb not null default '{{}}'::jsonb,
-        created_at timestamptz not null
+        is_completed boolean not null default true,
+        created_at timestamptz not null,
+        updated_at timestamptz not null,
+        deleted_at timestamptz
     );
     create table {schema}.memory (
         id text primary key,
@@ -965,7 +973,9 @@ def _postgres_indexes(config: PostgresSchemaConfig) -> str:
     create index idx_wiki_log_scope_created on {schema}.wiki_log_entry(workspace_id, knowledge_base_id, created_at, id);
     create index idx_wiki_page_commit_slug on {schema}.wiki_page_commit(workspace_id, knowledge_base_id, page_slug, page_version);
     create index idx_wiki_ingest_commit_document on {schema}.wiki_ingest_commit(workspace_id, knowledge_base_id, document_id, document_revision);
+    create index idx_conversation_owner on {schema}.conversation(tenant_id, user_id, updated_at);
     create index idx_conversation_message_conversation on {schema}.conversation_message(conversation_id, created_at);
+    create index idx_conversation_message_request on {schema}.conversation_message(conversation_id, request_id, role);
     create index idx_memory_status_updated on {schema}.memory(status, updated_at);
     create index idx_memory_scope_key on {schema}.memory(scope, normalized_key, status);
     create index idx_eval_run_status_updated on {schema}.eval_run(status, updated_at);

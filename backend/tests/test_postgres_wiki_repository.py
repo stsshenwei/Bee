@@ -150,6 +150,25 @@ class PostgresWikiRepositoryTests(unittest.TestCase):
         self.assertIn("%s::jsonb, %s::jsonb, %s, %s, true, %s, %s", sql)
         self.assertNotIn("excluded.content_hash, true,", sql)
 
+    def test_sql_translation_casts_wiki_alias_like_search_to_text(self):
+        sql = _translate_sql(
+            """
+            select * from wiki_page
+            where title like ? or slug like ? or summary like ?
+              or content_markdown like ? or aliases_json like ?
+            order by updated_at desc
+            """,
+            "rag",
+        )
+        lowered = sql.lower()
+
+        self.assertIn("title ilike %s", lowered)
+        self.assertIn("slug ilike %s", lowered)
+        self.assertIn("summary ilike %s", lowered)
+        self.assertIn("content_markdown ilike %s", lowered)
+        self.assertIn("aliases_json::text ilike %s", lowered)
+        self.assertNotIn("aliases_json like", lowered)
+
     def test_decodes_postgres_jsonb_contribution_payloads(self):
         decoded = _decode_contribution(
             {

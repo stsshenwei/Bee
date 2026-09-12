@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ModalSurface } from "../components/ModalSurface";
 import type { ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { Search, SlidersHorizontal, LayoutGrid, List, RefreshCw, Plus, FileText, BookOpen, Network, MessageSquare, Settings2, Layers3, X } from "lucide-react";
 import { DocumentViewer } from "../components/DocumentViewer";
 import { DeleteIcon, EditIcon, LibraryIcon, MoreIcon, TraceIcon, UploadIcon } from "../components/Icons";
 import { WikiWorkspace } from "./WikiWorkspace";
@@ -39,7 +41,7 @@ import {
   updateKnowledgeBase,
   uploadBatchFile,
 } from "../lib/api";
-import { applyKnowledgeBaseTypePreset, toKnowledgeBaseCreateInput, validateKnowledgeCreationSettings } from "../lib/knowledge-validation";
+import { applyKnowledgeBaseTypePreset, selectedKnowledgeBaseTypes, toKnowledgeBaseCreateInput, validateKnowledgeCreationSettings } from "../lib/knowledge-validation";
 import { canRetryUploadFile, summarizeProcessingPreview, summarizeUploadFile } from "../lib/processing-ui";
 import type {
   DocumentProcessingPreview,
@@ -116,18 +118,24 @@ const DEFAULT_UPLOAD_SETTINGS: UploadBatchSettings = {
   parent_child_enabled: true,
   dense_enabled: true,
   keyword_enabled: true,
+  wiki_enabled: true,
   question_generation_enabled: false,
-  graph_enabled: false,
+  graph_enabled: true,
   ocr_enabled: false,
   multimodal_enabled: false,
   audio_enabled: false,
 };
 const UPLOAD_BATCH_TERMINAL_STATUSES = new Set(["completed", "partial_failed", "failed", "canceled"]);
+const ACTIVE_PARSE_STATUSES = new Set(["pending", "parsing", "processing", "uploaded"]);
+const ACTIVE_SUMMARY_STATUSES = new Set(["pending", "processing"]);
+const ACTIVE_DOCUMENT_TASK_STATUSES = new Set(["pending", "queued", "processing", "retrying", "scheduled"]);
+const ACTIVE_TRACE_STATUSES = new Set(["pending", "running"]);
 
 const DEFAULT_WIZARD: KnowledgeCreationWizardSettings = {
   name: "",
   description: "",
   type: "document",
+  selectedTypes: ["document"],
   isDefault: false,
   activeSection: "basic",
   indexingStrategy: {
@@ -161,9 +169,6 @@ const DEFAULT_WIZARD: KnowledgeCreationWizardSettings = {
 const CREATION_SECTIONS: Array<{ id: KnowledgeBaseCreationSection; label: string; disabled?: boolean }> = [
   { id: "basic", label: "基本信息" },
   { id: "type", label: "知识库类型" },
-  { id: "model", label: "模型配置" },
-  { id: "vector", label: "向量存储" },
-  { id: "parser", label: "解析引擎" },
   { id: "chunking", label: "分段设置" },
   { id: "image_ocr", label: "图片 / OCR" },
   { id: "audio", label: "音频处理", disabled: true },
@@ -189,10 +194,11 @@ export default function KnowledgePage() {
   const [settingsTarget, setSettingsTarget] = useState<KnowledgeBase | null>(null);
   const [settingsName, setSettingsName] = useState("");
   const [settingsDescription, setSettingsDescription] = useState("");
-  const [settingsIndexingStrategy, setSettingsIndexingStrategy] = useState<KnowledgeBase["indexing_strategy"]>(DEFAULT_WIZARD.indexingStrategy);
+  const [settingsIsDefault, setSettingsIsDefault] = useState(false);
   const [wizard, setWizard] = useState<KnowledgeCreationWizardSettings>(DEFAULT_WIZARD);
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
   const [uploading, setUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState("");
   const [uploadMenuOpen, setUploadMenuOpen] = useState(false);
@@ -246,33 +252,28 @@ export default function KnowledgePage() {
 
   useEffect(() => {
     if (!selectedId) return;
-    const hasProcessingDocuments = documents.some((item) => (
-      ["pending", "parsing"].includes(item.parse_status || "") ||
-      ["pending", "processing"].includes(item.summary_status || "")
-    ));
+    const hasProcessingDocuments = [...documents, ...uploadPlaceholderDocuments].some(hasActiveDocumentRuntime);
     const hasProcessingBatch = activeBatch ? !UPLOAD_BATCH_TERMINAL_STATUSES.has(activeBatch.status) : false;
-    if (!hasProcessingDocuments && !hasProcessingBatch) return;
+    const knowledgeBaseProcessing = selected ? selected.aggregate.processing_count > 0 : false;
+    if (!hasProcessingDocuments && !hasProcessingBatch && !knowledgeBaseProcessing) return;
     const timer = window.setInterval(() => {
       void loadDocuments(selectedId, false, documentFilters);
       void loadKnowledgeBases();
       if (activeBatch) void refreshActiveBatch();
     }, 2500);
     return () => window.clearInterval(timer);
-  }, [documents, selectedId, documentFilters, activeBatch]);
+  }, [documents, uploadPlaceholderDocuments, selectedId, documentFilters, activeBatch, selected?.aggregate.processing_count]);
 
   useEffect(() => {
     if (!uploadStatus) return;
     if (uploadDialogOpen) return;
-    const hasProcessingDocuments = documents.some((item) => (
-      ["pending", "parsing"].includes(item.parse_status || "") ||
-      ["pending", "processing"].includes(item.summary_status || "")
-    ));
+    const hasProcessingDocuments = [...documents, ...uploadPlaceholderDocuments].some(hasActiveDocumentRuntime);
     const batchFinished = activeBatch ? UPLOAD_BATCH_TERMINAL_STATUSES.has(activeBatch.status) : false;
     const knowledgeBaseIdle = selected ? selected.aggregate.processing_count === 0 : false;
     if (batchFinished || (knowledgeBaseIdle && !hasProcessingDocuments)) {
       setUploadStatus("");
     }
-  }, [activeBatch?.status, documents, selected?.aggregate.processing_count, uploadDialogOpen, uploadStatus]);
+  }, [activeBatch?.status, documents, uploadPlaceholderDocuments, selected?.aggregate.processing_count, uploadDialogOpen, uploadStatus]);
 
   async function loadKnowledgeBases() {
     setLoading(true);
@@ -313,7 +314,7 @@ export default function KnowledgePage() {
   function openSettingsFor(item: KnowledgeBase) {
     setSettingsName(item.name);
     setSettingsDescription(item.description);
-    setSettingsIndexingStrategy({ ...item.indexing_strategy });
+    setSettingsIsDefault(item.is_default);
     setFormError("");
     setSettingsTarget(item);
   }
@@ -325,12 +326,14 @@ export default function KnowledgePage() {
   }
 
   async function submitCreate() {
+    if (savingRef.current) return;
     const validation = validateKnowledgeCreationSettings(wizard);
     if (!validation.ok) {
       setFormError(validation.message);
       setWizard((current) => ({ ...current, activeSection: validation.section }));
       return;
     }
+    savingRef.current = true;
     setSaving(true);
     setFormError("");
     try {
@@ -341,35 +344,44 @@ export default function KnowledgePage() {
     } catch (cause) {
       setFormError(cause instanceof Error ? cause.message : "创建失败");
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   }
 
   async function submitSettings() {
-    if (!settingsTarget) return;
+    if (!settingsTarget || savingRef.current) return;
+    if (!settingsName.trim()) {
+      setFormError("请输入知识库名称。");
+      return;
+    }
+    savingRef.current = true;
     setSaving(true);
     setFormError("");
     try {
       await updateKnowledgeBase(settingsTarget.id, {
-        name: settingsName,
+        name: settingsName.trim(),
         description: settingsDescription,
-        indexing_strategy: settingsIndexingStrategy,
+        is_default: settingsIsDefault,
       });
       setSettingsTarget(null);
       await loadKnowledgeBases();
     } catch (cause) {
       setFormError(cause instanceof Error ? cause.message : "保存失败");
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   }
 
   async function deleteKnowledgeBase(target: KnowledgeBase) {
+    if (savingRef.current) return;
     if (target.is_default) {
       setFormError("默认知识库不能删除，请先将其他知识库设为默认。");
       return;
     }
     if (!window.confirm(`删除“${target.name}”？删除后将从列表中移除，不能继续上传或检索；底层数据会暂时保留以便恢复。`)) return;
+    savingRef.current = true;
     setSaving(true);
     setFormError("");
     try {
@@ -382,6 +394,7 @@ export default function KnowledgePage() {
       if (settingsTarget?.id === target.id) setFormError(message);
       else setError(message);
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   }
@@ -680,6 +693,11 @@ export default function KnowledgePage() {
     try {
       const data = await getDocumentProcessingTrace(item.id, selected.id);
       setTraceDrawer((current) => ({ ...current, refreshing: false, error: "", data }));
+      if (!isActiveTraceStatus(data.trace?.status)) {
+        await loadDocuments(selected.id, false, documentFilters);
+        await loadKnowledgeBases();
+        if (activeBatch) await refreshActiveBatch();
+      }
     } catch (cause) {
       setTraceDrawer((current) => ({
         ...current,
@@ -691,7 +709,7 @@ export default function KnowledgePage() {
 
   useEffect(() => {
     const trace = traceDrawer.data?.trace;
-    if (!traceDrawer.open || !trace || !["running", "pending"].includes(trace.status)) return;
+    if (!traceDrawer.open || !trace || !isActiveTraceStatus(trace.status)) return;
     const timer = window.setInterval(() => void refreshProcessingTrace(), 2500);
     return () => window.clearInterval(timer);
   }, [traceDrawer.open, traceDrawer.data?.trace?.status, traceDrawer.document?.id, selected?.id]);
@@ -752,12 +770,12 @@ export default function KnowledgePage() {
               selected={settingsTarget}
               name={settingsName}
               description={settingsDescription}
-              indexingStrategy={settingsIndexingStrategy}
+              isDefault={settingsIsDefault}
               error={formError}
               saving={saving}
               onName={setSettingsName}
               onDescription={setSettingsDescription}
-              onIndexingStrategy={setSettingsIndexingStrategy}
+              onDefaultChange={setSettingsIsDefault}
               onCancel={() => setSettingsTarget(null)}
               onSubmit={() => void submitSettings()}
               onDelete={!settingsTarget.is_default ? () => void deleteKnowledgeBase(settingsTarget) : undefined}
@@ -810,12 +828,12 @@ export default function KnowledgePage() {
             selected={settingsTarget}
             name={settingsName}
             description={settingsDescription}
-            indexingStrategy={settingsIndexingStrategy}
+            isDefault={settingsIsDefault}
             error={formError}
             saving={saving}
             onName={setSettingsName}
             onDescription={setSettingsDescription}
-            onIndexingStrategy={setSettingsIndexingStrategy}
+            onDefaultChange={setSettingsIsDefault}
             onCancel={() => setSettingsTarget(null)}
             onSubmit={() => void submitSettings()}
             onDelete={!settingsTarget.is_default ? () => void deleteKnowledgeBase(settingsTarget) : undefined}
@@ -861,24 +879,33 @@ function KnowledgeCatalog({
   onSubmitCreate: () => void;
   settingsDialog: ReactNode;
 }) {
+  const totalDocuments = knowledgeBases.reduce((total, item) => total + item.aggregate.document_count, 0);
+  const totalChunks = knowledgeBases.reduce((total, item) => total + item.aggregate.indexed_chunk_count, 0);
+  const processingCount = knowledgeBases.reduce((total, item) => total + item.aggregate.processing_count, 0);
+  const [catalogQuery, setCatalogQuery] = useState("");
+  const visibleBases = knowledgeBases.filter((item) => `${item.name} ${item.description || ""}`.toLowerCase().includes(catalogQuery.toLowerCase()));
+
   return (
     <section className="knowledge-page kb-catalog-page">
       <header className="knowledge-header kb-catalog-header">
         <div>
           <h1>知识库</h1>
-          <p>管理工作空间中的文档知识、检索范围与处理状态。</p>
+          <p>{knowledgeBases.length} 个知识库，{totalDocuments} 篇文档</p>
+        </div>
+        <div className="kb-catalog-controls">
+          <button className="kb-create-button" type="button" onClick={onOpenCreate}><Plus size={16} />创建知识库</button>
         </div>
       </header>
       <div className="kb-catalog-layout">
         <div className="kb-catalog-content">
-          <div className="kb-toolbar">
-            <div className="kb-toolbar-title">
-              <strong>全部知识库</strong>
-              <span>{knowledgeBases.length} 个知识库</span>
-            </div>
-            <div className="kb-toolbar-actions">
-              <button type="button" onClick={onRefresh}>刷新</button>
-              <button className="kb-create-button" type="button" onClick={onOpenCreate}>＋ 创建知识库</button>
+          <div className="catalog-overview" aria-label="知识库概览">
+            <span><LibraryIcon /><b>{knowledgeBases.length}</b> 知识库</span>
+            <span><FileText size={16} /><b>{totalDocuments}</b> 文档</span>
+            <span><Layers3 size={16} /><b>{totalChunks}</b> 分块</span>
+            {processingCount > 0 ? <span className="metric-warning">{processingCount} 个任务处理中</span> : null}
+            <div className="catalog-overview-actions">
+              <label className="workspace-search"><Search size={16} /><input aria-label="搜索知识库" placeholder="搜索知识库" value={catalogQuery} onChange={(event) => setCatalogQuery(event.target.value)} /></label>
+              <button type="button" className="workspace-icon-button kb-refresh-button" aria-label="刷新知识库" title="刷新知识库" onClick={onRefresh}><RefreshCw size={16} /></button>
             </div>
           </div>
           {error ? <div className="notice error">{error}</div> : null}
@@ -891,7 +918,7 @@ function KnowledgeCatalog({
             </div>
           ) : null}
           <div className="kb-card-grid">
-            {knowledgeBases.map((item) => (
+            {visibleBases.map((item) => (
               <KnowledgeBaseCard
                 key={item.id}
                 item={item}
@@ -907,6 +934,7 @@ function KnowledgeCatalog({
               />
             ))}
           </div>
+          {!loading && knowledgeBases.length > 0 && visibleBases.length === 0 ? <div className="kb-empty"><Search size={28} /><h2>没有匹配的知识库</h2><button type="button" onClick={() => setCatalogQuery("")}>清除搜索</button></div> : null}
         </div>
       </div>
       {createOpen ? (
@@ -935,13 +963,16 @@ function KnowledgeBaseCard({
   onEdit: (event: React.MouseEvent<HTMLButtonElement>) => void;
   onDelete: (event: React.MouseEvent<HTMLButtonElement>) => void;
 }) {
-  const typeLabel = knowledgeBaseTypeLabel(item.type);
+  const typeLabel = knowledgeBaseCardTypeLabel(item);
   return (
     <article className="kb-card" onClick={onOpen}>
       <div className="kb-card-head">
-        <div>
-          <h2>{item.name}</h2>
-          <span>{typeLabel}{item.is_default ? " · 默认" : ""}</span>
+        <div className={`kb-card-symbol ${item.type === "wiki" ? "wiki" : ""}`} aria-hidden="true">
+          {item.type === "wiki" ? <BookOpen size={14} /> : <LibraryIcon />}
+        </div>
+        <div className="kb-card-title-copy">
+          <h2><button className="kb-card-open" type="button" onClick={(event) => { event.stopPropagation(); onOpen(); }}>{item.name}</button></h2>
+          <span className="kb-card-type-badge">{item.is_default ? `默认 · ${typeLabel}` : typeLabel}</span>
         </div>
         <div className="kb-card-actions">
           <button type="button" aria-label="编辑知识库" title="编辑知识库" onClick={onEdit}>
@@ -960,7 +991,6 @@ function KnowledgeBaseCard({
         <span>分块 {item.aggregate.indexed_chunk_count}</span>
         {item.aggregate.processing_count ? <span className="metric-warning">处理中 {item.aggregate.processing_count}</span> : null}
         {item.aggregate.failed_count ? <span className="metric-error">失败 {item.aggregate.failed_count}</span> : null}
-        {item.provider_config?.inactive_overrides?.length ? <span className="metric-warning">有未生效配置</span> : null}
       </div>
     </article>
   );
@@ -974,6 +1004,25 @@ function knowledgeBaseTypeLabel(type: KnowledgeBaseType): string {
     future: "更多类型",
   };
   return labels[type] || type;
+}
+
+function knowledgeBaseCardTypeLabel(item: KnowledgeBase): string {
+  if ((item.type === "document" || item.type === "faq") && item.indexing_strategy?.wiki_enabled) {
+    return `${knowledgeBaseTypeLabel(item.type)} + Wiki`;
+  }
+  return knowledgeBaseTypeLabel(item.type);
+}
+
+function formatWizardTypeSummary(settings: KnowledgeCreationWizardSettings): string {
+  return selectedKnowledgeBaseTypes(settings).map(knowledgeBaseTypeLabel).join(" + ") || "Document";
+}
+
+function formatWizardIndexingSummary(settings: KnowledgeCreationWizardSettings): string {
+  const parts: string[] = [];
+  if (settings.indexingStrategy.dense_enabled) parts.push("Dense");
+  if (settings.indexingStrategy.keyword_enabled) parts.push("Keyword");
+  if (settings.indexingStrategy.wiki_enabled) parts.push("Wiki");
+  return parts.length ? `${parts.join(" + ")} 检索` : "无检索索引";
 }
 
 function KnowledgeBaseCreateWizard({
@@ -993,15 +1042,14 @@ function KnowledgeBaseCreateWizard({
 }) {
   const setSection = (activeSection: KnowledgeBaseCreationSection) => onChange({ ...settings, activeSection });
   return (
-    <div className="dialog-mask" role="presentation" onClick={onCancel}>
-      <section className="kb-dialog kb-create-wizard" role="dialog" aria-modal="true" aria-label="创建知识库" onClick={(event) => event.stopPropagation()}>
+    <div className="dialog-mask" role="presentation" onClick={saving ? undefined : onCancel}>
+      <ModalSurface className="kb-dialog kb-create-wizard" aria-label="创建知识库" onClose={onCancel} dismissible={!saving} aria-busy={saving} onClick={(event) => event.stopPropagation()}>
         <header>
           <div>
             <h2>创建知识库</h2>
-            <p>配置一个 Bee Document 知识库。不可用能力会明确显示为未启用。</p>
           </div>
-          <button type="button" onClick={onCancel} aria-label="关闭">
-            ×
+          <button type="button" onClick={onCancel} disabled={saving} aria-label="关闭">
+            <X size={18} />
           </button>
         </header>
         <div className="kb-wizard-body">
@@ -1021,22 +1069,22 @@ function KnowledgeBaseCreateWizard({
           </nav>
           <div className="kb-wizard-panel">{renderWizardPanel(settings, onChange)}</div>
         </div>
-        {error ? <p className="feedback-err">{error}</p> : null}
+        {error ? <p className="feedback-err" role="alert">{error}</p> : null}
         <div className="kb-effective-config">
           <strong>当前有效配置</strong>
-          <span>Document 类型 / 默认解析器 / 默认向量存储 / Dense + Keyword 检索</span>
-          <span>图谱、OCR、多模态、音频等仅在后端可用时才会生效。</span>
+          <span>{formatWizardTypeSummary(settings)} / {formatWizardIndexingSummary(settings)}</span>
+          <span>索引能力由知识库类型自动决定；图谱、OCR、多模态、音频等仅在后端可用时才会生效。</span>
         </div>
         <div className="kb-dialog-actions">
           <span />
-          <button type="button" onClick={onCancel}>
+          <button type="button" onClick={onCancel} disabled={saving}>
             取消
           </button>
           <button type="button" className="primary-action" disabled={saving} onClick={onSubmit}>
             {saving ? "创建中..." : "创建并进入知识库"}
           </button>
         </div>
-      </section>
+      </ModalSurface>
     </div>
   );
 }
@@ -1048,7 +1096,7 @@ function renderWizardPanel(settings: KnowledgeCreationWizardSettings, onChange: 
         <h3>基本信息</h3>
         <label>
           <span>名称</span>
-          <input autoFocus value={settings.name} maxLength={80} onChange={(event) => onChange({ ...settings, name: event.target.value })} />
+          <input data-autofocus value={settings.name} maxLength={80} onChange={(event) => onChange({ ...settings, name: event.target.value })} />
         </label>
         <label>
           <span>描述</span>
@@ -1062,38 +1110,31 @@ function renderWizardPanel(settings: KnowledgeCreationWizardSettings, onChange: 
     );
   }
   if (settings.activeSection === "type") {
+    const selectedTypes = selectedKnowledgeBaseTypes(settings);
     return (
       <div className="kb-wizard-section">
         <h3>知识库类型</h3>
         <div className="kb-type-grid">
-          <button type="button" className={settings.type === "document" ? "selected" : ""} onClick={() => onChange(applyKnowledgeBaseTypePreset(settings, "document"))}>
+          <button
+            type="button"
+            aria-pressed={selectedTypes.includes("document")}
+            className={selectedTypes.includes("document") ? "selected" : ""}
+            onClick={() => onChange(applyKnowledgeBaseTypePreset(settings, "document"))}
+          >
             <strong>Document</strong>
             <span>上传 PDF、Word、Markdown、表格等文档。</span>
           </button>
-          {(["faq", "wiki"] as const).map((type) => (
-            <button key={type} type="button" className={settings.type === type ? "selected" : ""} onClick={() => onChange(applyKnowledgeBaseTypePreset(settings, type))}>
-              <strong>{type === "faq" ? "FAQ" : "Wiki"}</strong>
-              <span>{type === "faq" ? "适合问答条目和标准回复。" : "适合结构化主题和说明页面。"}</span>
-            </button>
-          ))}
-          <button type="button" disabled>
-            <strong>更多类型</strong>
-            <span>暂未开放</span>
+          <button
+            type="button"
+            aria-pressed={selectedTypes.includes("wiki")}
+            className={selectedTypes.includes("wiki") ? "selected" : ""}
+            onClick={() => onChange(applyKnowledgeBaseTypePreset(settings, "wiki"))}
+          >
+            <strong>Wiki</strong>
+            <span>适合结构化主题和说明页面。</span>
           </button>
         </div>
-        <div className="kb-indexing-controls" aria-label="索引策略">
-          {([
-            ["wiki_enabled", "Wiki"],
-            ["dense_enabled", "Dense"],
-            ["keyword_enabled", "Keyword"],
-            ["graph_enabled", "Graph"],
-          ] as const).map(([key, label]) => (
-            <label className="kb-check-row" key={key}>
-              <input type="checkbox" checked={Boolean(settings.indexingStrategy[key])} onChange={(event) => onChange({ ...settings, indexingStrategy: { ...settings.indexingStrategy, [key]: event.target.checked } })} />
-              <span>{label}</span>
-            </label>
-          ))}
-        </div>
+        <p className="kb-muted">可多选。选择 Document 时自动启用 Dense + Keyword；选择 Wiki 时自动启用 Wiki。</p>
       </div>
     );
   }
@@ -1124,46 +1165,11 @@ function renderWizardPanel(settings: KnowledgeCreationWizardSettings, onChange: 
       </div>
     );
   }
-  if (settings.activeSection === "vector") {
-    return (
-      <div className="kb-wizard-section">
-        <h3>检索与向量</h3>
-        <label className="kb-check-row">
-          <input type="checkbox" checked={settings.indexingStrategy.dense_enabled} onChange={(event) => onChange({ ...settings, indexingStrategy: { ...settings.indexingStrategy, dense_enabled: event.target.checked } })} />
-          <span>Dense retrieval</span>
-        </label>
-        <label className="kb-check-row">
-          <input type="checkbox" checked={settings.indexingStrategy.keyword_enabled} onChange={(event) => onChange({ ...settings, indexingStrategy: { ...settings.indexingStrategy, keyword_enabled: event.target.checked } })} />
-          <span>Keyword retrieval</span>
-        </label>
-        <label>
-          <span>Vector store</span>
-          <input value="Default runtime vector store" readOnly />
-        </label>
-      </div>
-    );
-  }
   if (settings.activeSection === "graph") {
     return (
       <div className="kb-wizard-section">
         <h3>知识图谱</h3>
-        <label className="kb-check-row">
-          <input type="checkbox" checked={settings.indexingStrategy.graph_enabled} onChange={(event) => onChange({ ...settings, indexingStrategy: { ...settings.indexingStrategy, graph_enabled: event.target.checked } })} />
-          <span>请求启用图谱抽取（仅当后端已配置时生效）</span>
-        </label>
-        <p className="kb-muted">若运行时未配置 KG provider，该请求会保留为 requested，但不会伪装成 effective。</p>
-      </div>
-    );
-  }
-  if (settings.activeSection === "parser") {
-    return (
-      <div className="kb-wizard-section">
-        <h3>解析引擎</h3>
-        <label>
-          <span>Parser engine</span>
-          <input value={settings.parser.engine} readOnly={settings.parser.readOnly} onChange={(event) => onChange({ ...settings, parser: { ...settings.parser, engine: event.target.value } })} />
-        </label>
-        <p className="kb-muted">当前仅暴露默认解析器。Docling / fallback parser 的真实选择由后端运行时决定。</p>
+        <p className="kb-muted">创建知识库时不再单独选择 Graph；后续图谱能力由后端配置和处理流程决定。</p>
       </div>
     );
   }
@@ -1174,9 +1180,6 @@ function renderWizardPanel(settings: KnowledgeCreationWizardSettings, onChange: 
   }
   if (settings.activeSection === "audio") {
     return <UnavailableSection title="音频处理" text="音频知识库尚未实现。" />;
-  }
-  if (settings.activeSection === "model") {
-    return <UnavailableSection title="模型配置" text="创建阶段展示运行时 provider 状态；具体模型由后端环境变量控制。" />;
   }
   return <UnavailableSection title="高级设置" text="高级覆盖项会在后续能力具备后逐步开放。" />;
 }
@@ -1296,14 +1299,14 @@ function KnowledgeBaseDetailShell({
             <span>›</span>
             <span>{selected.name}</span>
             <span>›</span>
-            <strong>文档</strong>
+            <strong>{activeTab === "documents" ? "文档" : activeTab === "wiki" ? "Wiki" : "图谱"}</strong>
           </div>
-          <h1>{selected.name}</h1>
-          <p>{selected.description || "上传文档后自动解析并构建可浏览、可追溯的知识空间。"}</p>
+          <div className="kb-heading-line"><span className="kb-heading-icon"><LibraryIcon /></span><h1>{selected.name}</h1></div>
+          {selected.description ? <p>{selected.description}</p> : null}
         </div>
         <div className="knowledge-actions">
-          <button type="button" onClick={onStartChat}>开始聊天</button>
-          <button type="button" onClick={onOpenSettings}>设置</button>
+          <button type="button" onClick={onStartChat}><MessageSquare size={16} />开始对话</button>
+          <button type="button" className="workspace-icon-button" title="知识库设置" aria-label="知识库设置" onClick={onOpenSettings}><Settings2 size={17} /></button>
           <UploadActionMenu
             open={uploadMenuOpen}
             uploading={uploading}
@@ -1314,49 +1317,58 @@ function KnowledgeBaseDetailShell({
           />
         </div>
       </header>
-      {activeTab === "documents" ? <KnowledgeBaseMetrics selected={selected} /> : null}
-      <div className="kb-detail-tabs" role="tablist" aria-label="Knowledge base workspace">
-        <button type="button" className={activeTab === "documents" ? "active" : ""} onClick={() => setActiveTab("documents")}>Documents</button>
-        {wikiCapable ? <button type="button" className={activeTab === "wiki" ? "active" : ""} onClick={() => setActiveTab("wiki")}>Wiki</button> : null}
-        {wikiCapable ? <button type="button" className={activeTab === "graph" ? "active" : ""} onClick={() => setActiveTab("graph")}>Graph</button> : null}
+      <div className="kb-detail-tabs" role="tablist" aria-label="知识库视图" onKeyDown={(event) => {
+        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+        const tabs = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
+        const index = tabs.indexOf(event.target as HTMLButtonElement);
+        if (index < 0) return;
+        event.preventDefault();
+        const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+        tabs[next].focus();
+        tabs[next].click();
+      }}>
+        <button id="kb-tab-documents" aria-controls="kb-panel-documents" tabIndex={activeTab === "documents" ? 0 : -1} type="button" role="tab" aria-selected={activeTab === "documents"} className={activeTab === "documents" ? "active" : ""} onClick={() => setActiveTab("documents")}><FileText size={16} />文档</button>
+        {wikiCapable ? <button id="kb-tab-wiki" aria-controls="kb-panel-wiki" tabIndex={activeTab === "wiki" ? 0 : -1} type="button" role="tab" aria-selected={activeTab === "wiki"} className={activeTab === "wiki" ? "active" : ""} onClick={() => setActiveTab("wiki")}><BookOpen size={16} />Wiki</button> : null}
+        {wikiCapable ? <button id="kb-tab-graph" aria-controls="kb-panel-graph" tabIndex={activeTab === "graph" ? 0 : -1} type="button" role="tab" aria-selected={activeTab === "graph"} className={activeTab === "graph" ? "active" : ""} onClick={() => setActiveTab("graph")}><Network size={16} />图谱</button> : null}
       </div>
-      <div hidden={activeTab !== "documents"}>
-      <DocumentToolbar
-        filters={filters}
-        viewMode={viewMode}
-        selectedCount={selectedDocumentIds.length}
-        disabled={selected.status === "archived"}
-        onFiltersChange={onFiltersChange}
-        onViewModeChange={onViewModeChange}
-        onRefresh={onRefresh}
-        onBulkDelete={onBulkDelete}
-      />
-      {uploadStatus && !uploadDialogOpen ? <div className="notice">{uploadStatus}</div> : null}
-      {bulkStatus ? <div className={bulkStatus.includes("失败") ? "notice error" : "notice"}>{bulkStatus}</div> : null}
-      {error ? <div className="notice error">{error}</div> : null}
-      {documentLoading ? <div className="notice">正在加载文档...</div> : null}
-      {!documentLoading && !documents.length ? (
-        <div className="kb-empty">
-          <LibraryIcon />
-          <h2>还没有文档</h2>
-          <p>上传文件后即可在该知识库中检索。</p>
-        </div>
-      ) : null}
-      {documents.length ? (
-        <DocumentCollection
-          documents={documents}
+      <div id="kb-panel-documents" role="tabpanel" aria-labelledby="kb-tab-documents" tabIndex={0} className="kb-documents-content" hidden={activeTab !== "documents"}>
+        <KnowledgeBaseMetrics selected={selected} />
+        <DocumentToolbar
+          filters={filters}
           viewMode={viewMode}
-          selectedDocumentIds={selectedDocumentIds}
-          retryingId={retryingId}
-          onSelectedDocumentIdsChange={onSelectedDocumentIdsChange}
-          onOpenDocument={onOpenDocument}
-          onOpenDocumentDetail={onOpenDocumentDetail}
-          onDeleteDocument={onDeleteDocument}
-          onRetrySummary={onRetrySummary}
-          onRetryProcessing={onRetryProcessing}
-          onOpenTrace={onOpenTrace}
+          selectedCount={selectedDocumentIds.length}
+          disabled={selected.status === "archived"}
+          onFiltersChange={onFiltersChange}
+          onViewModeChange={onViewModeChange}
+          onRefresh={onRefresh}
+          onBulkDelete={onBulkDelete}
         />
-      ) : null}
+        {uploadStatus && !uploadDialogOpen ? <div className="notice">{uploadStatus}</div> : null}
+        {bulkStatus ? <div className={bulkStatus.includes("失败") ? "notice error" : "notice"}>{bulkStatus}</div> : null}
+        {error ? <div className="notice error">{error}</div> : null}
+        {documentLoading ? <div className="notice">正在加载文档...</div> : null}
+        {!documentLoading && !documents.length ? (
+          <div className="kb-empty">
+            <LibraryIcon />
+            <h2>还没有文档</h2>
+            <p>上传文件后即可在该知识库中检索。</p>
+          </div>
+        ) : null}
+        {documents.length ? (
+          <DocumentCollection
+            documents={documents}
+            viewMode={viewMode}
+            selectedDocumentIds={selectedDocumentIds}
+            retryingId={retryingId}
+            onSelectedDocumentIdsChange={onSelectedDocumentIdsChange}
+            onOpenDocument={onOpenDocument}
+            onOpenDocumentDetail={onOpenDocumentDetail}
+            onDeleteDocument={onDeleteDocument}
+            onRetrySummary={onRetrySummary}
+            onRetryProcessing={onRetryProcessing}
+            onOpenTrace={onOpenTrace}
+          />
+        ) : null}
       {uploadDialogOpen ? (
         <PendingUploadDialog
           files={pendingUploadFiles}
@@ -1372,8 +1384,13 @@ function KnowledgeBaseDetailShell({
       ) : null}
       <ProcessingPreviewPanel preview={processingPreview} />
       </div>
-      {activeTab !== "documents" && wikiCapable ? (
-        <WikiWorkspace selected={selected} documents={documents} onOpenDocument={onOpenDocument} workspaceMode={activeTab === "graph" ? "graph" : "reader"} />
+      {wikiCapable ? (
+        <>
+          <div id={activeTab === "graph" ? "kb-panel-graph" : "kb-panel-wiki"} role="tabpanel" aria-labelledby={activeTab === "graph" ? "kb-tab-graph" : "kb-tab-wiki"} tabIndex={0} hidden={activeTab === "documents"}>
+            {activeTab !== "documents" ? <WikiWorkspace selected={selected} documents={documents} onOpenDocument={onOpenDocument} workspaceMode={activeTab === "graph" ? "graph" : "reader"} /> : null}
+          </div>
+          <div id={activeTab === "graph" ? "kb-panel-wiki" : "kb-panel-graph"} role="tabpanel" aria-labelledby={activeTab === "graph" ? "kb-tab-wiki" : "kb-tab-graph"} hidden />
+        </>
       ) : null}
       {settingsDialog}
       {viewer}
@@ -1688,26 +1705,23 @@ function wikiLinkMarkdown(markdown: string): string {
 function KnowledgeBaseMetrics({ selected }: { selected: KnowledgeBase }) {
   return (
     <div className="kb-metrics" aria-label="知识库状态">
-      <span><b>{selected.aggregate.document_count}</b> 文档</span>
-      <span><b>{selected.aggregate.indexed_chunk_count}</b> 分块</span>
+      <span><FileText size={15} /><b>{selected.aggregate.document_count}</b> 文档</span>
+      <span><Layers3 size={15} /><b>{selected.aggregate.indexed_chunk_count}</b> 分块</span>
       <span><b>{selected.aggregate.processing_count}</b> 处理中</span>
       <span className={selected.aggregate.failed_count ? "metric-error" : ""}><b>{selected.aggregate.failed_count}</b> 失败</span>
       {selected.aggregate.reset_required ? <span className="metric-warning">存储需要清空重建</span> : null}
-      {selected.provider_config?.inactive_overrides?.length ? <span className="metric-warning">部分 provider 覆盖未生效</span> : null}
     </div>
   );
 }
 
 function ProviderStatusPanel({ selected }: { selected: KnowledgeBase }) {
   const effective = selected.provider_config?.effective || {};
-  const inactive = selected.provider_config?.inactive_overrides || [];
   return (
     <div className="kb-provider-panel" aria-label="有效 Provider 配置">
       <span><b>Parser</b> {effective.parser || "default"}</span>
       <span><b>Embedding</b> {effective.embedding || "default"}</span>
       <span><b>Vector store</b> {effective.vector_store || "default"}</span>
       <span><b>Enrichment</b> {effective.enrichment || "default"}</span>
-      {inactive.length ? <span className="metric-warning">未生效覆盖：{inactive.join(", ")}</span> : <span>所有支持项已按运行时生效</span>}
     </div>
   );
 }
@@ -1774,7 +1788,7 @@ function PendingUploadDialog({
   const terminal = batch ? ["completed", "partial_failed", "failed", "canceled"].includes(batch.status) : false;
   return (
     <div className="dialog-mask" role="presentation" onClick={uploading ? undefined : onCancel}>
-      <section className="kb-dialog pending-upload-dialog" role="dialog" aria-modal="true" aria-label="确认上传" onClick={(event) => event.stopPropagation()}>
+      <ModalSurface className="kb-dialog pending-upload-dialog" aria-label="确认上传" onClose={onCancel} dismissible={!uploading} aria-busy={uploading} onClick={(event) => event.stopPropagation()}>
         <header>
           <div>
             <h2>确认上传与处理</h2>
@@ -1813,9 +1827,10 @@ function PendingUploadDialog({
             <label><span>子块大小（字符）</span><input type="number" value={settings.child_chunk_size_chars || 384} onChange={(event) => onSettingsChange({ ...settings, child_chunk_size_chars: Number(event.target.value) || 384 })} /></label>
             <label><span>子块重叠（字符）</span><input type="number" value={settings.child_chunk_overlap_chars || 76} onChange={(event) => onSettingsChange({ ...settings, child_chunk_overlap_chars: Number(event.target.value) || 0 })} /></label>
             <label className="kb-check-row"><input type="checkbox" checked={Boolean(settings.pdf_force_scanned)} onChange={(event) => onSettingsChange({ ...settings, pdf_force_scanned: event.target.checked })} /><span>PDF 强制扫描模式</span></label>
-            <label className="kb-check-row"><input type="checkbox" checked={Boolean(settings.dense_enabled)} onChange={(event) => onSettingsChange({ ...settings, dense_enabled: event.target.checked })} /><span>Dense 检索</span></label>
-            <label className="kb-check-row"><input type="checkbox" checked={Boolean(settings.keyword_enabled)} onChange={(event) => onSettingsChange({ ...settings, keyword_enabled: event.target.checked })} /><span>Keyword 检索</span></label>
-            <label className="kb-check-row"><input type="checkbox" checked={Boolean(settings.graph_enabled)} onChange={(event) => onSettingsChange({ ...settings, graph_enabled: event.target.checked })} /><span>请求图谱抽取（按运行时生效）</span></label>
+            <div className="kb-effective-config">
+              <strong>自动开启</strong>
+              <span>Dense、Keyword、Wiki 和 Graph 会随上传批次默认开启。</span>
+            </div>
             <div className="kb-unavailable"><strong>暂不可用</strong><p>问题生成、OCR、多模态和音频处理会显示为不可用，不会作为 effective 设置提交。</p></div>
           </div>
         </div>
@@ -1830,7 +1845,7 @@ function PendingUploadDialog({
             {uploading ? "上传中..." : "确认上传并处理"}
           </button>
         </div>
-      </section>
+      </ModalSurface>
     </div>
   );
 }
@@ -1979,18 +1994,20 @@ function DocumentToolbar({
   onBulkDelete: () => void;
 }) {
   const update = (patch: Partial<DocumentFilters>) => onFiltersChange({ ...filters, ...patch });
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const advancedCount = [filters.tag, filters.source, filters.created_from, filters.created_to].filter(Boolean).length;
+  const hasFilters = Object.values(filters).some(Boolean);
   return (
     <div className="document-toolbar" aria-label="文档筛选工具栏">
       <div className="document-toolbar-main">
-        <input value={filters.q} placeholder="搜索名称、路径、概要或关键词" onChange={(event) => update({ q: event.target.value })} />
-        <input value={filters.tag} placeholder="标签 / 关键词" onChange={(event) => update({ tag: event.target.value })} />
-        <select value={filters.file_type} onChange={(event) => update({ file_type: event.target.value })}>
+        <label className="workspace-search"><Search size={16} /><input aria-label="搜索文档" value={filters.q} placeholder="搜索文档名称或内容" onChange={(event) => update({ q: event.target.value })} /></label>
+        <select aria-label="文件类型" value={filters.file_type} onChange={(event) => update({ file_type: event.target.value })}>
           <option value="">全部类型</option>
           {["pdf", "docx", "doc", "md", "txt", "html", "csv", "json", "xlsx", "xls"].map((type) => (
             <option key={type} value={type}>{type.toUpperCase()}</option>
           ))}
         </select>
-        <select value={filters.status} onChange={(event) => update({ status: event.target.value })}>
+        <select aria-label="文档状态" value={filters.status} onChange={(event) => update({ status: event.target.value })}>
           <option value="">全部状态</option>
           <option value="parsed">可检索</option>
           <option value="parsing">解析中</option>
@@ -1998,18 +2015,37 @@ function DocumentToolbar({
           <option value="completed">概要完成</option>
           <option value="processing">概要处理中</option>
         </select>
-        <input value={filters.source} placeholder="来源路径" onChange={(event) => update({ source: event.target.value })} />
-        <input type="date" value={filters.created_from} onChange={(event) => update({ created_from: event.target.value })} />
-        <input type="date" value={filters.created_to} onChange={(event) => update({ created_to: event.target.value })} />
+        <button className={advancedOpen || advancedCount ? "filter-toggle active" : "filter-toggle"} type="button" aria-expanded={advancedOpen} aria-controls="document-advanced-filters" onClick={() => setAdvancedOpen((open) => !open)}><SlidersHorizontal size={16} />筛选{advancedCount ? ` (${advancedCount})` : ""}</button>
       </div>
       <div className="document-toolbar-actions">
-        <button type="button" onClick={() => onFiltersChange(DEFAULT_DOCUMENT_FILTERS)}>清除</button>
-        <button type="button" onClick={onRefresh}>刷新</button>
-        <button type="button" className={viewMode === "grid" ? "active" : ""} onClick={() => onViewModeChange("grid")}>卡片</button>
-        <button type="button" className={viewMode === "list" ? "active" : ""} onClick={() => onViewModeChange("list")}>列表</button>
-        <button type="button" disabled={!selectedCount || disabled} onClick={onBulkDelete}>删除选中 {selectedCount || ""}</button>
+        {hasFilters ? <button type="button" title="清除筛选" aria-label="清除筛选" onClick={() => onFiltersChange(DEFAULT_DOCUMENT_FILTERS)}><X size={16} /></button> : null}
+        <button type="button" title="刷新文档" aria-label="刷新文档" onClick={onRefresh}><RefreshCw size={16} /></button>
+        <div className="workspace-segmented" role="group" aria-label="文档显示方式">
+          <button type="button" title="卡片视图" aria-label="卡片视图" aria-pressed={viewMode === "grid"} className={viewMode === "grid" ? "active" : ""} onClick={() => onViewModeChange("grid")}><LayoutGrid size={16} /></button>
+          <button type="button" title="列表视图" aria-label="列表视图" aria-pressed={viewMode === "list"} className={viewMode === "list" ? "active" : ""} onClick={() => onViewModeChange("list")}><List size={17} /></button>
+        </div>
+        {selectedCount > 0 ? (
+          <button
+            type="button"
+            className="document-bulk-delete"
+            disabled={disabled}
+            aria-label={`删除选中的 ${selectedCount} 个文档`}
+            title={`删除选中的 ${selectedCount} 个文档`}
+            onClick={onBulkDelete}
+          >
+            <DeleteIcon />
+            <span>删除已选</span>
+            <b>{selectedCount}</b>
+          </button>
+        ) : null}
         {disabled ? <span className="metric-warning">归档知识库只读</span> : null}
       </div>
+      {advancedOpen ? <div className="document-advanced-filters" id="document-advanced-filters">
+        <label>标签 / 关键词<input value={filters.tag} placeholder="输入关键词" onChange={(event) => update({ tag: event.target.value })} /></label>
+        <label>来源路径<input value={filters.source} placeholder="不限来源" onChange={(event) => update({ source: event.target.value })} /></label>
+        <label>开始日期<input type="date" value={filters.created_from} onChange={(event) => update({ created_from: event.target.value })} /></label>
+        <label>结束日期<input type="date" value={filters.created_to} onChange={(event) => update({ created_to: event.target.value })} /></label>
+      </div> : null}
     </div>
   );
 }
@@ -2222,6 +2258,21 @@ function mergeUploadPlaceholders(documents: DocumentItem[], placeholders: Docume
   ];
 }
 
+function hasActiveDocumentRuntime(item: Pick<DocumentItem, "parse_status" | "summary_status" | "processing_task_status">) {
+  const parseStatus = (item.parse_status || "").toLowerCase();
+  const summaryStatus = (item.summary_status || "").toLowerCase();
+  const taskStatus = (item.processing_task_status || "").toLowerCase();
+  return (
+    ACTIVE_PARSE_STATUSES.has(parseStatus) ||
+    ACTIVE_SUMMARY_STATUSES.has(summaryStatus) ||
+    ACTIVE_DOCUMENT_TASK_STATUSES.has(taskStatus)
+  );
+}
+
+function isActiveTraceStatus(status?: string) {
+  return ACTIVE_TRACE_STATUSES.has(String(status || "").toLowerCase());
+}
+
 function documentRuntimeStatus(item: DocumentItem): { label: string; tone: "neutral" | "running" | "failed" | "done"; title: string } {
   const taskStatus = (item.processing_task_status || "").toLowerCase();
   const parseStatus = (item.parse_status || "").toLowerCase();
@@ -2305,15 +2356,13 @@ function DocumentTileCard({
   onOpenTrace: (item: DocumentItem) => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const menuTriggerRef = useRef<HTMLButtonElement>(null);
   const summary = getDocumentTileSummary(item);
   const runtimeStatus = documentRuntimeStatus(item);
   const optimistic = isUploadPlaceholderDocument(item);
   return (
-    <article className="kb-document-card doc-tile-card">
-      <label className="doc-select">
-        <input type="checkbox" disabled={optimistic} checked={selected} onChange={(event) => onSelected(event.target.checked)} />
-        <span>选择</span>
-      </label>
+    <article className={`kb-document-card doc-tile-card ${selected ? "is-selected" : ""}`}>
+      <div className="doc-file-symbol" aria-hidden="true"><FileText size={24} /></div>
       <div className="doc-tile-head">
         <button type="button" className="doc-tile-title" title={item.name} disabled={optimistic} onClick={() => onOpenDocumentDetail(item)}>
           {item.name}
@@ -2322,7 +2371,10 @@ function DocumentTileCard({
           <button
             type="button"
             className="doc-tile-menu-trigger"
+            ref={menuTriggerRef}
             aria-label="文档操作"
+            title="文档操作"
+            aria-haspopup="menu"
             aria-expanded={menuOpen}
             onClick={() => setMenuOpen((open) => !open)}
           >
@@ -2334,6 +2386,7 @@ function DocumentTileCard({
                 type="button"
                 role="menuitem"
                 onClick={() => {
+                  menuTriggerRef.current?.focus();
                   setMenuOpen(false);
                   onOpenDocument(item);
                 }}
@@ -2345,6 +2398,7 @@ function DocumentTileCard({
                 type="button"
                 role="menuitem"
                 onClick={() => {
+                  menuTriggerRef.current?.focus();
                   setMenuOpen(false);
                   onOpenTrace(item);
                 }}
@@ -2399,6 +2453,7 @@ function DocumentTileCard({
       <button type="button" className="doc-tile-summary as-detail" disabled={optimistic} onClick={() => onOpenDocumentDetail(item)}>
         {summary}
       </button>
+      <div className="doc-tile-footer">
       <button
         type="button"
         className={`doc-runtime-badge ${runtimeStatus.tone}`}
@@ -2409,9 +2464,14 @@ function DocumentTileCard({
         {runtimeStatus.tone === "running" ? <span className="runtime-spinner" aria-hidden="true" /> : null}
         {runtimeStatus.label}
       </button>
-      <div className="doc-tile-footer">
-        <span>{formatCardDate(item.updated_at)}</span>
-        <span>{item.file_type?.toUpperCase() || "FILE"}</span>
+        <label className="doc-select" title={`选择 ${item.name}`}>
+          <input type="checkbox" aria-label={`选择 ${item.name}`} disabled={optimistic} checked={selected} onChange={(event) => onSelected(event.target.checked)} />
+          <span>选择</span>
+        </label>
+      </div>
+      <div className="doc-tile-meta">
+        <time title={item.updated_at}>{formatCardDate(item.updated_at)}</time>
+        <span>{item.file_type?.toUpperCase() || "FILE"} · {item.chunks || 0} 分块</span>
       </div>
     </article>
   );
@@ -2552,8 +2612,8 @@ function ProcessingTraceDrawer({
   const taskError = String(state.data?.processing_task?.processing_last_error || "");
   return (
     <div className="trace-drawer-layer" role="presentation">
-      <button type="button" className="trace-drawer-scrim" aria-label="关闭处理链路" onClick={onClose} />
-      <aside className="trace-drawer" role="dialog" aria-modal="true" aria-label="文档处理链路">
+      <button type="button" className="trace-drawer-scrim" data-modal-backdrop tabIndex={-1} aria-label="关闭处理链路" onClick={onClose} />
+      <ModalSurface className="trace-drawer" aria-label="文档处理链路" onClose={onClose}>
         <header className="trace-drawer-header">
           <div>
             <p className="trace-eyebrow">文档处理链路</p>
@@ -2600,7 +2660,7 @@ function ProcessingTraceDrawer({
         ) : (
           <div className="trace-loading">暂无处理链路</div>
         )}
-      </aside>
+      </ModalSurface>
     </div>
   );
 }
@@ -2882,12 +2942,12 @@ function KnowledgeBaseSettingsDialog({
   selected,
   name,
   description,
-  indexingStrategy,
+  isDefault,
   error,
   saving,
   onName,
   onDescription,
-  onIndexingStrategy,
+  onDefaultChange,
   onCancel,
   onSubmit,
   onDelete,
@@ -2895,48 +2955,42 @@ function KnowledgeBaseSettingsDialog({
   selected: KnowledgeBase;
   name: string;
   description: string;
-  indexingStrategy: KnowledgeBase["indexing_strategy"];
+  isDefault: boolean;
   error: string;
   saving: boolean;
   onName: (value: string) => void;
   onDescription: (value: string) => void;
-  onIndexingStrategy: (value: KnowledgeBase["indexing_strategy"]) => void;
+  onDefaultChange: (value: boolean) => void;
   onCancel: () => void;
   onSubmit: () => void;
   onDelete?: () => void;
 }) {
   return (
-    <div className="dialog-mask" role="presentation" onClick={onCancel}>
-      <section className="kb-dialog" role="dialog" aria-modal="true" aria-label="知识库设置" onClick={(event) => event.stopPropagation()}>
+    <div className="dialog-mask" role="presentation" onClick={saving ? undefined : onCancel}>
+      <ModalSurface className="kb-dialog" aria-label="知识库设置" onClose={onCancel} dismissible={!saving} aria-busy={saving} onClick={(event) => event.stopPropagation()}>
         <header>
           <h2>知识库设置</h2>
-          <button type="button" onClick={onCancel} aria-label="关闭">×</button>
+          <button type="button" onClick={onCancel} disabled={saving} aria-label="关闭"><X size={18} /></button>
         </header>
-        <label><span>名称</span><input autoFocus value={name} maxLength={80} onChange={(event) => onName(event.target.value)} /></label>
+        <label><span>名称</span><input data-autofocus value={name} maxLength={80} onChange={(event) => onName(event.target.value)} /></label>
         <label><span>描述</span><textarea value={description} maxLength={300} onChange={(event) => onDescription(event.target.value)} /></label>
-        <fieldset className="kb-settings-indexing">
-          <legend>索引策略</legend>
-          {([
-            ["wiki_enabled", "Wiki"],
-            ["dense_enabled", "Dense"],
-            ["keyword_enabled", "Keyword"],
-            ["graph_enabled", "Graph"],
-          ] as const).map(([key, label]) => (
-            <label className="kb-check-row" key={key}>
-              <input type="checkbox" checked={Boolean(indexingStrategy[key])} onChange={(event) => onIndexingStrategy({ ...indexingStrategy, [key]: event.target.checked })} />
-              <span>{label}</span>
-            </label>
-          ))}
-          {indexingStrategy.wiki_enabled && !indexingStrategy.dense_enabled && !indexingStrategy.keyword_enabled ? <p>Wiki-only：文档会保留解析分块并生成 Wiki，不执行向量化。</p> : null}
-        </fieldset>
-        {error ? <p className="feedback-err">{error}</p> : null}
+        <label className="kb-check-row">
+          <input
+            type="checkbox"
+            checked={selected.is_default || isDefault}
+            disabled={selected.is_default}
+            onChange={(event) => onDefaultChange(event.target.checked)}
+          />
+          <span>{selected.is_default ? "当前默认知识库" : "设为默认知识库"}</span>
+        </label>
+        {error ? <p className="feedback-err" role="alert">{error}</p> : null}
         <div className="kb-dialog-actions">
           {onDelete && !selected.is_default ? <button type="button" className="danger-action" disabled={saving} onClick={onDelete}>删除知识库</button> : null}
           <span />
-          <button type="button" onClick={onCancel}>取消</button>
+          <button type="button" onClick={onCancel} disabled={saving}>取消</button>
           <button type="button" className="primary-action" disabled={saving} onClick={onSubmit}>{saving ? "保存中..." : "保存"}</button>
         </div>
-      </section>
+      </ModalSurface>
     </div>
   );
 }

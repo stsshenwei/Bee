@@ -51,6 +51,9 @@ const TOOL_LABELS: Record<string, string> = {
   list_knowledge_chunks: "查看文档",
   get_document_info: "查看文档信息",
   query_knowledge_graph: "查询知识图谱",
+  wiki_search: "搜索 Wiki",
+  wiki_read_page: "阅读 Wiki 页面",
+  wiki_read_source_doc: "读取 Wiki 来源",
   read_skill: "读取技能说明",
   RawRAGTool: "检索知识库",
   KeywordSearchTool: "搜索关键词",
@@ -184,19 +187,31 @@ function closeStaleRunningStageSteps(steps: AgentTimelineStep[], timestamp: numb
   for (const step of steps) {
     if (step.status !== "running") continue;
     if (step.kind === "tool") continue;
-    step.status = "completed";
-    step.finishedAt = timestamp;
-    step.elapsedMs = Math.max(0, timestamp - step.startedAt);
+    completeRunningStep(step, timestamp);
   }
 }
 
 function closeRunningSteps(steps: AgentTimelineStep[], timestamp: number): void {
   for (const step of steps) {
     if (step.status !== "running") continue;
-    step.status = "completed";
-    step.finishedAt = timestamp;
-    step.elapsedMs = Math.max(0, timestamp - step.startedAt);
+    completeRunningStep(step, timestamp);
   }
+}
+
+function completeRunningStep(step: AgentTimelineStep, timestamp: number): void {
+  step.status = "completed";
+  step.finishedAt = timestamp;
+  step.elapsedMs = Math.max(0, timestamp - step.startedAt);
+  step.summary = completedStatusText(step.summary);
+  step.detail = completedStatusText(step.detail);
+}
+
+function completedStatusText(value?: string): string | undefined {
+  if (!value) return value;
+  return value
+    .replace(/\u72b6\u6001\s*[:\uff1a]\s*\u8fdb\u884c\u4e2d/g, "\u72b6\u6001\uff1a\u5b8c\u6210")
+    .replace(/\bstatus\s*[:：]\s*running\b/gi, "status: completed")
+    .replace(/\bcompletion_status\s*[:：]\s*running\b/gi, "completion_status: completed");
 }
 
 export function deriveAgentRunSummary(events: AgentStreamEvent[], steps: AgentTimelineStep[], completed: boolean): AgentRunSummary {
@@ -400,6 +415,10 @@ function normalizeToolObservation(
 ): AgentStreamEvent {
   const metadata = asRecord(payload.metadata);
   const chunks = sourceChunkIds(payload.source_chunk_ids);
+  const listedQueries = stringList(metadata.queries ?? payload.queries);
+  const queryCandidateCount =
+    numberValue(metadata.query_count ?? metadata.query_candidates ?? payload.query_count ?? payload.query_candidates) ??
+    (listedQueries.length || undefined);
   return baseEvent(kind, payload, sequence, timestamp, {
     tool: stringValue(payload.tool),
     action: stringValue(payload.action),
@@ -413,6 +432,7 @@ function normalizeToolObservation(
       citations: numberValue(metadata.citations ?? payload.citations),
       usedChunks: numberValue(metadata.used_chunks) ?? chunks.length,
       resultCount: numberValue(metadata.result_count ?? payload.result_count),
+      queryCandidates: queryCandidateCount,
       docCount: numberValue(metadata.doc_count ?? payload.doc_count),
       matchedChunks: numberValue(metadata.matched_chunks ?? metadata.total_matches ?? payload.matched_chunks ?? payload.total_matches),
       readChunks: numberValue(metadata.chunk_count ?? metadata.fetched_chunks ?? payload.chunk_count ?? payload.fetched_chunks),
@@ -585,6 +605,7 @@ function toolCallTitle(event: AgentStreamEvent): string {
   if (event.tool === "RawRAGTool") return query ? `检索知识库：${query}` : "检索知识库";
   if (event.tool === "KeywordSearchTool" || event.tool === "grep_chunks") return query ? `搜索关键词：${query}` : "搜索关键词";
   if (event.tool === "knowledge_search") return query ? `语义检索：${query}` : "语义检索";
+  if (event.tool === "wiki_search") return query ? `搜索 Wiki：${query}` : "搜索 Wiki";
   if (event.tool === "GraphRetrieverTool") return query ? `查询图谱证据：${query}` : "查询图谱证据";
   if (event.tool === "DocumentChunkReaderTool" || event.tool === "list_knowledge_chunks") return query ? `查看 ${query}` : "查看文档";
   return toolLabel(event.tool);
@@ -599,6 +620,7 @@ function toolResultTitle(event: AgentStreamEvent, fallback: string): string {
     const query = toolQuery(event);
     return query ? `语义检索：${query}` : fallback;
   }
+  if (event.tool === "wiki_search") return "搜索 Wiki";
   if (event.tool === "list_knowledge_chunks" || event.tool === "DocumentChunkReaderTool") {
     const title = firstVisibleSourceTitle(event.sourceTitles);
     return title ? `查看 ${title}` : fallback;
@@ -641,6 +663,10 @@ function domainEventDetail(event: AgentStreamEvent): string | undefined {
 }
 
 function toolObservationSummary(event: AgentStreamEvent): string {
+  if (event.tool === "wiki_search") {
+    const pages = event.counts?.resultCount ?? countVisibleSourceTitles(event.sourceTitles);
+    return pages > 0 ? `命中 ${pages} 个 Wiki 页面` : "未命中 Wiki 页面";
+  }
   if (event.tool === "grep_chunks" || event.tool === "KeywordSearchTool") {
     const chunks = event.counts?.matchedChunks ?? event.counts?.resultCount ?? event.sourceChunkIds.length;
     const docs = event.counts?.docCount ?? countVisibleSourceTitles(event.sourceTitles);
@@ -666,6 +692,14 @@ function toolObservationSummary(event: AgentStreamEvent): string {
 
 function toolResultDetail(event: AgentStreamEvent): string | undefined {
   const counts = event.counts || {};
+  if (event.tool === "wiki_search") {
+    const pages = counts.resultCount ?? countVisibleSourceTitles(event.sourceTitles);
+    const parts = [
+      countText(pages, "个 Wiki 页面"),
+      countText(counts.queryCandidates, "个关键词"),
+    ].filter(Boolean);
+    return parts.join("，");
+  }
   const parts = [
     countText(counts.evidenceItems, "条证据"),
     countText(counts.citations, "条引用"),

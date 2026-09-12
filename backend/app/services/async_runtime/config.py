@@ -14,7 +14,7 @@ class WorkerPoolConfig:
 class AsyncRuntimeConfig:
     enabled: bool = False
     mode: str = "local"
-    broker_url: str = "redis://localhost:6379/0"
+    broker_url: str = ""
     result_backend_url: str = ""
     task_name: str = "app.workers.processing_tasks.process_processing_task"
     default_max_retries: int = 3

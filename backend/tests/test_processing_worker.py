@@ -52,6 +52,22 @@ class ProcessingWorkerTests(unittest.TestCase):
 
             self.assertEqual(TASK_COMPLETED, repo.get_task(task["id"])["status"])
 
+    def test_heartbeat_stops_cleanly_for_terminal_task(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = ProcessingTaskRepository(Path(tmpdir) / "metadata.sqlite3")
+            scope = KnowledgeBaseService(KnowledgeBaseRepository(repo.db_path, repo.defaults)).resolve_scope()
+            worker = DocumentProcessingWorker(
+                repository=repo,
+                rag_service=SimpleNamespace(),
+                config=DurableProcessingWorkerConfig(enabled=True),
+                worker_id="local-worker",
+            )
+            task = repo.create_task("wiki.ingest", scope, task_id="wiki-terminal-heartbeat")
+            claimed = repo.claim_task(task["id"], worker_id="celery-worker")
+            repo.cancel_task(claimed["id"], reason="document deleted")
+
+            self.assertTrue(worker._log_stopped_heartbeat(claimed["id"], "celery-worker"))
+
     def test_typed_worker_honors_rate_limit_and_recovers_dead_letter(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = ProcessingTaskRepository(Path(tmpdir) / "metadata.sqlite3")

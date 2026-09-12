@@ -597,15 +597,26 @@ class QueryKnowledgeGraphTool:
 class WikiSearchTool:
     name = "wiki_search"
     execution_class = ToolExecutionClass.PARALLEL_SAFE
-    description = "Search LLM Wiki pages in the selected knowledge base. Use wiki_read_page before relying on a Wiki result."
+    description = (
+        "Search LLM Wiki pages in the selected knowledge base. Prefer 1-3 compact keyword queries or a simple "
+        "alternation query such as 'SN认证|Password认证|Loid认证' instead of passing the full user question. "
+        "Use wiki_read_page before relying on a Wiki result."
+    )
     parameters = {
         "type": "object",
         "properties": {
-            "query": {"type": "string"},
+            "query": {
+                "type": "string",
+                "description": "One compact keyword query, or a simple alternation query with terms separated by |.",
+            },
+            "queries": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Optional keyword variants, aliases, product codes, or Chinese/English terms to search.",
+            },
             "top_k": {"type": "integer", "minimum": 1, "maximum": 20},
             "status": {"type": "string", "enum": ["published", "draft", "stale", ""]},
         },
-        "required": ["query"],
         "additionalProperties": False,
     }
 
@@ -616,17 +627,38 @@ class WikiSearchTool:
         service = _wiki_service_from_context(context, self.name, self.enabled)
         if not service:
             return _unavailable(self.name, "Wiki tools are disabled or the Wiki service is unavailable.")
-        query = str(arguments.get("query") or context.question).strip()
+        query_plan = _normalize_wiki_search_arguments(arguments, context.question)
+        if query_plan.get("error"):
+            return RuntimeToolResult(
+                success=False,
+                error=f"{query_plan['error']}{TOOL_ERROR_HINT}",
+                observation=str(query_plan["error"]),
+                metadata={"validation_errors": [query_plan["error"]], "status": "unavailable"},
+            )
+        queries = list(query_plan["queries"])
         top_k = min(20, max(1, int(arguments.get("top_k") or 8)))
         status = str(arguments.get("status") if arguments.get("status") is not None else "published")
-        items = service.search_pages(context.scope, query, limit=top_k, status=status)
+        item_map: dict[str, dict[str, Any]] = {}
+        for query in queries:
+            for item in service.search_pages(context.scope, query, limit=top_k, status=status):
+                key = str(item.get("page_id") or item.get("slug") or "")
+                if not key:
+                    key = hashlib.sha256(json.dumps(item, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+                if key in item_map:
+                    continue
+                item_map[key] = item
+                if len(item_map) >= top_k:
+                    break
+            if len(item_map) >= top_k:
+                break
+        items = list(item_map.values())
         page_ids = [str(item.get("page_id") or "") for item in items if item.get("page_id")]
         titles = [str(item.get("title") or item.get("slug") or "") for item in items if item.get("title") or item.get("slug")]
         return RuntimeToolResult(
             success=True,
-            output=json.dumps({"query": query, "results": items}, ensure_ascii=False),
-            observation=f"Wiki search returned {len(items)} pages.",
-            metadata={"result_count": len(items), "query": query, "status_filter": status},
+            output=json.dumps({"queries": queries, "results": items}, ensure_ascii=False),
+            observation=f"Wiki search returned {len(items)} pages across {len(queries)} query candidates.",
+            metadata={"result_count": len(items), "query_count": len(queries), "queries": queries, "status_filter": status},
             candidate_ids=page_ids,
             source_titles=titles,
             state_delta=RuntimeStateDelta(
@@ -1436,6 +1468,22 @@ def _normalize_grep_arguments(arguments: dict[str, Any], fallback_query: str) ->
         "match_mode": match_mode,
         "top_k": top_k,
     }
+
+
+def _normalize_wiki_search_arguments(arguments: dict[str, Any], fallback_query: str) -> dict[str, Any]:
+    variants: list[str] = []
+    for item in _string_list(arguments.get("queries")):
+        variants.extend(_split_simple_alternation(item))
+    legacy_query = str(arguments.get("query") or "").strip()
+    if legacy_query:
+        variants.extend(_split_simple_alternation(legacy_query))
+    if not variants and fallback_query:
+        variants.extend(_split_simple_alternation(fallback_query))
+
+    queries = _bounded_unique_strings(variants, max_count=12, max_chars=160)
+    if not queries:
+        return {"error": "wiki_search requires query or queries"}
+    return {"queries": queries}
 
 
 def _split_simple_alternation(value: str) -> list[str]:

@@ -62,8 +62,9 @@ Common optional env:
 - keyword: `POSTGRES_KEYWORD_LANGUAGE`, `POSTGRES_TRIGRAM_ENABLED`
 - retrieval: `TOP_K`, `DENSE_RECALL_TOP_N`, `BM25_RECALL_TOP_N` (legacy env name for keyword recall), `FUSION_TOP_K`, `RRF_K`, `RRF_VECTOR_WEIGHT`, `RRF_KEYWORD_WEIGHT`, `RETRIEVAL_DEBUG_ENABLED`
 - parsing/processing: `RAG_DATA_DIR`, `VECTOR_STORE_DIR`, `PARSER_ENGINE`, `PROCESSING_WORKER_ENABLED`, `WIKI_INGEST_ENABLED`, `PROCESSING_TRACE_DIR`
-- async runtime: `ASYNC_RUNTIME_ENABLED`, `ASYNC_RUNTIME_MODE`, `ASYNC_RUNTIME_BROKER_URL`, `ASYNC_RUNTIME_*_QUEUE`, `ASYNC_RUNTIME_*_CONCURRENCY`
-- optional features: `RERANKER_ENABLED`, `OCR_ENABLED`, `KG_EXTRACTION_ENABLED`, `KG_ENTITY_VECTOR_ENABLED`, `KG_GRAPH_ENABLED`, `GRAPH_RETRIEVER_ENABLED`, `AGENTIC_RETRIEVAL_ENABLED`, `AGENT_RUNTIME_ENABLED`
+- async runtime: `ASYNC_RUNTIME_ENABLED`, `ASYNC_RUNTIME_MODE`, `REDIS_URL`, `ASYNC_RUNTIME_*_QUEUE`, `ASYNC_RUNTIME_*_CONCURRENCY`
+- chat stream replay: `STREAM_MANAGER_TYPE` (`memory` or `redis`), `STREAM_EVENT_TTL_SECONDS`, `STREAM_MANAGER_REDIS_URL` or `REDIS_URL`
+- optional features: `RERANKER_ENABLED`, `OCR_ENABLED`, `KG_EXTRACTION_ENABLED`, `KG_ENTITY_VECTOR_ENABLED`, `KG_GRAPH_ENABLED`, `GRAPH_RETRIEVER_ENABLED`, `AGENTIC_RETRIEVAL_ENABLED`, `AGENT_RUNTIME_ENABLED`, `AGENT_RUNTIME_RAG_WIKI_MODE_ENABLED`
 - reports/state: `EVAL_DATASET_DIR`, `EVAL_REPORT_DIR`, `STORAGE_RESET_STATE_DIR`, `STORAGE_RUNTIME_LOCK`
 
 Do not set old production storage variables such as `METADATA_DB_PATH`, `MEMORY_DB_PATH`, `EVAL_DB_PATH`, `MILVUS_URI`, `MILVUS_TOKEN`, `MILVUS_COLLECTION`, `MILVUS_BM25_ENABLED`, or `KG_MILVUS_*`; they are retired from production wiring.
@@ -93,7 +94,7 @@ The default local mode still uses PostgreSQL task rows and the in-process worker
 ```env
 ASYNC_RUNTIME_ENABLED=true
 ASYNC_RUNTIME_MODE=celery
-ASYNC_RUNTIME_BROKER_URL=redis://localhost:6379/0
+REDIS_URL=redis://localhost:6379/0
 PROCESSING_WORKER_ENABLED=true
 ASYNC_RUNTIME_LOCAL_WORKER_ENABLED=false
 ```
@@ -107,6 +108,8 @@ Start the API in one terminal, then start worker pools from `backend/` in separa
 ```
 
 The configured Weknora-style pools are Core, PostProcess, Enrichment, Maintenance, Shared, and Wiki. Redis is the broker; PostgreSQL remains the source of truth for task status, attempts, traces, cancellation, and dead letters.
+
+For chat refresh recovery and distributed stop propagation in multi-replica deployments, also set `STREAM_MANAGER_TYPE=redis`. When unset, the memory StreamManager works for local single-process streaming but cannot replay events after restart or guarantee cross-replica stop observation.
 
 ## Frontend Setup
 
@@ -192,7 +195,7 @@ The coordinator writes maintenance/manifest state, drops and initializes the con
 - pgvector dimension mismatch: verify `EMBEDDING_DIM`, embedding model, and `PGVECTOR_TYPE`; then clean-rebuild if storage was initialized with another dimension.
 - Keyword misses exact model names or error codes: enable `RETRIEVAL_DEBUG_ENABLED=true` and inspect dense/keyword recall, query understanding, fusion, rerank, and parent recall debug metadata.
 - Worker appears idle: check PostgreSQL processing task rows, `PROCESSING_WORKER_ENABLED`, `WIKI_INGEST_ENABLED`, and backend logs with `X-Trace-ID`.
-- Celery worker appears idle: verify `ASYNC_RUNTIME_ENABLED=true`, `ASYNC_RUNTIME_MODE=celery`, `ASYNC_RUNTIME_BROKER_URL`, worker `-Q` queue names, and `/health.async_runtime.routes`.
+- Celery worker appears idle: verify `ASYNC_RUNTIME_ENABLED=true`, `ASYNC_RUNTIME_MODE=celery`, `REDIS_URL`, worker `-Q` queue names, and `/health.async_runtime.routes`.
 
 ## Common Ownership Boundaries
 

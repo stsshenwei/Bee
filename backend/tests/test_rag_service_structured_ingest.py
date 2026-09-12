@@ -811,8 +811,50 @@ class RAGServiceStructuredIngestTests(unittest.TestCase):
             self.assertEqual("auto", settings["effective"]["chunk_strategy"])
             self.assertEqual(50, settings["child_chunk_overlap_chars"])
             self.assertEqual("chars", settings["size_unit"])
+            self.assertTrue(settings["dense_enabled"])
+            self.assertTrue(settings["keyword_enabled"])
+            self.assertTrue(settings["wiki_enabled"])
+            self.assertTrue(settings["graph_enabled"])
             self.assertIn("parser_engine", settings["inactive_overrides"])
             self.assertIn("chunk_strategy", settings["inactive_overrides"])
+
+    def test_staged_upload_forces_all_indexing_channels(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "rag.sqlite3"
+            repo = DocumentRepository(db_path)
+            knowledge_bases = KnowledgeBaseService(KnowledgeBaseRepository(db_path))
+            knowledge_base = knowledge_bases.create(
+                "Upload KB",
+                indexing_strategy={"dense_enabled": False, "keyword_enabled": False, "graph_enabled": False, "wiki_enabled": False},
+            )
+            scope = knowledge_bases.resolve_scope([knowledge_base.id])
+            graph = ScopeCapturingKGService()
+            wiki = ScopeCapturingWikiService()
+            service = make_service(
+                tmp,
+                repo,
+                FakeVectorStore(Path(tmp) / "vector"),
+                FakeParser(),
+                knowledge_base_service=knowledge_bases,
+                kg_service=graph,
+            )
+            service.wiki_page_service = wiki
+
+            batch = service.create_upload_batch(
+                scope,
+                {"dense_enabled": False, "keyword_enabled": False, "graph_enabled": False, "wiki_enabled": False},
+            )
+            service.add_upload_batch_file(batch["id"], filename="manual.md", content=b"# Manual\n\nBody", scope=scope)
+            confirmed = service.confirm_upload_batch(batch["id"], scope)
+            strategy = knowledge_bases.get(knowledge_base.id).indexing_strategy
+
+            self.assertEqual("completed", confirmed["status"])
+            self.assertTrue(strategy.dense_enabled)
+            self.assertTrue(strategy.keyword_enabled)
+            self.assertTrue(strategy.graph_enabled)
+            self.assertTrue(strategy.wiki_enabled)
+            self.assertTrue(graph.calls)
+            self.assertTrue(wiki.calls)
 
     def test_staged_upload_creates_durable_image_operations_after_text_indexing(self):
         with tempfile.TemporaryDirectory() as tmp:

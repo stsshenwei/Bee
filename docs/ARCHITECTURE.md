@@ -123,7 +123,15 @@ Evalsets live under `backend/evalsets` and are not ingested as knowledge documen
 
 The chat path keeps the public `/chat/stream` SSE contract compatible while gaining an internal EventBus and StreamManager foundation. Stream events can be stored by session/message identity with monotonic offsets, allowing replay semantics without changing old clients that consume `sources`, `reasoning`, `token`, `final`, `error`, and `[DONE]`.
 
+Durable chat history lives in the relational `conversation` and `conversation_message` tables. These tables act as WeKnora-compatible sessions/messages: sessions carry `tenant_id`, `user_id`, and `agent_config`; messages carry `request_id` and `is_completed`. Redis is not a history cache. It is used only for transient stream replay buffers shaped as `stream:events:{sessionId}:{messageId}` and for temporary web-search knowledge state.
+
+New chat turns create a completed user row and an incomplete assistant placeholder before generation starts. The assistant row is completed exactly once after normal completion or user stop, while the frontend renders the active answer from SSE events. Message history is loaded from PostgreSQL through cursor pagination; prompt context uses a separate bounded recent-message query so long transcripts do not enter prompts wholesale.
+
 Quick Chat/RAG can additionally run through `backend/app/services/chat_pipeline/` when `CHAT_RAG_PIPELINE_ENABLED=true`. The pipeline uses a typed request/state/runtime context and ordered plugin stages for conversation bootstrap, history, memory, query understanding, hybrid retrieval, parent recall, source/reasoning/trace emission, streamed completion, assistant persistence, memory storage, and terminal completion. Public events still flow through `ChatEventBus` into `StreamManager`, so replay and old SSE clients keep the same behavior. The raw quick-chat path remains available when the flag is disabled.
+
+`STREAM_MANAGER_TYPE=redis` enables cross-process replay and distributed stop propagation. If the setting is absent, `MemoryStreamManager` supports only local single-process streaming; refresh replay can fail after process restart or cross-replica routing. Production multi-replica deployments should configure Redis and the stream TTL via `STREAM_EVENT_TTL_SECONDS` when the 24 hour default is not appropriate.
+
+Stopping generation is represented as a stream event. `POST /api/v1/sessions/{session_id}/stop` verifies scoped message ownership, appends a `stop` event, and lets the active SSE loop or a 300ms stop watcher signal runtime cancellation. The runtime saves the accumulated partial assistant content with `is_completed=true` and marks stopped metadata without indexing the partial answer as feedback knowledge.
 
 The same package exposes a retrieval-only stage subset for future search/evaluation/tool callers that need query understanding, hybrid retrieval, parent recall, filtering, and debug metadata without invoking chat completion or persisting assistant messages.
 

@@ -1,5 +1,8 @@
 "use client";
 
+import { FileText, X } from "lucide-react";
+import { ModalSurface } from "./ModalSurface";
+
 type DocumentViewerProps = {
   open: boolean;
   source: string;
@@ -16,11 +19,11 @@ export function DocumentViewer({ open, source, loading, error, mode, content, fi
 
   return (
     <section className="doc-viewer-mask" onClick={onClose}>
-      <article className="doc-viewer" onClick={(event) => event.stopPropagation()}>
+      <ModalSurface className="doc-viewer" aria-label="文档预览" onClose={onClose} onClick={(event) => event.stopPropagation()}>
         <header className="doc-viewer-header">
-          <div className="doc-viewer-title">{source || "文档内容"}</div>
-          <button type="button" className="doc-close" onClick={onClose}>
-            关闭
+          <div className="doc-viewer-title" title={source}><FileText size={18} /><span>{source.split(/[\\/]/).pop() || "文档内容"}</span></div>
+          <button type="button" className="doc-close" title="关闭预览" aria-label="关闭预览" onClick={onClose}>
+            <X size={18} />
           </button>
         </header>
         <div className="doc-viewer-body">
@@ -29,7 +32,7 @@ export function DocumentViewer({ open, source, loading, error, mode, content, fi
           {!loading && !error && mode === "text" ? content : null}
           {!loading && !error && mode === "pdf" ? <iframe title={source || "pdf"} className="doc-pdf-frame" src={fileUrl} /> : null}
         </div>
-      </article>
+      </ModalSurface>
     </section>
   );
 }

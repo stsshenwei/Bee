@@ -278,6 +278,7 @@ def _translate_sql(sql: str, schema: str) -> str:
     translated = _qualify_tables(translated, schema)
     translated = _cast_json_assignments(translated)
     translated = _cast_insert_json_placeholders(translated)
+    translated = _translate_like_predicates(translated)
     translated = translated.replace(" f.name collate nocase", " lower(f.name)")
     translated = translated.replace("rowid desc", "id desc")
     translated = re.sub(r"\bactive\s*=\s*1\b", "active = true", translated)
@@ -334,6 +335,22 @@ def _cast_insert_json_placeholders(sql: str) -> str:
             match.group(5),
             match.group("tail"),
         ]
+    )
+
+
+def _translate_like_predicates(sql: str) -> str:
+    for column in ("title", "slug", "summary", "content_markdown"):
+        sql = re.sub(
+            rf"(?P<column>(?:(?<![\w\"])\w+\.)?{re.escape(column)})\s+like\s+%s",
+            r"\g<column> ilike %s",
+            sql,
+            flags=re.IGNORECASE,
+        )
+    return re.sub(
+        r"(?P<column>(?:(?<![\w\"])\w+\.)?aliases_json)\s+like\s+%s",
+        r"\g<column>::text ilike %s",
+        sql,
+        flags=re.IGNORECASE,
     )
 
 

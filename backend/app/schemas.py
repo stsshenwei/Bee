@@ -6,13 +6,14 @@ from pydantic import BaseModel, Field
 class ChatRequest(BaseModel):
     message: str
     conversation_id: str | None = None
+    session_id: str | None = None
     stream_message_id: str | None = None
     stream_offset: int | None = None
     memory_enabled: bool = True
     temporary: bool = False
     knowledge_base_id: str | None = None
     knowledge_base_ids: list[str] | None = None
-    chat_mode: Literal["quick", "reasoning", "wiki"] | None = None
+    chat_mode: Literal["quick", "reasoning", "wiki", "rag_wiki"] | None = None
     attachment_ids: list[str] | None = None
 
 
@@ -27,6 +28,68 @@ class ChatStreamStopResponse(BaseModel):
     stream_message_id: str
     status: str
     stopped: bool = True
+
+
+class SessionStopRequest(BaseModel):
+    message_id: str
+
+
+class SessionStopResponse(BaseModel):
+    session_id: str
+    message_id: str
+    status: str
+    stopped: bool = True
+
+
+class SessionRenameRequest(BaseModel):
+    title: str
+
+
+class SessionDeleteResponse(BaseModel):
+    session_id: str
+    deleted: bool = True
+
+
+class ChatSessionSummaryResponse(BaseModel):
+    id: str
+    session_id: str
+    conversation_id: str
+    title: str = ""
+    last_message_preview: str = ""
+    is_running: bool = False
+    agent_config: dict = Field(default_factory=dict)
+    created_at: str = ""
+    updated_at: str = ""
+
+
+class SessionsRecentResponse(BaseModel):
+    items: list[ChatSessionSummaryResponse] = Field(default_factory=list)
+
+
+class ChatMessageResponse(BaseModel):
+    id: str
+    session_id: str
+    conversation_id: str
+    request_id: str = ""
+    role: Literal["user", "assistant"] | str
+    content: str
+    metadata_json: dict = Field(default_factory=dict)
+    is_completed: bool = True
+    created_at: str
+    updated_at: str | None = None
+
+
+class MessagesLoadResponse(BaseModel):
+    session_id: str
+    conversation_id: str
+    items: list[ChatMessageResponse] = Field(default_factory=list)
+    hasMoreHistory: bool = False
+
+
+class ContinueStreamResponse(BaseModel):
+    session_id: str
+    message_id: str
+    status: str
 
 
 class ChatAttachmentResponse(BaseModel):

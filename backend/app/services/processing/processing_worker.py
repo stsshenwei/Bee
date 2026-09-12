@@ -23,7 +23,7 @@ from app.services.async_runtime.task_routes import (
 )
 from app.services.infrastructure.logging_config import get_trace_id, trace_context
 from app.services.infrastructure.observability import use_observability_trace
-from app.services.processing.processing_task_repository import ProcessingTaskRepository
+from app.services.processing.processing_task_repository import ProcessingTaskRepository, TERMINAL_STATUSES
 
 if TYPE_CHECKING:
     from app.services.retrieval.rag_service import RAGService
@@ -207,6 +207,9 @@ class DocumentProcessingWorker:
                         lease_seconds=self.config.lease_timeout_seconds,
                     )
                 except Exception as exc:
+                    if isinstance(exc, KeyError):
+                        if self._log_stopped_heartbeat(task_id, worker_id):
+                            return
                     logger.warning(
                         "processing_worker.task.heartbeat_failed",
                         extra={
@@ -221,6 +224,33 @@ class DocumentProcessingWorker:
         thread = threading.Thread(target=heartbeat_loop, name=f"{worker_id}-heartbeat", daemon=True)
         thread.start()
         return stop_event, thread
+
+    def _log_stopped_heartbeat(self, task_id: str, worker_id: str) -> bool:
+        try:
+            latest = self.repository.get_task(task_id)
+        except KeyError:
+            logger.warning(
+                "processing_worker.task.heartbeat_missing_task",
+                extra={"worker_id": worker_id, "task_id": task_id},
+            )
+            return True
+        status = str(latest.get("status") or "")
+        if status in TERMINAL_STATUSES:
+            logger.info(
+                "processing_worker.task.heartbeat_stopped",
+                extra={"worker_id": worker_id, "task_id": task_id, "status": status},
+            )
+            return True
+        logger.warning(
+            "processing_worker.task.heartbeat_lost_lease",
+            extra={
+                "worker_id": worker_id,
+                "task_id": task_id,
+                "status": status,
+                "lease_owner": str(latest.get("lease_owner") or ""),
+            },
+        )
+        return True
 
     def _process_upload_file_task(self, task: dict[str, Any]) -> None:
         scope = KnowledgeBaseScope(

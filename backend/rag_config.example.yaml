@@ -69,7 +69,7 @@ processing_worker:
 async_runtime:
   enabled: false
   mode: local
-  broker_url: ${ASYNC_RUNTIME_BROKER_URL}
+  broker_url: ${REDIS_URL}
   result_backend_url: ${ASYNC_RUNTIME_RESULT_BACKEND_URL}
   local_fallback_enabled: true
   local_worker_enabled: true

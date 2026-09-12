@@ -429,6 +429,40 @@ class HybridRetrievalTests(unittest.TestCase):
         self.assertEqual(1, hits[0]["dense_rank"])
         self.assertEqual(1, hits[0]["keyword_rank"])
 
+    def test_hybrid_retrieve_respects_disabled_dense_and_keyword_strategy(self):
+        vector_store = FakeVectorStore()
+        vector_store.dense_hits = [
+            {"content": "vector evidence", "metadata": {"chunk_id": "dense-1", "parent_id": "p1"}, "distance": 0.1}
+        ]
+        keyword_search = FakeKeywordSearch(
+            [RetrievedChunk("keyword-1", "doc-1", "p1", content="keyword evidence", score=3.0, bm25_score=3.0)]
+        )
+        service = RAGService(
+            vector_store=vector_store,
+            llm_client=SimpleNamespace(),
+            chat_model="test",
+            system_prompt="test",
+            data_dir=tempfile.mkdtemp(),
+            top_k=3,
+            min_relevance_score=0.0,
+            chunk_size=80,
+            chunk_overlap=10,
+            milvus_bm25_enabled=True,
+            keyword_search=keyword_search,
+            knowledge_base_service=SimpleNamespace(
+                resolve_scope=lambda: KnowledgeBaseScope("default-workspace", ("wiki-kb",), compatibility_default=True),
+                resolve_indexing_strategy=lambda scope: SimpleNamespace(dense_enabled=False, keyword_enabled=False),
+            ),
+        )
+
+        hits = service.hybrid_retrieve_hits("question")
+
+        self.assertEqual([], hits)
+        self.assertEqual([], vector_store.dense_queries)
+        self.assertEqual([], keyword_search.queries)
+        self.assertTrue(service._last_retrieval_debug["retrieval_stages"]["dense"]["skipped"])
+        self.assertTrue(service._last_retrieval_debug["retrieval_stages"]["keyword"]["skipped"])
+
     def test_hybrid_retrieve_keeps_single_channel_order_and_score_metadata(self):
         service = self.make_service()
         hits = service._fuse_retrieval_hits(

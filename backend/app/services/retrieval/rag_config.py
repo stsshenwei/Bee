@@ -74,7 +74,7 @@ DEFAULT_RAG_CONFIG: dict[str, Any] = {
         "async_runtime": {
             "enabled": False,
             "mode": "local",
-            "broker_url": "redis://localhost:6379/0",
+            "broker_url": "${REDIS_URL}",
             "result_backend_url": "",
             "local_fallback_enabled": True,
             "local_worker_enabled": True,

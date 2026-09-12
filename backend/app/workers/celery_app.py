@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import os
 
+from dotenv import load_dotenv
+
 from app.services.async_runtime.config import AsyncRuntimeConfig
 from app.services.retrieval.rag_config import load_rag_config
+
+load_dotenv()
 
 
 def _build_config() -> AsyncRuntimeConfig:
@@ -12,7 +16,7 @@ def _build_config() -> AsyncRuntimeConfig:
         {
             "enabled": _env_bool("ASYNC_RUNTIME_ENABLED", bool(raw.get("enabled", False))),
             "mode": os.getenv("ASYNC_RUNTIME_MODE", str(raw.get("mode", "local"))),
-            "broker_url": os.getenv("ASYNC_RUNTIME_BROKER_URL", str(raw.get("broker_url", "redis://localhost:6379/0"))),
+            "broker_url": _env_text("REDIS_URL", "ASYNC_RUNTIME_BROKER_URL", default=str(raw.get("broker_url", ""))),
             "result_backend_url": os.getenv("ASYNC_RUNTIME_RESULT_BACKEND_URL", str(raw.get("result_backend_url", ""))),
             "core_queue": os.getenv("ASYNC_RUNTIME_CORE_QUEUE", str(raw.get("core", {}).get("queue", "core"))),
             "postprocess_queue": os.getenv(
@@ -39,6 +43,14 @@ def _env_bool(name: str, default: bool) -> bool:
     if value is None or not value.strip():
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_text(*names: str, default: str = "") -> str:
+    for name in names:
+        value = os.getenv(name)
+        if value is not None and value.strip():
+            return value.strip()
+    return default
 
 
 def create_celery_app():
