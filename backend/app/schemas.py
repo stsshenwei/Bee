@@ -112,6 +112,67 @@ class WorkspaceResponse(BaseModel):
     updated_at: str = ""
 
 
+class PluginConfigFieldResponse(BaseModel):
+    name: str
+    label: str
+    type: str = "text"
+    required: bool = False
+    description: str = ""
+    placeholder: str = ""
+    options: list[str] = Field(default_factory=list)
+    secret: bool = False
+
+
+class PluginResponse(BaseModel):
+    id: str
+    name: str
+    description: str = ""
+    category: str = ""
+    enabled: bool = False
+    availability: str = "available"
+    configuration_status: str = "configured"
+    supported_modes: list[str] = Field(default_factory=list)
+    enabled_modes: list[str] = Field(default_factory=list)
+    safety_labels: list[str] = Field(default_factory=list)
+    permissions: list[str] = Field(default_factory=list)
+    mapped_tools: list[str] = Field(default_factory=list)
+    config_schema: list[PluginConfigFieldResponse] = Field(default_factory=list)
+    config: dict = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+    updated_at: str = ""
+
+
+class PluginsResponse(BaseModel):
+    items: list[PluginResponse] = Field(default_factory=list)
+    aggregate: dict = Field(default_factory=dict)
+
+
+class PluginUpdateRequest(BaseModel):
+    enabled: bool | None = None
+    enabled_modes: list[str] | None = None
+    config: dict = Field(default_factory=dict)
+
+
+class PluginTestRequest(BaseModel):
+    query: str | None = None
+    execute: bool = False
+
+
+class PluginTestResponse(BaseModel):
+    plugin_id: str
+    status: str
+    success: bool = False
+    latency_ms: int = 0
+    summary: str = ""
+    details: dict = Field(default_factory=dict)
+
+
+class PluginActivityResponse(BaseModel):
+    items: list[dict] = Field(default_factory=list)
+    limit: int = 20
+    source: str = "unavailable"
+
+
 class KnowledgeBaseCreateRequest(BaseModel):
     name: str
     description: str = ""
@@ -669,3 +730,78 @@ class EvalResultResponse(BaseModel):
 
 class EvalResultsResponse(BaseModel):
     items: list[EvalResultResponse]
+
+
+class MarketplacePackageResponse(BaseModel):
+    name: str
+    owner: str
+    description: str = ""
+    category: str = ""
+    keywords: list[str] = Field(default_factory=list)
+    visibility: str = "public"
+    latest_version: str = ""
+    components: dict = Field(default_factory=dict)
+    created_at: str = ""
+    updated_at: str = ""
+    download_url: str = ""
+    manageable: bool = False
+
+
+class MarketplacePackageVersionResponse(BaseModel):
+    package: str = ""
+    owner: str = ""
+    version: str
+    manifest: dict = Field(default_factory=dict)
+    components: dict = Field(default_factory=dict)
+    content_hash: str = ""
+    size_bytes: int = 0
+    status: str = "published"
+    published_at: str = ""
+
+
+class MarketplacePackagesResponse(BaseModel):
+    items: list[MarketplacePackageResponse] = Field(default_factory=list)
+
+
+class MarketplacePackageDetailResponse(MarketplacePackageResponse):
+    versions: list[MarketplacePackageVersionResponse] = Field(default_factory=list)
+
+
+class MarketplaceSnapshotVersionResponse(BaseModel):
+    revision: str = ""
+    built_at: str = ""
+    package_count: int = 0
+
+
+class MarketplaceValidationResponse(BaseModel):
+    valid: bool
+    name: str = ""
+    version: str = ""
+    description: str = ""
+    category: str = ""
+    keywords: list[str] = Field(default_factory=list)
+    manifest: dict = Field(default_factory=dict)
+    components: dict = Field(default_factory=dict)
+    file_count: int = 0
+    total_uncompressed_bytes: int = 0
+    error: str = ""
+
+
+class MarketplaceVersionDeleteResponse(BaseModel):
+    purged: bool = False
+    package: str = ""
+    version: str = ""
+    status: str = ""
+
+
+class MarketplacePackageDeleteResponse(BaseModel):
+    deleted: bool
+    package: str
+    owner: str
+
+
+class MarketplacePackageUpdateRequest(BaseModel):
+    description: str | None = None
+    category: str | None = None
+    keywords: list[str] | None = None
+    visibility: str | None = None

@@ -66,6 +66,9 @@ Common optional env:
 - chat stream replay: `STREAM_MANAGER_TYPE` (`memory` or `redis`), `STREAM_EVENT_TTL_SECONDS`, `STREAM_MANAGER_REDIS_URL` or `REDIS_URL`
 - optional features: `RERANKER_ENABLED`, `OCR_ENABLED`, `KG_EXTRACTION_ENABLED`, `KG_ENTITY_VECTOR_ENABLED`, `KG_GRAPH_ENABLED`, `GRAPH_RETRIEVER_ENABLED`, `AGENTIC_RETRIEVAL_ENABLED`, `AGENT_RUNTIME_ENABLED`, `AGENT_RUNTIME_RAG_WIKI_MODE_ENABLED`
 - reports/state: `EVAL_DATASET_DIR`, `EVAL_REPORT_DIR`, `STORAGE_RESET_STATE_DIR`, `STORAGE_RUNTIME_LOCK`
+- MCP server: `MCP_TRANSPORT`, `MCP_HOST`, `MCP_PORT`, `MCP_SERVER_AUTH_TOKEN`, `MCP_TOOL_TIMEOUT_SECONDS`, `MCP_MAX_OUTPUT_CHARS`, `MCP_MAX_EVENTS`, `MCP_MAX_UPLOAD_BYTES`
+
+Plugin management uses PostgreSQL table `plugin_setting` for workspace-scoped UI settings. Environment values remain defaults and guardrails for the Plugins workspace, including `AGENT_RUNTIME_WEB_SEARCH_ENABLED`, `AGENT_RUNTIME_WEB_SEARCH_URL`, `AGENT_RUNTIME_WEB_FETCH_ENABLED`, `AGENT_RUNTIME_WEB_FETCH_ALLOWED_DOMAINS`, `AGENT_RUNTIME_DATA_ANALYSIS_ENABLED`, `AGENT_RUNTIME_DATABASE_QUERY_ENABLED`, `AGENT_RUNTIME_DATABASE_ALLOWED_SOURCES`, and `AGENT_RUNTIME_SKILLS_ENABLED`.
 
 Do not set old production storage variables such as `METADATA_DB_PATH`, `MEMORY_DB_PATH`, `EVAL_DB_PATH`, `MILVUS_URI`, `MILVUS_TOKEN`, `MILVUS_COLLECTION`, `MILVUS_BM25_ENABLED`, or `KG_MILVUS_*`; they are retired from production wiring.
 
@@ -77,12 +80,32 @@ cd backend
 uvicorn app.main:app --reload --port 8000
 ```
 
+## Optional MCP Server
+
+The backend can also run a curated MCP server for external AI clients. See [MCP.md](MCP.md) for the tool inventory and client examples.
+
+Local stdio:
+
+```powershell
+cd backend
+python -m app.mcp --transport stdio
+```
+
+Authenticated Streamable HTTP:
+
+```powershell
+cd backend
+$env:MCP_SERVER_AUTH_TOKEN="replace-with-a-strong-secret"
+python -m app.mcp --transport streamable-http --host 127.0.0.1 --port 8765
+```
+
 Useful checks:
 
 ```powershell
 curl http://localhost:8000/health
 curl -X POST http://localhost:8000/ingest
 curl -X POST http://localhost:8000/documents/parse -H "Content-Type: application/json" -d "{\"source\":\"example.md\"}"
+curl http://localhost:8000/plugins
 ```
 
 `/health` should report `storage.database=postgres`, the configured schema, the vector store class, pgvector type/dimension, `reset_required`, and the current `async_runtime` mode.
@@ -155,12 +178,16 @@ cd backend
 python -m pytest tests/test_runtime_config.py tests/test_postgres_vector_store.py tests/test_keyword_search.py tests/test_hybrid_retrieval.py tests/test_postgres_document_repository.py tests/test_storage_schema_reset.py
 python -m pytest tests/test_postgres_domain_repositories.py tests/test_postgres_wiki_repository.py tests/test_wiki_repository_service.py
 python -m pytest tests/test_memory_repositories.py tests/test_knowledge_audit_repository.py tests/test_kg_models_repository.py tests/test_enterprise_evaluation_suite.py
+python -m pytest tests/test_mcp_tools.py
+python -m pytest tests/test_plugin_management.py tests/test_rag_api_routes.py tests/test_runtime_config.py
+python -m pytest tests/test_marketplace_service.py tests/test_marketplace_routes.py
 ```
 
 Frontend:
 
 ```powershell
 cd frontend
+node --test app/lib/api.test.mjs app/lib/marketplace-api.test.mjs app/lib/responsive-css.test.mjs
 npm run build
 ```
 

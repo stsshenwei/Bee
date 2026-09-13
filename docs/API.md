@@ -68,6 +68,20 @@ Chat sessions and messages are durable relational history. Redis/StreamManager i
 
 `chat_mode` accepts `quick`, `reasoning`, `wiki`, and `rag_wiki`. `rag_wiki` uses the Hybrid RAG + Wiki agent policy to combine Wiki navigation with dense/keyword chunk grounding.
 
+## Plugins
+
+Plugin APIs expose user-facing Agent Runtime capabilities. They do not expose internal Chat/RAG pipeline stages.
+
+- `GET /plugins`
+- `GET /plugins/{plugin_id}`
+- `PATCH /plugins/{plugin_id}`
+- `POST /plugins/{plugin_id}/test`
+- `GET /plugins/activity?limit=20`
+
+Plugin records include stable id, display metadata, category, enabled state, availability, configuration status, supported/enabled modes, safety labels, mapped runtime tools, masked config, and warnings. Update requests validate safe config before persistence; rejected updates return `400` and preserve the previous setting. Unknown plugin ids return `404`.
+
+Environment variables remain hard deployment guardrails. UI settings cannot add web-fetch domains outside `AGENT_RUNTIME_WEB_FETCH_ALLOWED_DOMAINS`, replace server paths from `AGENT_RUNTIME_DATABASE_ALLOWED_SOURCES`, or enable tools disabled by server configuration.
+
 ## Feedback And Audit
 
 Feedback must target one active KB. Multi-KB answers require the client to provide a single correction target. Query logs and answer feedback are PostgreSQL audit records; generated feedback markdown may also be written into `backend/data/feedback/` and ingested as normal knowledge content.

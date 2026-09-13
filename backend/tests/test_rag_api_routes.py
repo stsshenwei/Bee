@@ -18,6 +18,8 @@ from app.services.wiki.wiki_repository import WikiRepository
 from app.services.wiki.wiki_service import WikiPageService
 from app.services.chat_streaming.event_bus import ChatStreamEvent
 from app.services.chat_streaming.stream_manager import MemoryStreamManager, StreamIdentity
+from app.services.plugins.plugin_management import InMemoryPluginSettingsRepository, PluginManagementService
+from app.services.plugins.plugin_models import PluginRuntimeEnvironment
 from tests.test_runtime_config import postgres_runtime_patches
 
 
@@ -413,6 +415,63 @@ class RagApiRouteTests(unittest.TestCase):
             with patch.dict(os.environ, env, clear=False):
                 with postgres_runtime_patches():
                     return importlib.import_module("app.main")
+
+    def plugin_rag_service(self):
+        return SimpleNamespace(
+            plugin_management_service=PluginManagementService(
+                InMemoryPluginSettingsRepository(),
+                workspace_id="default-workspace",
+                runtime_environment=PluginRuntimeEnvironment(
+                    web_search_enabled=False,
+                    web_search_endpoint="",
+                    web_fetch_enabled=True,
+                    web_fetch_allowed_domains=("docs.example.com",),
+                    data_analysis_enabled=True,
+                    database_query_enabled=True,
+                    database_allowed_sources={"main": "./data.sqlite3"},
+                    skills_enabled=True,
+                    wiki_tools_enabled=True,
+                ),
+            ),
+            agent_runtime=None,
+            agent_runtime_enabled=False,
+            unified_chat_runtime_enabled=False,
+            quick_runtime_enabled=False,
+            wiki_runtime_enabled=False,
+            rag_wiki_runtime_enabled=False,
+        )
+
+    def test_plugin_catalog_update_test_and_unknown_routes(self):
+        module = self.import_main()
+        module.rag_service = self.plugin_rag_service()
+
+        with TestClient(module.app) as client:
+            catalog = client.get("/plugins")
+            detail = client.get("/plugins/web_search")
+            updated = client.patch(
+                "/plugins/web_search",
+                json={
+                    "enabled": True,
+                    "enabled_modes": ["reasoning"],
+                    "config": {"endpoint": "https://search.example.com/api"},
+                },
+            )
+            tested = client.post("/plugins/web_search/test", json={"query": "redis"})
+            activity = client.get("/plugins/activity?limit=5")
+            missing = client.get("/plugins/missing")
+            invalid = client.patch("/plugins/web_search", json={"enabled": True, "config": {"endpoint": "bad"}})
+
+        self.assertEqual(200, catalog.status_code)
+        self.assertGreaterEqual(catalog.json()["aggregate"]["total"], 8)
+        self.assertEqual("web_search", detail.json()["id"])
+        self.assertEqual(200, updated.status_code)
+        self.assertTrue(updated.json()["enabled"])
+        self.assertEqual(["reasoning"], updated.json()["enabled_modes"])
+        self.assertEqual(200, tested.status_code)
+        self.assertEqual("success", tested.json()["status"])
+        self.assertEqual({"items": [], "limit": 5, "source": "unavailable"}, activity.json())
+        self.assertEqual(404, missing.status_code)
+        self.assertEqual(400, invalid.status_code)
 
     def test_rag_upload_ingest_query_and_delete_routes(self):
         module = self.import_main()

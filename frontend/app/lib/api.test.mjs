@@ -3,8 +3,13 @@ import test from "node:test";
 import {
   archiveKnowledgeBase,
   generateWikiPage,
+  getPlugin,
+  getPluginActivity,
   listParserEngines,
+  listPlugins,
   retryDocumentProcessing,
+  testPlugin,
+  updatePlugin,
   updateUploadBatchSettings,
   uploadChatAttachment,
 } from "./api.ts";
@@ -34,6 +39,55 @@ test("lists parser engines including unavailable optional engines", async () => 
   assert.equal(engines[1].name, "docling");
   assert.equal(engines[1].available, false);
   assert.match(engines[1].unavailable_reason, /dependency/);
+});
+
+test("handles plugin catalog detail update test and activity calls", async () => {
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    if (String(url).endsWith("/plugins")) {
+      return jsonResponse({
+        items: [{ id: "web_search", name: "Web Search", enabled: false }],
+        aggregate: { total: 1, enabled: 0, available: 1, needs_configuration: 1 },
+      });
+    }
+    if (String(url).endsWith("/plugins/web%2Fsearch/test")) {
+      return jsonResponse({ plugin_id: "web/search", status: "success", success: true, latency_ms: 1, summary: "ok", details: {} });
+    }
+    if (String(url).includes("/plugins/activity")) {
+      return jsonResponse({ items: [], limit: 5, source: "unavailable" });
+    }
+    return jsonResponse({ id: "web/search", name: "Web Search", enabled: true });
+  };
+
+  const catalog = await listPlugins();
+  const detail = await getPlugin("web/search");
+  const updated = await updatePlugin("web/search", {
+    enabled: true,
+    enabled_modes: ["reasoning"],
+    config: { endpoint: "https://search.example.com/api" },
+  });
+  const tested = await testPlugin("web/search", { query: "redis", execute: false });
+  const activity = await getPluginActivity(5);
+
+  assert.equal(catalog.aggregate.total, 1);
+  assert.equal(detail.id, "web/search");
+  assert.equal(updated.enabled, true);
+  assert.equal(tested.status, "success");
+  assert.equal(activity.limit, 5);
+  assert.equal(calls[0].url, "http://localhost:8000/plugins");
+  assert.equal(calls[1].url, "http://localhost:8000/plugins/web%2Fsearch");
+  assert.equal(calls[2].url, "http://localhost:8000/plugins/web%2Fsearch");
+  assert.equal(calls[2].options.method, "PATCH");
+  assert.deepEqual(JSON.parse(calls[2].options.body), {
+    enabled: true,
+    enabled_modes: ["reasoning"],
+    config: { endpoint: "https://search.example.com/api" },
+  });
+  assert.equal(calls[3].url, "http://localhost:8000/plugins/web%2Fsearch/test");
+  assert.equal(calls[3].options.method, "POST");
+  assert.deepEqual(JSON.parse(calls[3].options.body), { query: "redis", execute: false });
+  assert.equal(calls[4].url, "http://localhost:8000/plugins/activity?limit=5");
 });
 
 test("deletes a knowledge base through the scoped archive endpoint", async () => {

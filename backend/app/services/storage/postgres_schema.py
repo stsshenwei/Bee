@@ -50,6 +50,8 @@ def initialize_postgres_database(
         if not _table_exists(conn, config.schema, "storage_schema"):
             _create_final_schema(conn, config, defaults)
         else:
+            _ensure_plugin_settings_schema(conn, config)
+            _ensure_marketplace_schema(conn, config)
             _validate_required_tables(conn, config)
             _validate_schema_metadata(conn, config)
 
@@ -111,6 +113,30 @@ def inspect_postgres_startup_storage(
             "PostgreSQL storage schema, vector type, or vector dimension does not match this application"
         )
     return inspection
+
+
+def ensure_postgres_plugin_settings_schema(
+    database: PostgresDatabase,
+    *,
+    config: PostgresSchemaConfig | None = None,
+) -> None:
+    config = config or PostgresSchemaConfig(schema=database.settings.schema)
+    with database.transaction() as conn:
+        _set_search_path(conn, config.schema)
+        _validate_schema_metadata(conn, config)
+        _ensure_plugin_settings_schema(conn, config)
+
+
+def ensure_postgres_marketplace_schema(
+    database: PostgresDatabase,
+    *,
+    config: PostgresSchemaConfig | None = None,
+) -> None:
+    config = config or PostgresSchemaConfig(schema=database.settings.schema)
+    with database.transaction() as conn:
+        _set_search_path(conn, config.schema)
+        _validate_schema_metadata(conn, config)
+        _ensure_marketplace_schema(conn, config)
 
 
 def qname(schema: str, table: str) -> str:
@@ -583,6 +609,7 @@ def _create_final_schema(
     """
     ddl += _wiki_ddl(config)
     ddl += _memory_eval_agent_ddl(config)
+    ddl += _marketplace_ddl(config)
     ddl += _postgres_indexes(config)
     with conn.cursor() as cur:
         cur.execute(ddl)
@@ -917,7 +944,95 @@ def _memory_eval_agent_ddl(config: PostgresSchemaConfig) -> str:
         created_at timestamptz not null,
         updated_at timestamptz not null
     );
+
+    create table {schema}.plugin_setting (
+        workspace_id text not null,
+        plugin_id text not null,
+        enabled boolean not null default false,
+        mode_bindings_json jsonb not null default '[]'::jsonb,
+        config_json jsonb not null default '{{}}'::jsonb,
+        status_metadata_json jsonb not null default '{{}}'::jsonb,
+        created_at timestamptz not null,
+        updated_at timestamptz not null,
+        primary key(workspace_id, plugin_id),
+        foreign key(workspace_id) references {schema}.workspace(id)
+    );
     """
+
+
+def _marketplace_ddl(config: PostgresSchemaConfig) -> str:
+    return _marketplace_table_ddl(config.schema)
+
+
+def _marketplace_table_ddl(schema: str) -> str:
+    schema = quote_ident(schema)
+    return f"""
+    create table {schema}.marketplace_owner (
+        handle text primary key,
+        kind text not null default 'user' check (kind in ('user', 'org')),
+        display_name text not null default '',
+        created_at timestamptz not null,
+        updated_at timestamptz not null
+    );
+
+    create table {schema}.marketplace_token (
+        id text primary key,
+        token_hash text not null unique,
+        owner_handle text not null references {schema}.marketplace_owner(handle) on delete cascade,
+        scopes_json jsonb not null default '[]'::jsonb,
+        created_at timestamptz not null,
+        last_used_at timestamptz,
+        revoked_at timestamptz
+    );
+
+    create table {schema}.marketplace_package (
+        name text primary key,
+        owner_handle text not null references {schema}.marketplace_owner(handle),
+        description text not null default '',
+        category text not null default '',
+        keywords_json jsonb not null default '[]'::jsonb,
+        visibility text not null default 'public' check (visibility in ('public', 'private')),
+        latest_version text not null default '',
+        created_at timestamptz not null,
+        updated_at timestamptz not null
+    );
+
+    create table {schema}.marketplace_package_version (
+        id text primary key,
+        package_name text not null references {schema}.marketplace_package(name) on delete cascade,
+        version text not null,
+        manifest_json jsonb not null default '{{}}'::jsonb,
+        components_json jsonb not null default '{{}}'::jsonb,
+        content_hash text not null,
+        size_bytes bigint not null default 0,
+        storage_key text not null,
+        status text not null default 'published' check (status in ('published', 'yanked')),
+        published_by_owner_handle text not null default '',
+        published_at timestamptz not null,
+        unique(package_name, version)
+    );
+
+    create table {schema}.marketplace_snapshot (
+        id text primary key,
+        revision text not null,
+        catalog_json jsonb not null default '{{}}'::jsonb,
+        package_count integer not null default 0,
+        built_at timestamptz not null
+    );
+
+    create index idx_marketplace_package_owner on {schema}.marketplace_package(owner_handle, updated_at);
+    create index idx_marketplace_package_visibility on {schema}.marketplace_package(visibility, name);
+    create index idx_marketplace_version_package_status on {schema}.marketplace_package_version(package_name, status, published_at);
+    create index idx_marketplace_token_owner on {schema}.marketplace_token(owner_handle);
+    """
+
+
+def _ensure_marketplace_schema(conn: Any, config: PostgresSchemaConfig) -> None:
+    missing = [table for table in _MARKETPLACE_TABLES if not _table_exists(conn, config.schema, table)]
+    if not missing:
+        return
+    with conn.cursor() as cur:
+        cur.execute(_marketplace_table_ddl(config.schema))
 
 
 def _postgres_indexes(config: PostgresSchemaConfig) -> str:
@@ -982,7 +1097,34 @@ def _postgres_indexes(config: PostgresSchemaConfig) -> str:
     create index idx_eval_result_run_case on {schema}.eval_result(run_id, case_id);
     create index idx_agent_runtime_spans_run on {schema}.agent_runtime_spans(run_id);
     create index idx_agent_runtime_spans_parent on {schema}.agent_runtime_spans(parent_span_id);
+    create index idx_plugin_setting_workspace_updated on {schema}.plugin_setting(workspace_id, updated_at);
     """
+
+
+def _ensure_plugin_settings_schema(conn: Any, config: PostgresSchemaConfig) -> None:
+    if _table_exists(conn, config.schema, "plugin_setting"):
+        return
+    schema = quote_ident(config.schema)
+    with conn.cursor() as cur:
+        cur.execute(
+            f"""
+            create table {schema}.plugin_setting (
+                workspace_id text not null,
+                plugin_id text not null,
+                enabled boolean not null default false,
+                mode_bindings_json jsonb not null default '[]'::jsonb,
+                config_json jsonb not null default '{{}}'::jsonb,
+                status_metadata_json jsonb not null default '{{}}'::jsonb,
+                created_at timestamptz not null,
+                updated_at timestamptz not null,
+                primary key(workspace_id, plugin_id),
+                foreign key(workspace_id) references {schema}.workspace(id)
+            )
+            """
+        )
+        cur.execute(
+            f"create index idx_plugin_setting_workspace_updated on {schema}.plugin_setting(workspace_id, updated_at)"
+        )
 
 
 def _installed_extensions(conn: Any) -> set[str]:
@@ -1058,4 +1200,18 @@ _POSTGRES_TABLES = {
     "eval_run",
     "eval_result",
     "agent_runtime_spans",
+    "plugin_setting",
+    "marketplace_owner",
+    "marketplace_token",
+    "marketplace_package",
+    "marketplace_package_version",
+    "marketplace_snapshot",
 }
+
+_MARKETPLACE_TABLES = (
+    "marketplace_owner",
+    "marketplace_token",
+    "marketplace_package",
+    "marketplace_package_version",
+    "marketplace_snapshot",
+)

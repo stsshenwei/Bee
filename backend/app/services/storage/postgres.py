@@ -28,7 +28,7 @@ class PostgresSettings:
         database_url = str(env.get("DATABASE_URL") or "").strip()
         if not database_url:
             raise PostgresConfigurationError("DATABASE_URL is required for PostgreSQL production storage")
-        schema = str(env.get("POSTGRES_SCHEMA") or "public").strip() or "public"
+        schema = _schema_env(env.get("POSTGRES_SCHEMA"))
         return cls(
             database_url=database_url,
             schema=schema,
@@ -74,6 +74,16 @@ class PostgresDatabase:
         close = getattr(self._pool, "close", None)
         if callable(close):
             close()
+
+
+def _schema_env(raw: object) -> str:
+    value = str(raw or "public").strip() or "public"
+    for _ in range(2):
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '\"'}:
+            value = value[1:-1].strip() or "public"
+            continue
+        break
+    return value
 
 
 def quote_ident(identifier: str) -> str:

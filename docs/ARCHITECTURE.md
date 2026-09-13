@@ -27,10 +27,13 @@ flowchart LR
     GRAPH[(Neo4j optional)]
     EVAL[Evaluation suite]
     AGENT[Agent runtime/workflow]
+    PLUGINS[Plugin management]
 
     U --> FE
     FE -->|HTTP + SSE| API
+    FE -->|Plugins workspace| API
     API --> PIPE
+    API --> PLUGINS
     PIPE --> RAG
     API -->|enqueue offline work| REDIS
     REDIS --> WORKERS
@@ -44,6 +47,8 @@ flowchart LR
     RAG --> KG
     KG -. optional .-> GRAPH
     RAG -. optional .-> AGENT
+    PLUGINS --> AGENT
+    PLUGINS --> PG
     EVAL --> RAG
     EVAL --> PG
 ```
@@ -65,6 +70,7 @@ flowchart LR
 | KG | `backend/app/services/kg/postgres_kg_repository.py`, `entity_vector_store.py` | KG tasks, entity mentions, optional entity pgvector search, optional Neo4j graph writes |
 | Memory and audit | `backend/app/services/memory/postgres_*repository.py`, `knowledge/postgres_audit_repository.py` | conversations, memories, query logs, answer feedback |
 | Evaluation | `backend/app/services/evaluation/postgres_evaluation_repository.py` | eval runs/results stored outside the retrievable corpus |
+| Plugin management | `backend/app/services/plugins/` | user-facing Agent Runtime catalog, persisted workspace plugin settings, guardrail validation, and runtime tool policy updates |
 
 ## Storage Layout
 
@@ -78,6 +84,7 @@ PostgreSQL owns authoritative business records and derived retrieval indexes in 
 - processing tasks, dead letters, and span traces
 - KG extraction tasks, entity mentions, optional entity embeddings, and graph summary placeholders
 - conversations, messages, memories, query logs, answer feedback, evaluation runs, and evaluation results
+- workspace-scoped plugin settings in `plugin_setting`
 
 Local filesystem state remains for source corpus files, managed uploads, generated feedback markdown, media objects, trace artifacts, eval reports, runtime locks, and reset manifests. These files are coordinated by the app but are not a replacement for PostgreSQL records.
 
@@ -134,6 +141,16 @@ Quick Chat/RAG can additionally run through `backend/app/services/chat_pipeline/
 Stopping generation is represented as a stream event. `POST /api/v1/sessions/{session_id}/stop` verifies scoped message ownership, appends a `stop` event, and lets the active SSE loop or a 300ms stop watcher signal runtime cancellation. The runtime saves the accumulated partial assistant content with `is_completed=true` and marks stopped metadata without indexing the partial answer as feedback knowledge.
 
 The same package exposes a retrieval-only stage subset for future search/evaluation/tool callers that need query understanding, hybrid retrieval, parent recall, filtering, and debug metadata without invoking chat completion or persisting assistant messages.
+
+## Plugin Management
+
+The `/plugins` workspace is an operator-facing catalog for Agent Runtime tools. `PluginManagementService` merges static plugin descriptors, PostgreSQL `plugin_setting` rows, and deployment environment guardrails into the API records shown by the frontend. Updates refresh the Agent Runtime registry for new chat turns, while existing in-flight streams keep their current runtime state.
+
+This layer deliberately excludes internal Chat/RAG pipeline stages under `backend/app/services/chat_pipeline/`. The catalog presents user-facing capabilities such as knowledge retrieval, Wiki tools, web search/fetch, data analysis, database query, and runtime skills, while preserving server allowlists and read-only constraints.
+
+## Plugin Marketplace
+
+A separate marketplace domain (`backend/app/services/marketplace/`) provides a self-hosted plugin registry for vibecoding clients. `MarketplaceService` orchestrates ZIP bundle upload with security validation, immutable SemVer versions scoped by owner, yank/purge deletion, and derivation of CodeBuddy-compatible distribution artifacts: a dynamic `marketplace.json` catalog, a whole-marketplace `snapshot.zip`, and a bare git mirror (pure-Python loose objects served statically for dumb-HTTP clones), all rebuilt atomically with last-good fallback. Bundle ZIPs on disk are the single source of truth; metadata lives in `marketplace_*` PostgreSQL tables; bearer tokens (scopes `publish`/`admin`) provide identity. The `/plugins` frontend workspace hosts the marketplace admin console while the built-in catalog API stays unchanged. See `docs/MARKETPLACE.md`.
 
 ## Reset And Compatibility
 

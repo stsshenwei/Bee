@@ -368,6 +368,140 @@ export type KnowledgeBase = {
   updated_at: string;
 };
 
+export type PluginConfigField = {
+  name: string;
+  label: string;
+  type: "text" | "url" | "csv" | "object" | "secret" | string;
+  required: boolean;
+  description: string;
+  placeholder: string;
+  options: string[];
+  secret: boolean;
+};
+
+export type RuntimePlugin = {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  enabled: boolean;
+  availability: "available" | "unavailable" | string;
+  configuration_status: "configured" | "needs_configuration" | "unavailable" | string;
+  supported_modes: string[];
+  enabled_modes: string[];
+  safety_labels: string[];
+  permissions: string[];
+  mapped_tools: string[];
+  config_schema: PluginConfigField[];
+  config: Record<string, unknown>;
+  warnings: string[];
+  updated_at: string;
+};
+
+export type PluginsResponse = {
+  items: RuntimePlugin[];
+  aggregate: {
+    total: number;
+    enabled: number;
+    available: number;
+    needs_configuration: number;
+  };
+};
+
+export type PluginUpdateInput = {
+  enabled?: boolean;
+  enabled_modes?: string[];
+  config?: Record<string, unknown>;
+};
+
+export type PluginTestResult = {
+  plugin_id: string;
+  status: string;
+  success: boolean;
+  latency_ms: number;
+  summary: string;
+  details: Record<string, unknown>;
+};
+
+export type PluginActivityResponse = {
+  items: Array<Record<string, unknown>>;
+  limit: number;
+  source: string;
+};
+
+export type MarketplacePackageVersion = {
+  package: string;
+  owner: string;
+  version: string;
+  manifest: Record<string, unknown>;
+  components: Record<string, unknown>;
+  content_hash: string;
+  size_bytes: number;
+  status: string;
+  published_at: string;
+};
+
+export type MarketplacePackage = {
+  name: string;
+  owner: string;
+  description: string;
+  category: string;
+  keywords: string[];
+  visibility: string;
+  latest_version: string;
+  components: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+  download_url: string;
+  manageable: boolean;
+};
+
+export type MarketplacePackageDetail = MarketplacePackage & {
+  versions: MarketplacePackageVersion[];
+};
+
+export type MarketplacePackagesResponse = {
+  items: MarketplacePackage[];
+};
+
+export type MarketplaceSnapshotVersion = {
+  revision: string;
+  built_at: string;
+  package_count: number;
+};
+
+export type MarketplaceValidationResult = {
+  valid: boolean;
+  name: string;
+  version: string;
+  description: string;
+  category: string;
+  keywords: string[];
+  manifest: Record<string, unknown>;
+  components: Record<string, unknown>;
+  file_count: number;
+  total_uncompressed_bytes: number;
+  error: string;
+};
+
+export type MarketplacePackageUpdateInput = {
+  description?: string | null;
+  category?: string | null;
+  keywords?: string[] | null;
+  visibility?: string | null;
+};
+
+export type MarketplaceComponentBadges = {
+  skills: string[];
+  commands: string[];
+  agents: string[];
+  hooks: boolean;
+  mcp: boolean;
+  lsp: boolean;
+  bin: string[];
+  rules: string[];
+};
+
 export type DocumentViewMode = "grid" | "list";
 
 export type DocumentFilters = {

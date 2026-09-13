@@ -7,9 +7,21 @@ import type {
   DocumentProcessingPreview,
   KnowledgeBase,
   KnowledgeBaseType,
+  MarketplacePackage,
+  MarketplacePackageDetail,
+  MarketplacePackagesResponse,
+  MarketplacePackageUpdateInput,
+  MarketplacePackageVersion,
+  MarketplaceSnapshotVersion,
+  MarketplaceValidationResult,
   MessagesLoadResponse,
   ParserEngineInfo,
   ParserEnginesResponse,
+  PluginActivityResponse,
+  PluginsResponse,
+  PluginTestResult,
+  PluginUpdateInput,
+  RuntimePlugin,
   UploadBatch,
   UploadBatchSettings,
   WikiFolder,
@@ -39,6 +51,209 @@ export async function listKnowledgeBases(includeArchived = false): Promise<Knowl
     await fetch(`${API_BASE}/knowledge-bases?include_archived=${includeArchived}`),
   );
   return data.items || [];
+}
+
+export async function listPlugins(): Promise<PluginsResponse> {
+  return readJson<PluginsResponse>(await fetch(`${API_BASE}/plugins`));
+}
+
+export async function getPlugin(pluginId: string): Promise<RuntimePlugin> {
+  return readJson<RuntimePlugin>(await fetch(`${API_BASE}/plugins/${encodeURIComponent(pluginId)}`));
+}
+
+export async function updatePlugin(pluginId: string, input: PluginUpdateInput): Promise<RuntimePlugin> {
+  return readJson<RuntimePlugin>(
+    await fetch(`${API_BASE}/plugins/${encodeURIComponent(pluginId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  );
+}
+
+export async function testPlugin(pluginId: string, input: { query?: string; execute?: boolean } = {}): Promise<PluginTestResult> {
+  return readJson<PluginTestResult>(
+    await fetch(`${API_BASE}/plugins/${encodeURIComponent(pluginId)}/test`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  );
+}
+
+export async function getPluginActivity(limit = 20): Promise<PluginActivityResponse> {
+  return readJson<PluginActivityResponse>(await fetch(`${API_BASE}/plugins/activity?limit=${encodeURIComponent(String(limit))}`));
+}
+
+export function marketplaceAuthHeaders(token?: string | null): Record<string, string> {
+  if (!token) return {};
+  return { Authorization: `Bearer ${token}` };
+}
+
+export async function listMarketplacePackages(
+  params: { owner?: string; q?: string; category?: string; token?: string | null } = {},
+): Promise<MarketplacePackagesResponse> {
+  const search = new URLSearchParams();
+  if (params.owner) search.set("owner", params.owner);
+  if (params.q) search.set("q", params.q);
+  if (params.category) search.set("category", params.category);
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return readJson<MarketplacePackagesResponse>(
+    await fetch(`${API_BASE}/marketplace/packages${suffix}`, {
+      headers: marketplaceAuthHeaders(params.token),
+    }),
+  );
+}
+
+export async function getMarketplacePackage(
+  owner: string,
+  name: string,
+  token?: string | null,
+): Promise<MarketplacePackageDetail> {
+  return readJson<MarketplacePackageDetail>(
+    await fetch(
+      `${API_BASE}/marketplace/packages/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`,
+      { headers: marketplaceAuthHeaders(token) },
+    ),
+  );
+}
+
+export async function updateMarketplacePackage(
+  owner: string,
+  name: string,
+  input: MarketplacePackageUpdateInput,
+  token?: string | null,
+): Promise<MarketplacePackage> {
+  return readJson<MarketplacePackage>(
+    await fetch(
+      `${API_BASE}/marketplace/packages/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...marketplaceAuthHeaders(token) },
+        body: JSON.stringify(input),
+      },
+    ),
+  );
+}
+
+export async function deleteMarketplacePackage(
+  owner: string,
+  name: string,
+  token?: string | null,
+): Promise<{ deleted: boolean; package: string; owner: string }> {
+  return readJson(
+    await fetch(
+      `${API_BASE}/marketplace/packages/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`,
+      { method: "DELETE", headers: marketplaceAuthHeaders(token) },
+    ),
+  );
+}
+
+export async function validateMarketplaceBundle(file: File): Promise<MarketplaceValidationResult> {
+  const form = new FormData();
+  form.append("file", file);
+  return readJson<MarketplaceValidationResult>(
+    await fetch(`${API_BASE}/marketplace/validate`, { method: "POST", body: form }),
+  );
+}
+
+export async function publishMarketplaceVersion(
+  owner: string,
+  name: string,
+  file: File,
+  opts: { version?: string; visibility?: string; token?: string | null } = {},
+): Promise<MarketplacePackageVersion> {
+  const form = new FormData();
+  form.append("file", file);
+  if (opts.version) form.append("version", opts.version);
+  if (opts.visibility) form.append("visibility", opts.visibility);
+  return readJson<MarketplacePackageVersion>(
+    await fetch(
+      `${API_BASE}/marketplace/packages/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/versions`,
+      {
+        method: "POST",
+        headers: marketplaceAuthHeaders(opts.token),
+        body: form,
+      },
+    ),
+  );
+}
+
+export async function yankMarketplaceVersion(
+  owner: string,
+  name: string,
+  version: string,
+  token?: string | null,
+): Promise<{ package: string; version: string; status: string }> {
+  return readJson(
+    await fetch(
+      `${API_BASE}/marketplace/packages/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}`,
+      { method: "DELETE", headers: marketplaceAuthHeaders(token) },
+    ),
+  );
+}
+
+export async function restoreMarketplaceVersion(
+  owner: string,
+  name: string,
+  version: string,
+  token?: string | null,
+): Promise<MarketplacePackageVersion> {
+  return readJson<MarketplacePackageVersion>(
+    await fetch(
+      `${API_BASE}/marketplace/packages/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}/restore`,
+      { method: "POST", headers: marketplaceAuthHeaders(token) },
+    ),
+  );
+}
+
+export async function purgeMarketplaceVersion(
+  owner: string,
+  name: string,
+  version: string,
+  token?: string | null,
+): Promise<{ purged: boolean; package: string; version: string }> {
+  return readJson(
+    await fetch(
+      `${API_BASE}/marketplace/packages/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}?mode=purge`,
+      { method: "DELETE", headers: marketplaceAuthHeaders(token) },
+    ),
+  );
+}
+
+export async function getMarketplaceSnapshotVersion(): Promise<MarketplaceSnapshotVersion> {
+  return readJson<MarketplaceSnapshotVersion>(await fetch(`${API_BASE}/marketplace/snapshot/version`));
+}
+
+export async function downloadMarketplaceVersion(
+  owner: string,
+  name: string,
+  version: string,
+  token?: string | null,
+): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/marketplace/packages/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}/download`,
+    { headers: marketplaceAuthHeaders(token) },
+  );
+  if (!res.ok) {
+    let detail = `下载失败: ${res.status}`;
+    try {
+      const data = (await res.json()) as { detail?: string };
+      if (data.detail) detail = data.detail;
+    } catch {
+      // 非 JSON 错误体，保留默认信息
+    }
+    throw new Error(detail);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `${name}-${version}.zip`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }
 
 export async function listParserEngines(): Promise<ParserEngineInfo[]> {

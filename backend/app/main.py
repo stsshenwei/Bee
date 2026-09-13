@@ -1,4 +1,4 @@
-﻿import json
+import json
 import logging
 import inspect
 import mimetypes
@@ -8,9 +8,9 @@ import time
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from openai import OpenAI
 
 from app.schemas import (
@@ -41,6 +41,12 @@ from app.schemas import (
     MemoriesResponse,
     MessagesLoadResponse,
     MemoryDeleteResponse,
+    PluginActivityResponse,
+    PluginResponse,
+    PluginsResponse,
+    PluginTestRequest,
+    PluginTestResponse,
+    PluginUpdateRequest,
     RagDeleteResponse,
     RagDocumentIngestResponse,
     RagDocumentUploadResponse,
@@ -139,6 +145,34 @@ from app.services.processing.postgres_processing_span_repository import Postgres
 from app.services.processing.processing_span_tracker import ProcessingSpanTracker
 from app.services.processing.postgres_processing_task_repository import PostgresProcessingTaskRepository
 from app.services.processing.processing_worker import DocumentProcessingWorker
+from app.services.plugins import PluginManagementService, PluginValidationError, PostgresPluginSettingsRepository
+from app.services.plugins.plugin_management import PluginNotFoundError
+from app.services.plugins.plugin_models import PluginRuntimeEnvironment
+from app.services.marketplace import (
+    MarketplaceAuthError,
+    MarketplaceConflictError,
+    MarketplaceError,
+    MarketplaceForbiddenError,
+    MarketplaceNotFoundError,
+    MarketplacePrincipal,
+    MarketplaceService,
+    MarketplaceSettings,
+    MarketplaceStorage,
+    MarketplaceValidationError,
+    PostgresMarketplaceRepository,
+)
+from app.services.marketplace.marketplace_git import resolve_repo_file
+from app.schemas import (
+    MarketplacePackageDeleteResponse,
+    MarketplacePackageDetailResponse,
+    MarketplacePackageResponse,
+    MarketplacePackageUpdateRequest,
+    MarketplacePackagesResponse,
+    MarketplacePackageVersionResponse,
+    MarketplaceSnapshotVersionResponse,
+    MarketplaceValidationResponse,
+    MarketplaceVersionDeleteResponse,
+)
 from app.services.async_runtime.config import AsyncRuntimeConfig
 from app.services.async_runtime.diagnostics import async_runtime_diagnostics
 from app.services.async_runtime.queue import CeleryProcessingQueue, DisabledProcessingQueue
@@ -948,6 +982,31 @@ def build_rag_service() -> RAGService:
         wiki_maintenance_tools_enabled=_get_env_bool("AGENT_RUNTIME_WIKI_MAINTENANCE_TOOLS_ENABLED", default=False),
         fallback_to_deterministic=_get_env_bool("AGENT_RUNTIME_FALLBACK_TO_DETERMINISTIC", default=True),
     )
+    plugin_management_service = PluginManagementService(
+        PostgresPluginSettingsRepository(postgres_database, schema=postgres_schema),
+        workspace_id=knowledge_base_defaults.workspace_id,
+        runtime_environment=PluginRuntimeEnvironment(
+            web_search_enabled=agent_runtime_config.web_search_enabled,
+            web_search_endpoint=agent_runtime_config.web_search_endpoint,
+            web_fetch_enabled=agent_runtime_config.web_fetch_enabled,
+            web_fetch_allowed_domains=agent_runtime_config.web_fetch_allowed_domains,
+            data_analysis_enabled=agent_runtime_config.data_analysis_enabled,
+            database_query_enabled=agent_runtime_config.database_query_enabled,
+            database_allowed_sources=agent_runtime_config.database_allowed_sources,
+            skills_enabled=agent_runtime_config.skills_enabled,
+            wiki_tools_enabled=agent_runtime_config.wiki_tools_enabled,
+            wiki_maintenance_tools_enabled=agent_runtime_config.wiki_maintenance_tools_enabled,
+        ),
+    )
+    rag_service.plugin_management_service = plugin_management_service
+    marketplace_settings = MarketplaceSettings.from_env()
+    marketplace_service = MarketplaceService(
+        PostgresMarketplaceRepository(postgres_database, schema=postgres_schema),
+        MarketplaceStorage(marketplace_settings.storage_dir),
+        marketplace_settings,
+    )
+    rag_service.marketplace_service = marketplace_service
+    agent_runtime_config = plugin_management_service.apply_to_agent_runtime_config(agent_runtime_config)
     rag_service.agent_runtime_enabled = agent_runtime_config.enabled
     rag_service.unified_chat_runtime_enabled = agent_runtime_config.unified_chat_runtime_enabled
     rag_service.quick_runtime_enabled = agent_runtime_config.quick_runtime_enabled
@@ -1236,6 +1295,350 @@ def _payload_dict(payload, *, exclude_unset: bool = False) -> dict:
     if hasattr(payload, "model_dump"):
         return payload.model_dump(exclude_unset=exclude_unset)
     return payload.dict(exclude_unset=exclude_unset)
+
+
+def _plugin_service() -> PluginManagementService:
+    service = getattr(rag_service, "plugin_management_service", None)
+    if service is None:
+        raise HTTPException(status_code=503, detail="插件管理服务不可用")
+    return service
+
+
+def _marketplace_service() -> MarketplaceService:
+    service = getattr(rag_service, "marketplace_service", None)
+    if service is None:
+        raise HTTPException(status_code=503, detail="插件市场服务不可用")
+    return service
+
+
+def _marketplace_principal(authorization: str | None) -> MarketplacePrincipal | None:
+    return _marketplace_service().resolve_principal(authorization)
+
+
+def _marketplace_http_error(exc: MarketplaceError) -> HTTPException:
+    if isinstance(exc, MarketplaceAuthError):
+        return HTTPException(status_code=401, detail=str(exc))
+    if isinstance(exc, MarketplaceForbiddenError):
+        return HTTPException(status_code=403, detail=str(exc))
+    if isinstance(exc, MarketplaceNotFoundError):
+        return HTTPException(status_code=404, detail=str(exc))
+    if isinstance(exc, MarketplaceConflictError):
+        return HTTPException(status_code=409, detail=str(exc))
+    if isinstance(exc, MarketplaceValidationError):
+        return HTTPException(status_code=400, detail=str(exc))
+    return HTTPException(status_code=500, detail=str(exc))
+
+
+def _refresh_agent_runtime_plugin_settings() -> None:
+    runtime = getattr(rag_service, "agent_runtime", None)
+    if runtime is None:
+        return
+    service = _plugin_service()
+    config = service.apply_to_agent_runtime_config(runtime.config)
+    runtime.config = config
+    rag_service.agent_runtime_enabled = config.enabled
+    rag_service.unified_chat_runtime_enabled = config.unified_chat_runtime_enabled
+    rag_service.quick_runtime_enabled = config.quick_runtime_enabled
+    rag_service.wiki_runtime_enabled = config.wiki_runtime_enabled
+    rag_service.rag_wiki_runtime_enabled = config.rag_wiki_runtime_enabled
+    registered_agent_tools = tuple(
+        dict.fromkeys(
+            (
+                *config.enabled_tools,
+                *config.quick_enabled_tools,
+                *config.wiki_enabled_tools,
+                *config.rag_wiki_enabled_tools,
+            )
+        )
+    )
+    runtime.tool_registry = build_default_tool_registry(
+        enabled_tools=registered_agent_tools,
+        max_output_chars=config.max_tool_output_chars,
+        skills_enabled=config.skills_enabled,
+        web_search_enabled=config.web_search_enabled,
+        web_search_endpoint=config.web_search_endpoint,
+        web_fetch_enabled=config.web_fetch_enabled,
+        web_fetch_allowed_domains=config.web_fetch_allowed_domains,
+        web_fetch_timeout_seconds=config.tool_timeout_seconds,
+        data_analysis_enabled=config.data_analysis_enabled,
+        database_query_enabled=config.database_query_enabled,
+        database_allowed_sources=config.database_allowed_sources,
+        wiki_tools_enabled=config.wiki_tools_enabled,
+        wiki_maintenance_tools_enabled=config.wiki_maintenance_tools_enabled,
+    )
+
+
+@app.get("/plugins", response_model=PluginsResponse)
+def list_plugins(workspace_id: str | None = Query(default=None)) -> PluginsResponse:
+    return PluginsResponse(**_plugin_service().list_plugins(workspace_id))
+
+
+@app.get("/plugins/activity", response_model=PluginActivityResponse)
+def plugin_activity(limit: int = Query(default=20, ge=1, le=100)) -> PluginActivityResponse:
+    return PluginActivityResponse(**_plugin_service().activity(limit))
+
+
+@app.get("/plugins/{plugin_id}", response_model=PluginResponse)
+def get_plugin(plugin_id: str, workspace_id: str | None = Query(default=None)) -> PluginResponse:
+    try:
+        return PluginResponse(**_plugin_service().get_plugin(plugin_id, workspace_id))
+    except PluginNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"插件不存在：{plugin_id}") from exc
+
+
+@app.patch("/plugins/{plugin_id}", response_model=PluginResponse)
+def update_plugin(
+    plugin_id: str,
+    payload: PluginUpdateRequest,
+    workspace_id: str | None = Query(default=None),
+) -> PluginResponse:
+    try:
+        result = _plugin_service().update_plugin(plugin_id, _payload_dict(payload, exclude_unset=True), workspace_id)
+        _refresh_agent_runtime_plugin_settings()
+        return PluginResponse(**result)
+    except PluginNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"插件不存在：{plugin_id}") from exc
+    except PluginValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/plugins/{plugin_id}/test", response_model=PluginTestResponse)
+def test_plugin(
+    plugin_id: str,
+    payload: PluginTestRequest | None = None,
+    workspace_id: str | None = Query(default=None),
+) -> PluginTestResponse:
+    try:
+        result = _plugin_service().test_plugin(plugin_id, _payload_dict(payload or PluginTestRequest(), exclude_unset=True), workspace_id)
+        return PluginTestResponse(**result)
+    except PluginNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"插件不存在：{plugin_id}") from exc
+
+
+@app.get("/marketplace/marketplace.json")
+def marketplace_catalog():
+    return JSONResponse(_marketplace_service().catalog_document())
+
+
+@app.get("/marketplace/plugins/{name}/{file_path:path}")
+def marketplace_plugin_file(name: str, file_path: str) -> Response:
+    try:
+        data = _marketplace_service().read_public_plugin_file(name, file_path)
+    except MarketplaceError as exc:
+        raise _marketplace_http_error(exc) from exc
+    media_type = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
+    return Response(content=data, media_type=media_type)
+
+
+@app.get("/marketplace/snapshot/version", response_model=MarketplaceSnapshotVersionResponse)
+def marketplace_snapshot_version() -> MarketplaceSnapshotVersionResponse:
+    return MarketplaceSnapshotVersionResponse(**_marketplace_service().snapshot_version())
+
+
+@app.get("/marketplace/snapshot.zip")
+def marketplace_snapshot_zip() -> FileResponse:
+    service = _marketplace_service()
+    path = service.snapshot_zip_path()
+    headers: dict[str, str] = {}
+    revision = service.snapshot_version().get("revision") or ""
+    if revision:
+        headers["ETag"] = f'"{revision}"'
+    return FileResponse(
+        path,
+        media_type="application/zip",
+        filename="marketplace-snapshot.zip",
+        headers=headers,
+    )
+
+
+@app.get("/marketplace/packages", response_model=MarketplacePackagesResponse)
+def list_marketplace_packages(
+    owner: str | None = Query(default=None),
+    q: str = Query(default=""),
+    category: str = Query(default=""),
+    authorization: str | None = Header(default=None),
+) -> MarketplacePackagesResponse:
+    principal = _marketplace_principal(authorization)
+    items = _marketplace_service().list_packages(
+        owner_handle=owner,
+        query=q,
+        category=category,
+        principal=principal,
+    )
+    return MarketplacePackagesResponse(items=[MarketplacePackageResponse(**item) for item in items])
+
+
+@app.get("/marketplace/packages/{owner}/{name}", response_model=MarketplacePackageDetailResponse)
+def get_marketplace_package(
+    owner: str,
+    name: str,
+    authorization: str | None = Header(default=None),
+) -> MarketplacePackageDetailResponse:
+    try:
+        detail = _marketplace_service().get_package(
+            owner, name, principal=_marketplace_principal(authorization)
+        )
+    except MarketplaceError as exc:
+        raise _marketplace_http_error(exc) from exc
+    return MarketplacePackageDetailResponse(**detail)
+
+
+@app.patch("/marketplace/packages/{owner}/{name}", response_model=MarketplacePackageResponse)
+def update_marketplace_package(
+    owner: str,
+    name: str,
+    payload: MarketplacePackageUpdateRequest,
+    authorization: str | None = Header(default=None),
+) -> MarketplacePackageResponse:
+    try:
+        package = _marketplace_service().update_package(
+            owner,
+            name,
+            description=payload.description,
+            category=payload.category,
+            keywords=tuple(payload.keywords) if payload.keywords is not None else None,
+            visibility=payload.visibility,
+            principal=_marketplace_principal(authorization),
+        )
+    except MarketplaceError as exc:
+        raise _marketplace_http_error(exc) from exc
+    return MarketplacePackageResponse(**package)
+
+
+@app.delete("/marketplace/packages/{owner}/{name}", response_model=MarketplacePackageDeleteResponse)
+def delete_marketplace_package(
+    owner: str,
+    name: str,
+    authorization: str | None = Header(default=None),
+) -> MarketplacePackageDeleteResponse:
+    try:
+        result = _marketplace_service().delete_package(
+            owner, name, principal=_marketplace_principal(authorization)
+        )
+    except MarketplaceError as exc:
+        raise _marketplace_http_error(exc) from exc
+    return MarketplacePackageDeleteResponse(**result)
+
+
+@app.post("/marketplace/validate", response_model=MarketplaceValidationResponse)
+def validate_marketplace_bundle(file: UploadFile = File(...)) -> MarketplaceValidationResponse:
+    data = file.file.read()
+    try:
+        result = _marketplace_service().validate_bundle(data)
+    except MarketplaceValidationError as exc:
+        return MarketplaceValidationResponse(valid=False, error=str(exc))
+    return MarketplaceValidationResponse(**result)
+
+
+@app.post(
+    "/marketplace/packages/{owner}/{name}/versions",
+    response_model=MarketplacePackageVersionResponse,
+)
+def publish_marketplace_version(
+    owner: str,
+    name: str,
+    file: UploadFile = File(...),
+    version: str | None = Form(default=None),
+    visibility: str | None = Form(default=None),
+    authorization: str | None = Header(default=None),
+) -> MarketplacePackageVersionResponse:
+    data = file.file.read()
+    try:
+        record = _marketplace_service().publish_version(
+            owner,
+            name,
+            data,
+            version=version,
+            visibility=visibility,
+            principal=_marketplace_principal(authorization),
+        )
+    except MarketplaceError as exc:
+        raise _marketplace_http_error(exc) from exc
+    return MarketplacePackageVersionResponse(**record)
+
+
+@app.post(
+    "/marketplace/packages/{owner}/{name}/versions/{version}/restore",
+    response_model=MarketplacePackageVersionResponse,
+)
+def restore_marketplace_version(
+    owner: str,
+    name: str,
+    version: str,
+    authorization: str | None = Header(default=None),
+) -> MarketplacePackageVersionResponse:
+    try:
+        record = _marketplace_service().set_version_status(
+            owner, name, version, "published", principal=_marketplace_principal(authorization)
+        )
+    except MarketplaceError as exc:
+        raise _marketplace_http_error(exc) from exc
+    return MarketplacePackageVersionResponse(**record)
+
+
+@app.delete(
+    "/marketplace/packages/{owner}/{name}/versions/{version}",
+    response_model=MarketplaceVersionDeleteResponse,
+)
+def delete_marketplace_version(
+    owner: str,
+    name: str,
+    version: str,
+    mode: str = Query(default="yank"),
+    authorization: str | None = Header(default=None),
+) -> MarketplaceVersionDeleteResponse:
+    principal = _marketplace_principal(authorization)
+    if mode == "purge":
+        try:
+            result = _marketplace_service().purge_version(
+                owner, name, version, principal=principal
+            )
+        except MarketplaceError as exc:
+            raise _marketplace_http_error(exc) from exc
+        return MarketplaceVersionDeleteResponse(
+            purged=True, package=result["package"], version=result["version"]
+        )
+    try:
+        record = _marketplace_service().set_version_status(
+            owner, name, version, "yanked", principal=principal
+        )
+    except MarketplaceError as exc:
+        raise _marketplace_http_error(exc) from exc
+    return MarketplaceVersionDeleteResponse(
+        package=record["package"], version=record["version"], status=record["status"]
+    )
+
+
+@app.get("/marketplace/packages/{owner}/{name}/versions/{version}/download")
+def download_marketplace_version(
+    owner: str,
+    name: str,
+    version: str,
+    authorization: str | None = Header(default=None),
+) -> FileResponse:
+    try:
+        path, filename = _marketplace_service().version_download(
+            owner, name, version, principal=_marketplace_principal(authorization)
+        )
+    except MarketplaceError as exc:
+        raise _marketplace_http_error(exc) from exc
+    return FileResponse(path, media_type="application/zip", filename=filename)
+
+
+@app.get("/marketplace/git/{file_path:path}")
+def marketplace_git_file(file_path: str):
+    """Serve the bare git mirror as static files for dumb-HTTP clones."""
+
+    service = _marketplace_service()
+    target = resolve_repo_file(service.git_repo_root(), file_path)
+    if target is None:
+        raise HTTPException(status_code=404, detail="文件不存在")
+    media_type = (
+        "application/octet-stream"
+        if target.relative_to(service.git_repo_root()).parts[0] == "objects"
+        else "text/plain"
+    )
+    return FileResponse(target, media_type=media_type)
 
 
 @app.get("/workspaces/default", response_model=WorkspaceResponse)
@@ -2617,7 +3020,11 @@ def chat_stream(payload: ChatRequest, request: Request) -> StreamingResponse:
                 {
                     "conversation_id": conversation_id,
                     "session_id": conversation_id,
-                    "stream_message_id": stream_message_id,
+                    "stream_message_id": (
+                        str(user_message["id"])
+                        if not callable(getattr(conversation_service.repository, "create_turn", None))
+                        else stream_message_id
+                    ),
                     "assistant_message_id": str(assistant_message["id"]),
                     "request_id": request_id,
                     "user_message_id": str(user_message["id"]),

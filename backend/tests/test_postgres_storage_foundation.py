@@ -37,6 +37,16 @@ class PostgresStorageFoundationTests(unittest.TestCase):
         self.assertEqual(2, settings.pool_min_size)
         self.assertEqual(9, settings.pool_max_size)
 
+    def test_settings_strip_accidental_schema_quotes(self):
+        for raw in ('"public"', '\"public\"', "'public'"):
+            settings = PostgresSettings.from_env(
+                {
+                    "DATABASE_URL": "postgresql://user:pass@localhost:5432/rag",
+                    "POSTGRES_SCHEMA": raw,
+                }
+            )
+            self.assertEqual("public", settings.schema)
+
     def test_quote_ident_escapes_and_rejects_empty_identifiers(self):
         self.assertEqual('"rag_app"', quote_ident("rag_app"))
         self.assertEqual('"bad""name"', quote_ident('bad"name'))
@@ -58,6 +68,13 @@ class PostgresStorageFoundationTests(unittest.TestCase):
 
     def test_schema_version_marks_postgres_cutover_generation(self):
         self.assertEqual("20260813_postgres_pgvector_v1", POSTGRES_SCHEMA_VERSION)
+
+    def test_marketplace_ddl_quotes_schema_once(self):
+        import app.services.storage.postgres_schema as postgres_schema
+
+        ddl = postgres_schema._marketplace_ddl(PostgresSchemaConfig(schema="public"))
+        self.assertIn('create table "public".marketplace_owner', ddl)
+        self.assertNotIn('"""public"""', ddl)
 
     def test_startup_inspection_fails_closed_for_empty_or_mismatched_storage(self):
         import app.services.storage.postgres_schema as postgres_schema

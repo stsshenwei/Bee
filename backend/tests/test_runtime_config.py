@@ -59,6 +59,34 @@ def postgres_runtime_patches():
             stack.enter_context(patch(target, return_value={"ready": True}))
         stack.enter_context(
             patch(
+                "app.services.plugins.postgres_plugin_repository.ensure_postgres_plugin_settings_schema",
+                autospec=True,
+                return_value=None,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.marketplace.postgres_marketplace_repository.ensure_postgres_marketplace_schema",
+                autospec=True,
+                return_value=None,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.plugins.postgres_plugin_repository.PostgresPluginSettingsRepository.list_settings",
+                autospec=True,
+                return_value=[],
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.plugins.postgres_plugin_repository.PostgresPluginSettingsRepository.get_setting",
+                autospec=True,
+                return_value=None,
+            )
+        )
+        stack.enter_context(
+            patch(
                 "app.services.knowledge.postgres_knowledge_base_repository.PostgresKnowledgeBaseRepository.get_workspace",
                 autospec=True,
                 side_effect=lambda self, workspace_id: _fake_workspace(self, workspace_id),

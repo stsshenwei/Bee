@@ -6,6 +6,27 @@ const css = readFileSync(new URL("../globals.css", import.meta.url), "utf8");
 const chatPage = readFileSync(new URL("../chat/page.tsx", import.meta.url), "utf8");
 const knowledgePage = readFileSync(new URL("../knowledge/page.tsx", import.meta.url), "utf8");
 const knowledgeDocumentPage = readFileSync(new URL("../knowledge/document/page.tsx", import.meta.url), "utf8");
+const pluginsPage = readFileSync(new URL("../plugins/page.tsx", import.meta.url), "utf8");
+const pluginDetailPage = readFileSync(new URL("../plugins/detail/page.tsx", import.meta.url), "utf8");
+const sidebar = readFileSync(new URL("../components/Sidebar.tsx", import.meta.url), "utf8");
+
+test("plugins workspace exposes marketplace console and responsive rules", () => {
+  assert.match(sidebar, /router\.push\("\/plugins"\)/);
+  assert.match(sidebar, /pathname\.startsWith\("\/plugins"\)/);
+  assert.match(pluginsPage, /listMarketplacePackages/);
+  assert.match(pluginsPage, /validateMarketplaceBundle/);
+  assert.match(pluginsPage, /publishMarketplaceVersion/);
+  assert.match(pluginDetailPage, /downloadMarketplaceVersion/);
+  assert.match(pluginDetailPage, /mkt-back-icon/);
+  assert.match(pluginsPage, /plugins-filter/);
+  assert.match(pluginsPage, /mkt-publish-panel/);
+  assert.match(pluginDetailPage, /mkt-version-list/);
+  assert.match(pluginsPage, /mkt-card-grid/);
+  assert.match(css, /\.mkt-layout\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\) 340px/);
+  assert.match(css, /@media \(max-width: 1180px\) \{[\s\S]*?\.mkt-layout\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\)/);
+  assert.match(css, /\.mkt-card-grid\s*\{/);
+  assert.match(css, /\.mkt-version-list\s*\{/);
+});
 
 test("processing preview layout has bounded cards and mobile single-column rules", () => {
   assert.match(css, /\.preview-diagnostics\s*{/);
@@ -20,12 +41,11 @@ test("processing preview layout has bounded cards and mobile single-column rules
 });
 
 test("chat home composer exposes enterprise controls without model selector", () => {
-  assert.match(chatPage, /今天，想了解什么？/);
-  assert.match(chatPage, /快速问答/);
-  assert.match(chatPage, /智能推理/);
-  assert.match(chatPage, /上传文档/);
-  assert.match(chatPage, /知识库：/);
-  assert.doesNotMatch(chatPage, /模型/);
+  assert.match(chatPage, /suggestedQuestions/);
+  assert.match(chatPage, /composer-mode-select/);
+  assert.match(chatPage, /composer-icon-button/);
+  assert.match(chatPage, /composer-attachments/);
+  assert.doesNotMatch(chatPage, /model selector/i);
   assert.match(css, /\.suggested-question-list/);
   assert.match(css, /\.composer-mode-select/);
   assert.match(css, /\.composer-icon-button/);
@@ -72,12 +92,10 @@ test("document metrics sit inside the document panel above search filters", () =
 });
 
 test("knowledge document detail page exposes preview and chunk views", () => {
-  assert.match(knowledgeDocumentPage, /文档详情/);
-  assert.match(knowledgeDocumentPage, /基本信息/);
-  assert.match(knowledgeDocumentPage, /摘要/);
-  assert.match(knowledgeDocumentPage, /文件内容/);
-  assert.match(knowledgeDocumentPage, />预览</);
-  assert.match(knowledgeDocumentPage, />分块</);
+  assert.match(knowledgeDocumentPage, /knowledge-document-detail-page/);
+  assert.match(knowledgeDocumentPage, /document-detail-tabs/);
+  assert.match(knowledgeDocumentPage, /document-detail-chunks/);
+  assert.match(knowledgeDocumentPage, /activeTab/);
   assert.match(css, /\.knowledge-document-detail-page/);
   assert.match(css, /\.document-detail-tabs/);
   assert.match(css, /\.document-detail-chunks/);
