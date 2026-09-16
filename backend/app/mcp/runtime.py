@@ -11,6 +11,7 @@ class MCPBackendServices:
     document_repository: Any
     wiki_page_service: Any | None = None
     conversation_service: Any | None = None
+    marketplace_service: Any | None = None
 
 
 def load_backend_services() -> MCPBackendServices:
@@ -23,4 +24,5 @@ def load_backend_services() -> MCPBackendServices:
         document_repository=getattr(rag_service, "document_repository", None),
         wiki_page_service=getattr(rag_service, "wiki_page_service", None),
         conversation_service=getattr(main, "conversation_service", None),
+        marketplace_service=getattr(rag_service, "marketplace_service", None),
     )

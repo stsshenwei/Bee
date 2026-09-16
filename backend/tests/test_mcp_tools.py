@@ -1,4 +1,8 @@
 import asyncio
+import base64
+import io
+import json
+import zipfile
 from dataclasses import dataclass
 
 from app.mcp.config import MCPRuntimeConfig
@@ -6,6 +10,21 @@ from app.mcp.runtime import MCPBackendServices
 from app.mcp.server import MCPAuthMiddleware
 from app.mcp.tools import RAGMCPToolService
 from app.models.knowledge_base import KnowledgeBaseScope
+
+
+def make_plugin_bundle(name="agent-browser", version="1.3.0"):
+    buffer = io.BytesIO()
+    manifest = {
+        "name": name,
+        "version": version,
+        "description": "Browser automation plugin",
+        "category": "browser",
+        "keywords": ["browser", "automation"],
+    }
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr(".codebuddy-plugin/plugin.json", json.dumps(manifest))
+        archive.writestr("SKILL.md", "---\ndescription: Automates browser tasks.\n---\n# agent-browser\n")
+    return buffer.getvalue()
 
 
 @dataclass
@@ -193,6 +212,43 @@ class FakeWikiPage:
         }
 
 
+class FakeMarketplaceSettings:
+    max_upload_bytes = 20 * 1024 * 1024
+
+
+class FakeMarketplaceService:
+    def __init__(self):
+        self.settings = FakeMarketplaceSettings()
+        self.resolved_authorization = None
+        self.published = []
+
+    def resolve_principal(self, authorization):
+        self.resolved_authorization = authorization
+        if authorization == "Bearer publish-token":
+            return {"owner_handle": "bee", "scopes": ["publish"]}
+        return None
+
+    def publish_version(self, owner, name, data, *, version=None, principal=None):
+        if principal is None:
+            raise RuntimeError("principal required")
+        self.published.append(
+            {
+                "owner": owner,
+                "name": name,
+                "data": data,
+                "version": version,
+                "principal": principal,
+            }
+        )
+        return {
+            "owner": owner,
+            "package": name,
+            "version": version or "1.3.0",
+            "status": "published",
+            "size_bytes": len(data),
+            "content_hash": "abc123",
+        }
+
 class FakeWikiService:
     def search_pages(self, scope, query, limit=10, status="published"):
         return [{"slug": "intro", "title": "Intro", "summary": "summary", "snippet": query}]
@@ -212,6 +268,7 @@ def build_tool_service(max_output_chars=6000):
             document_repository=rag.document_repository,
             wiki_page_service=FakeWikiService(),
             conversation_service=None,
+            marketplace_service=FakeMarketplaceService(),
         ),
         MCPRuntimeConfig(max_output_chars=max_output_chars, max_events=10),
     )
@@ -228,6 +285,7 @@ def test_tool_list_is_curated_and_annotated():
         "doc_list",
         "doc_view",
         "doc_upload",
+        "plugin_upload",
         "chunk_list",
         "search_chunks",
         "rag_query",
@@ -301,6 +359,30 @@ def test_upload_document_requires_one_content_source():
     result = service.call_tool("doc_upload", {"kb_id": "kb-1", "filename": "note.md"})
     assert result.is_error
     assert result.structured_content["error"]["code"] == "invalid_arguments"
+
+
+def test_upload_plugin_tool_publishes_marketplace_bundle():
+    service = build_tool_service()
+    bundle = make_plugin_bundle()
+    uploaded = service.call_tool(
+        "plugin_upload",
+        {
+            "owner": "bee",
+            "name": "agent-browser",
+            "version": "1.3.0",
+            "publish_token": "publish-token",
+            "content_base64": base64.b64encode(bundle).decode("ascii"),
+        },
+    ).structured_content
+
+    assert uploaded["item"]["version"] == "1.3.0"
+    assert uploaded["item"]["status"] == "published"
+    assert uploaded["marketplace_url"] == "/marketplace/marketplace.json"
+    marketplace = service.services.marketplace_service
+    assert marketplace.resolved_authorization == "Bearer publish-token"
+    assert marketplace.published[0]["owner"] == "bee"
+    assert marketplace.published[0]["name"] == "agent-browser"
+    assert marketplace.published[0]["data"] == bundle
 
 
 def test_rag_query_and_wiki_tools():

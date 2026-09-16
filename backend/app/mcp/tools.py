@@ -11,6 +11,14 @@ from typing import Any, Callable
 from app.mcp.config import MCPRuntimeConfig
 from app.mcp.result import MCPToolError, MCPToolResult, error_result, sanitize_payload, success_result
 from app.mcp.runtime import MCPBackendServices
+from app.services.marketplace import (
+    MarketplaceAuthError,
+    MarketplaceConflictError,
+    MarketplaceError,
+    MarketplaceForbiddenError,
+    MarketplaceNotFoundError,
+    MarketplaceValidationError,
+)
 from app.services.memory.principal import Principal
 
 
@@ -37,6 +45,7 @@ class RAGMCPToolService:
             "doc_list": self._doc_list,
             "doc_view": self._doc_view,
             "doc_upload": self._doc_upload,
+            "plugin_upload": self._plugin_upload,
             "chunk_list": self._chunk_list,
             "search_chunks": self._search_chunks,
             "rag_query": self._rag_query,
@@ -187,6 +196,47 @@ class RAGMCPToolService:
         except ValueError as exc:
             raise MCPToolError("document_upload_validation_failed", str(exc)) from exc
         return {"item": item, "scope": scope.to_dict()}
+
+    def _plugin_upload(self, args: dict[str, Any]) -> dict[str, Any]:
+        owner = _clean(args.get("owner") or args.get("owner_handle"))
+        if not owner:
+            raise MCPToolError("invalid_arguments", "owner is required")
+        name = _required(args, "name")
+        token = _clean(args.get("publish_token") or args.get("marketplace_token") or args.get("token"))
+        authorization = _clean(args.get("authorization"))
+        if token:
+            authorization = f"Bearer {token}"
+        service = self._marketplace_service()
+        max_upload_bytes = int(getattr(getattr(service, "settings", None), "max_upload_bytes", self.config.max_upload_bytes))
+        data = _binary_upload_content(args, max_upload_bytes)
+        if not data:
+            raise MCPToolError("invalid_arguments", "plugin ZIP content cannot be empty")
+        try:
+            record = service.publish_version(
+                owner,
+                name,
+                data,
+                version=_clean(args.get("version")) or None,
+                principal=service.resolve_principal(authorization or None),
+            )
+        except MarketplaceAuthError as exc:
+            raise MCPToolError("marketplace_auth_required", str(exc)) from exc
+        except MarketplaceForbiddenError as exc:
+            raise MCPToolError("marketplace_forbidden", str(exc)) from exc
+        except MarketplaceConflictError as exc:
+            raise MCPToolError("marketplace_conflict", str(exc)) from exc
+        except MarketplaceNotFoundError as exc:
+            raise MCPToolError("marketplace_not_found", str(exc)) from exc
+        except MarketplaceValidationError as exc:
+            raise MCPToolError("marketplace_validation_failed", str(exc)) from exc
+        except MarketplaceError as exc:
+            raise MCPToolError("marketplace_error", str(exc)) from exc
+        return {
+            "item": record,
+            "marketplace_url": "/marketplace/marketplace.json",
+            "owner": owner,
+            "name": name,
+        }
 
     def _chunk_list(self, args: dict[str, Any]) -> dict[str, Any]:
         doc_id = _required(args, "doc_id")
@@ -348,6 +398,11 @@ class RAGMCPToolService:
             raise MCPToolError("service_unavailable", "Document repository is unavailable")
         return self.services.document_repository
 
+    def _marketplace_service(self):
+        if self.services.marketplace_service is None:
+            raise MCPToolError("service_unavailable", "Marketplace service is unavailable")
+        return self.services.marketplace_service
+
     def _wiki_service(self):
         if self.services.wiki_page_service is None:
             raise MCPToolError("service_unavailable", "Wiki service is unavailable")
@@ -395,6 +450,22 @@ def _tool_specs() -> dict[str, ToolSpec]:
                     "relative_path": "string",
                 },
                 ["kb_id", "filename"],
+            ),
+            write,
+        ),
+        "plugin_upload": ToolSpec(
+            "plugin_upload",
+            "Upload and publish a plugin ZIP to the Bee marketplace.",
+            _schema(
+                {
+                    "owner": {"type": "string", "description": "Marketplace publisher handle, for example bee or team-x."},
+                    "name": {"type": "string", "description": "Plugin package name from plugin.json."},
+                    "version": {"type": "string", "description": "Optional SemVer override; defaults to plugin.json version."},
+                    "publish_token": {"type": "string", "description": "Marketplace publish/admin token."},
+                    "content_base64": {"type": "string", "description": "Base64-encoded plugin ZIP bytes."},
+                    "file_path": {"type": "string", "description": "Optional server-local ZIP path to read and publish."},
+                },
+                ["owner", "name", "publish_token"],
             ),
             write,
         ),
@@ -450,6 +521,40 @@ def _dict_arg(args: dict[str, Any], name: str) -> dict[str, Any] | None:
         raise MCPToolError("invalid_arguments", f"{name} must be an object")
     return dict(value)
 
+
+def _binary_upload_content(args: dict[str, Any], max_upload_bytes: int) -> bytes:
+    present = [
+        name
+        for name in ("content_base64", "file_path")
+        if args.get(name) is not None and _clean(args.get(name))
+    ]
+    if len(present) != 1:
+        raise MCPToolError("invalid_arguments", "provide exactly one of content_base64 or file_path")
+    source = present[0]
+    raw = args[source]
+    if source == "content_base64":
+        try:
+            data = base64.b64decode(str(raw), validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise MCPToolError("invalid_arguments", "content_base64 must be valid base64") from exc
+        if len(data) > max_upload_bytes:
+            raise MCPToolError(
+                "upload_too_large",
+                f"plugin ZIP exceeds upload limit ({max_upload_bytes})",
+                detail={"size": len(data), "max_upload_bytes": max_upload_bytes},
+            )
+        return data
+    path = Path(str(raw)).expanduser()
+    if not path.exists() or not path.is_file():
+        raise MCPToolError("file_not_found", f"Plugin ZIP not found: {path}")
+    size = path.stat().st_size
+    if size > max_upload_bytes:
+        raise MCPToolError(
+            "upload_too_large",
+            f"plugin ZIP exceeds upload limit ({max_upload_bytes})",
+            detail={"size": size, "max_upload_bytes": max_upload_bytes},
+        )
+    return path.read_bytes()
 
 def _upload_content(args: dict[str, Any], max_upload_bytes: int) -> bytes:
     present = [
