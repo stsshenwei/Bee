@@ -53,7 +53,30 @@ Bee/
 
 ## 快速启动
 
-### 1. 启动后端
+### 1. 启动基础服务
+
+本地启动需要先准备数据库和 Redis：PostgreSQL/pgvector 作为应用数据与向量存储，Redis 作为 Celery broker。
+
+```powershell
+docker run --name bee-postgres `
+  -e POSTGRES_USER=rag `
+  -e POSTGRES_PASSWORD=rag `
+  -e POSTGRES_DB=rag `
+  -p 5432:5432 `
+  -d pgvector/pgvector:pg16
+
+docker run --name bee-redis `
+  -p 6379:6379 `
+  -d redis:7
+```
+
+如果容器已经创建过，直接启动即可：
+
+```powershell
+docker start bee-postgres bee-redis
+```
+
+### 2. 配置后端环境
 
 ```powershell
 cd backend
@@ -67,12 +90,43 @@ Copy-Item .env.example .env
 
 ```env
 OPENAI_API_KEY=your-api-key
-DATABASE_URL=postgresql://user:password@localhost:5432/bee
+DATABASE_URL=postgresql://rag:rag@localhost:5432/rag
+ASYNC_RUNTIME_ENABLED=true
+ASYNC_RUNTIME_MODE=celery
+REDIS_URL=redis://localhost:6379/0
+PROCESSING_WORKER_ENABLED=true
+ASYNC_RUNTIME_LOCAL_WORKER_ENABLED=false
 ```
 
-启动服务：
+### 3. 启动 Celery 队列
+
+先启动 Celery workers，再启动后端和前端。以下命令建议分别放在不同终端中执行；Windows 本地开发优先使用 `--pool=solo`。
 
 ```powershell
+cd backend
+.\.venv\Scripts\Activate.ps1
+.\.venv\Scripts\celery.exe -A app.workers.celery_app:celery_app worker -Q core --pool=solo --concurrency=1 --loglevel=info
+```
+
+```powershell
+cd backend
+.\.venv\Scripts\Activate.ps1
+.\.venv\Scripts\celery.exe -A app.workers.celery_app:celery_app worker -Q wiki --pool=solo --concurrency=1 --loglevel=info
+```
+
+```powershell
+cd backend
+.\.venv\Scripts\Activate.ps1
+.\.venv\Scripts\celery.exe -A app.workers.celery_app:celery_app worker -Q postprocess,enrichment,maintenance,shared --pool=solo --concurrency=1 --loglevel=info
+```
+
+### 4. 启动后端
+
+在新的终端中启动 API 服务：
+
+```powershell
+cd backend
+.\.venv\Scripts\Activate.ps1
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -84,7 +138,7 @@ curl http://localhost:8000/health
 
 完整环境变量清单（检索、解析、异步运行时、MCP、插件市场等）见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)。
 
-### 2. 启动前端
+### 5. 启动前端
 
 ```powershell
 cd frontend
@@ -95,7 +149,7 @@ npm run dev
 
 浏览器打开 `http://localhost:3000`：侧边栏提供 **对话**（`/chat`）、**知识库**（`/knowledge`）、**插件**（`/plugins`）三个工作区。
 
-### 3. 知识入库
+### 6. 知识入库
 
 在知识库页面走分阶段上传流程，或对 `backend/data/` 中的文件手动入库：
 
