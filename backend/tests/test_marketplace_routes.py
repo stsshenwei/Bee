@@ -80,6 +80,11 @@ class MarketplaceRoutesTests(unittest.TestCase):
                 files={"file": ("code-review.zip", make_bundle(), "application/zip")},
                 headers={"Authorization": "Bearer admin-token"},
             )
+            publish_other = client.post(
+                "/marketplace/packages/alice/agent-browser/versions",
+                files={"file": ("agent-browser.zip", make_bundle(name="agent-browser"), "application/zip")},
+                headers={"Authorization": "Bearer admin-token"},
+            )
             catalog = client.get("/marketplace/marketplace.json")
             packages = client.get("/marketplace/packages")
             detail = client.get("/marketplace/packages/alice/code-review")
@@ -98,12 +103,22 @@ class MarketplaceRoutesTests(unittest.TestCase):
 
         self.assertEqual(200, publish.status_code, publish.text)
         self.assertEqual("1.0.0", publish.json()["version"])
+        self.assertEqual(200, publish_other.status_code, publish_other.text)
 
         self.assertEqual(200, catalog.status_code)
         plugins = catalog.json()["plugins"]
-        self.assertEqual(1, len(plugins))
-        self.assertEqual("code-review", plugins[0]["name"])
-        self.assertEqual("./plugins/code-review", plugins[0]["source"])
+        self.assertEqual(2, len(plugins))
+        by_name = {plugin["name"]: plugin for plugin in plugins}
+        self.assertEqual(
+            {"source": "url", "url": "http://testserver/marketplace/plugins/code-review.git"},
+            by_name["code-review"]["source"],
+        )
+        self.assertNotIn("url", by_name["code-review"])
+        self.assertEqual(
+            {"source": "url", "url": "http://testserver/marketplace/plugins/agent-browser.git"},
+            by_name["agent-browser"]["source"],
+        )
+        self.assertNotIn("url", by_name["agent-browser"])
 
         self.assertEqual(200, packages.status_code)
         self.assertEqual("alice", packages.json()["items"][0]["owner"])
@@ -113,7 +128,7 @@ class MarketplaceRoutesTests(unittest.TestCase):
         self.assertEqual(["review"], detail.json()["components"]["skills"])
 
         self.assertEqual(200, snapshot_version.status_code)
-        self.assertEqual(1, snapshot_version.json()["package_count"])
+        self.assertEqual(2, snapshot_version.json()["package_count"])
 
         self.assertEqual(200, snapshot_zip.status_code)
         self.assertTrue(snapshot_zip.headers.get("etag", "").strip('"'))

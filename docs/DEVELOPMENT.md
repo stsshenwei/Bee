@@ -1,5 +1,51 @@
 # Development
 
+## Skill library setup and checks
+
+The library is available at `/skills`. Uploads use the existing marketplace publish/admin tokens.
+Workspace enable/disable requires the admin token; the dialog stores an entered token only in
+session storage (and can read an existing marketplace token). No token is embedded in a download URL.
+
+Chat use requires `AGENT_RUNTIME_SKILLS_ENABLED=true`, the corresponding chat runtime mode enabled,
+and the existing workspace `skills` capability enabled. Set that capability through `PUT /plugins/skills`
+with `{"enabled":true,"enabled_modes":["quick","reasoning","wiki","rag_wiki"]}` and the workspace query
+parameter. Existing narrower mode bindings remain unchanged until explicitly updated. Then enable a
+specific library version in its detail page and select it in the chat composer. Merely uploading a
+skill does not enable it.
+
+Optional limits: `SKILL_STORAGE_DIR` (default `backend/skill_packages`), `SKILL_MAX_UPLOAD_BYTES`
+(20 MiB), `SKILL_MAX_FILES` (1000), `SKILL_MAX_UNCOMPRESSED_BYTES` (100 MiB), `SKILL_MAX_FILE_BYTES`
+(20 MiB), `SKILL_MAX_MARKDOWN_BYTES` (1 MiB), `SKILL_MAX_PREVIEW_BYTES` (256 KiB), `SKILL_MAX_SELECTED`
+(8), `SKILL_MAX_SELECTED_MARKDOWN_BYTES` (256 KiB). All numeric limits must be positive.
+
+Skill script execution is disabled unless `AGENT_RUNTIME_SKILL_SANDBOX_MODE` is set to a supported
+Docker mode (`docker`, `docker-read-only`, or `docker-workspace-write`). The default is `disabled`.
+When enabled, build or provide the sandbox image named by `AGENT_RUNTIME_SKILL_SANDBOX_DOCKER_IMAGE`
+(default `bee-skill-sandbox:latest`; Dockerfile: `docker/Dockerfile.skill-sandbox`). The sandbox
+uses no network by default and applies timeout, memory, CPU, PID, stdin, stdout, stderr and output
+file limits through `AGENT_RUNTIME_SKILL_SANDBOX_*` environment variables. If Docker or the image is
+unavailable, script execution fails closed; read-only skill instruction loading still works.
+
+Focused checks from `backend` (use the valid local Python environment):
+
+```powershell
+$env:STREAM_MANAGER_TYPE='memory'
+$env:LANGFUSE_ENABLED='false'
+.venv-new/Scripts/python.exe -m pytest tests/test_skill_service.py tests/test_skill_routes.py tests/test_chat_library_runtime.py tests/test_chat_skill_routes.py tests/test_marketplace_routes.py tests/test_rag_api_routes.py
+```
+
+For sandbox-specific backend coverage:
+
+```powershell
+.venv-new/Scripts/python.exe -m pytest tests/test_skill_sandbox.py tests/test_skill_service.py tests/test_agent_runtime_prompts_tools.py tests/test_plugin_management.py
+```
+
+From `frontend`: `npx tsc --noEmit`, `npm run build`, and `node scripts/chat-history-state.test.mjs`.
+For isolated browser validation, run `python -m uvicorn tests.skill_ui_server:app --port 8301` from
+`backend`, `npm run start -- --port 3100` after the frontend build, then `node scripts/skills-smoke.mjs`.
+This uses installed Chrome and records desktop/390px/320px screenshots under `frontend/.artifacts/skills/`.
+Only temporary test uploads are created; it does not change the real catalog, corpus or credentials.
+
 This guide covers local development for the Next.js + FastAPI RAG application. The active backend store is PostgreSQL 16 with pgvector. SQLite, Chroma, and Milvus artifacts in the workspace are legacy data and are not used by normal startup.
 
 ## Prerequisites
@@ -68,7 +114,7 @@ Common optional env:
 - reports/state: `EVAL_DATASET_DIR`, `EVAL_REPORT_DIR`, `STORAGE_RESET_STATE_DIR`, `STORAGE_RUNTIME_LOCK`
 - MCP server: `MCP_TRANSPORT`, `MCP_HOST`, `MCP_PORT`, `MCP_SERVER_AUTH_TOKEN`, `MCP_TOOL_TIMEOUT_SECONDS`, `MCP_MAX_OUTPUT_CHARS`, `MCP_MAX_EVENTS`, `MCP_MAX_UPLOAD_BYTES`
 
-Plugin management uses PostgreSQL table `plugin_setting` for workspace-scoped UI settings. Environment values remain defaults and guardrails for the Plugins workspace, including `AGENT_RUNTIME_WEB_SEARCH_ENABLED`, `AGENT_RUNTIME_WEB_SEARCH_URL`, `AGENT_RUNTIME_WEB_FETCH_ENABLED`, `AGENT_RUNTIME_WEB_FETCH_ALLOWED_DOMAINS`, `AGENT_RUNTIME_DATA_ANALYSIS_ENABLED`, `AGENT_RUNTIME_DATABASE_QUERY_ENABLED`, `AGENT_RUNTIME_DATABASE_ALLOWED_SOURCES`, and `AGENT_RUNTIME_SKILLS_ENABLED`.
+Plugin management uses PostgreSQL table `plugin_setting` for workspace-scoped UI settings. Environment values remain defaults and guardrails for the Plugins workspace, including `AGENT_RUNTIME_WEB_SEARCH_ENABLED`, `AGENT_RUNTIME_WEB_SEARCH_URL`, `TAVILY_API_KEY`, `TAVILY_SEARCH_URL`, `AGENT_RUNTIME_WEB_FETCH_ENABLED`, `AGENT_RUNTIME_WEB_FETCH_ALLOWED_DOMAINS`, `AGENT_RUNTIME_DATA_ANALYSIS_ENABLED`, `AGENT_RUNTIME_DATABASE_QUERY_ENABLED`, `AGENT_RUNTIME_DATABASE_ALLOWED_SOURCES`, and `AGENT_RUNTIME_SKILLS_ENABLED`.
 
 Do not set old production storage variables such as `METADATA_DB_PATH`, `MEMORY_DB_PATH`, `EVAL_DB_PATH`, `MILVUS_URI`, `MILVUS_TOKEN`, `MILVUS_COLLECTION`, `MILVUS_BM25_ENABLED`, or `KG_MILVUS_*`; they are retired from production wiring.
 

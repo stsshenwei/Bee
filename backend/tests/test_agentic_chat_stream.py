@@ -10,7 +10,8 @@ from fastapi.testclient import TestClient
 
 from app.models.agent_runtime import AgentRuntimeEvent
 from tests.test_agentic_tools_workflow import EmptyGraphRetriever, FakeGraphRetriever, FakeRAGService as WorkflowFakeRAGService
-from tests.test_rag_api_routes import FakeCollection, FakeConversationService, FakeMemoryService, FakeRagService as RouteFakeRagService
+from tests.test_rag_api_routes import FakeConversationService, FakeMemoryService, FakeRagService as RouteFakeRagService
+from tests.test_runtime_config import postgres_runtime_patches
 
 
 def build_workflow(rag=None, graph_retriever=None):
@@ -194,12 +195,16 @@ class AgenticChatStreamRouteTests(unittest.TestCase):
                 "OPENAI_BASE_URL": "",
                 "VECTOR_STORE_DIR": str(Path(tmpdir) / "vector_db"),
                 "METADATA_DB_PATH": str(Path(tmpdir) / "metadata.sqlite3"),
+                "DATABASE_URL": "postgresql://rag:rag@localhost:5432/rag_test",
+                "POSTGRES_SCHEMA": "rag",
                 "RAG_DATA_DIR": str(Path(tmpdir) / "data"),
                 "AUTO_INGEST_ON_STARTUP": "false",
+                "STREAM_MANAGER_TYPE": "memory",
+                "LANGFUSE_ENABLED": "false",
                 **(env or {}),
             }
             with patch.dict(os.environ, full_env, clear=False):
-                with patch("app.services.retrieval.vector_store._create_or_load_collection", return_value=FakeCollection()):
+                with postgres_runtime_patches():
                     return importlib.import_module("app.main")
 
     def test_runtime_config_can_enable_chat_agent_without_rag_query_agent(self):

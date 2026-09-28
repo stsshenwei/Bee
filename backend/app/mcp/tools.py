@@ -233,7 +233,7 @@ class RAGMCPToolService:
             raise MCPToolError("marketplace_error", str(exc)) from exc
         return {
             "item": record,
-            "marketplace_url": "/marketplace/marketplace.json",
+            "marketplace_url": "/marketplace/git.git",
             "owner": owner,
             "name": name,
         }

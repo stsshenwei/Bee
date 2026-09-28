@@ -129,6 +129,7 @@ export type MemoryUpdate = MemoryRecord & {
 };
 
 export type ChatMessage = {
+  skillsLoaded?: { skill_id: string; name: string; version: string; sha256: string }[];
   id?: string;
   session_id?: string;
   conversation_id?: string;

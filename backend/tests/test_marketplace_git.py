@@ -1,4 +1,9 @@
 import tempfile
+import functools
+import http.server
+import shutil
+import subprocess
+import threading
 import unittest
 import zlib
 from pathlib import Path
@@ -61,6 +66,104 @@ class MarketplaceGitMirrorTests(MarketplaceGitTestBase):
         info_refs = (repo / "info" / "refs").read_text(encoding="utf-8")
         self.assertIn("refs/heads/main", info_refs)
         self.assertIn(f"refs/tags/snapshot-{revision}", info_refs)
+
+    def test_publish_creates_per_plugin_git_mirrors(self):
+        service, _ = self.build_service()
+        service.publish_version("alice", "code-review", make_bundle(), principal=service.resolve_principal("Bearer admin-token"))
+        service.publish_version(
+            "alice",
+            "agent-browser",
+            make_bundle(name="agent-browser", files={"skills/browser/SKILL.md": b"# browser\n"}),
+            principal=service.resolve_principal("Bearer admin-token"),
+        )
+
+        code_repo = service.plugin_git_repo_root("code-review")
+        browser_repo = service.plugin_git_repo_root("agent-browser")
+
+        self.assertTrue((code_repo / "HEAD").exists())
+        self.assertTrue((browser_repo / "HEAD").exists())
+        self.assertIn("refs/heads/main", (code_repo / "info" / "refs").read_text(encoding="utf-8"))
+        self.assertIn("refs/heads/main", (browser_repo / "info" / "refs").read_text(encoding="utf-8"))
+        self.assertNotEqual(read_repo_refs(code_repo)["refs/heads/main"], read_repo_refs(browser_repo)["refs/heads/main"])
+
+    def test_plugin_git_mirror_can_be_cloned_over_dumb_http(self):
+        if shutil.which("git") is None:
+            self.skipTest("git CLI is required for dumb HTTP clone verification")
+        service, root = self.build_service()
+        service.publish_version("alice", "code-review", make_bundle(), principal=service.resolve_principal("Bearer admin-token"))
+        handler = functools.partial(
+            http.server.SimpleHTTPRequestHandler,
+            directory=str(service.storage.plugin_git_dir),
+        )
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        clone_dir = root / "clone"
+        url = f"http://127.0.0.1:{server.server_address[1]}/code-review.git"
+
+        result = subprocess.run(
+            ["git", "clone", url, str(clone_dir)],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(
+            "main",
+            subprocess.check_output(["git", "-C", str(clone_dir), "branch", "--show-current"], text=True).strip(),
+        )
+        self.assertTrue((clone_dir / ".codebuddy-plugin" / "plugin.json").exists(), result.stderr)
+        self.assertTrue((clone_dir / "skills" / "review" / "SKILL.md").exists(), result.stderr)
+        self.assertFalse((clone_dir / "plugins").exists(), result.stderr)
+        self.assertNotIn("remote HEAD refers to nonexistent ref", result.stderr)
+
+    def test_rebuild_refreshes_missing_plugin_mirrors_when_revision_is_unchanged(self):
+        service, _ = self.build_service(git_enabled=False)
+        service.publish_version("alice", "code-review", make_bundle(), principal=service.resolve_principal("Bearer admin-token"))
+        revision = service.snapshot_version()["revision"]
+
+        settings = MarketplaceSettings(
+            marketplace_name="bee-plugins",
+            storage_dir=service.settings.storage_dir,
+            admin_token="admin-token",
+            git_mirror_enabled=True,
+        )
+        refreshed = MarketplaceService(
+            service.repository,
+            MarketplaceStorage(settings.storage_dir),
+            settings,
+        )
+        result = refreshed.rebuild_snapshot()
+
+        self.assertEqual(revision, result["revision"])
+        self.assertTrue((refreshed.plugin_git_repo_root("code-review") / "HEAD").exists())
+
+    def test_rebuild_refreshes_crlf_git_metadata_when_revision_is_unchanged(self):
+        service, _ = self.build_service()
+        service.publish_version("alice", "code-review", make_bundle(), principal=service.resolve_principal("Bearer admin-token"))
+        revision = service.snapshot_version()["revision"]
+        info_refs = service.plugin_git_repo_root("code-review") / "info" / "refs"
+        info_refs.write_bytes(info_refs.read_bytes().replace(b"\n", b"\r\n"))
+
+        settings = MarketplaceSettings(
+            marketplace_name="bee-plugins",
+            storage_dir=service.settings.storage_dir,
+            admin_token="admin-token",
+            git_mirror_enabled=True,
+        )
+        refreshed = MarketplaceService(
+            service.repository,
+            MarketplaceStorage(settings.storage_dir),
+            settings,
+        )
+        result = refreshed.rebuild_snapshot()
+
+        self.assertEqual(revision, result["revision"])
+        self.assertNotIn(b"\r\n", info_refs.read_bytes())
 
     def test_blob_objects_store_verifiable_content(self):
         service, _ = self.build_service()
@@ -182,7 +285,7 @@ class MarketplaceGitMirrorTests(MarketplaceGitTestBase):
 
 
 class MarketplaceGitRouteTests(MarketplaceGitTestBase):
-    def test_git_files_served_for_dumb_http_clone(self):
+    def import_main_with_service(self, service: MarketplaceService):
         import importlib
         import sys
         from types import SimpleNamespace
@@ -192,12 +295,6 @@ class MarketplaceGitRouteTests(MarketplaceGitTestBase):
         from tests.test_runtime_config import postgres_runtime_patches
 
         sys.modules.pop("app.main", None)
-        service, _ = self.build_service()
-        service.publish_version("alice", "code-review", make_bundle(), principal=service.resolve_principal("Bearer admin-token"))
-        repo = service.storage.git_dir
-        main_sha = read_repo_refs(repo)["refs/heads/main"]
-        object_rel = f"objects/{main_sha[:2]}/{main_sha[2:]}"
-
         with tempfile.TemporaryDirectory() as envdir:
             env = {
                 "OPENAI_API_KEY": "test-key",
@@ -213,19 +310,81 @@ class MarketplaceGitRouteTests(MarketplaceGitTestBase):
             with patch.dict(os.environ, env, clear=False):
                 with postgres_runtime_patches():
                     module = importlib.import_module("app.main")
-            module.rag_service = SimpleNamespace(marketplace_service=service, needs_reingest=lambda: False)
-            with TestClient(module.app) as client:
-                info_refs = client.get("/marketplace/git/info/refs")
-                head = client.get("/marketplace/git/HEAD")
-                blob_object = client.get(f"/marketplace/git/{object_rel}")
-                missing = client.get("/marketplace/git/objects/xx/missing")
+        module.rag_service = SimpleNamespace(marketplace_service=service, needs_reingest=lambda: False)
+        return module
+
+    def test_plugin_git_route_lazily_refreshes_missing_mirror(self):
+        service, _ = self.build_service(git_enabled=False)
+        service.publish_version("alice", "code-review", make_bundle(), principal=service.resolve_principal("Bearer admin-token"))
+        settings = MarketplaceSettings(
+            marketplace_name="bee-plugins",
+            storage_dir=service.settings.storage_dir,
+            admin_token="admin-token",
+            git_mirror_enabled=True,
+        )
+        refreshed = MarketplaceService(
+            service.repository,
+            MarketplaceStorage(settings.storage_dir),
+            settings,
+        )
+        module = self.import_main_with_service(refreshed)
+
+        with TestClient(module.app) as client:
+            info_refs = client.get("/marketplace/plugins/code-review.git/info/refs")
 
         self.assertEqual(200, info_refs.status_code)
         self.assertIn("refs/heads/main", info_refs.text)
+        self.assertTrue((refreshed.plugin_git_repo_root("code-review") / "HEAD").exists())
+
+    def test_plugin_git_route_lazily_refreshes_crlf_mirror_metadata(self):
+        service, _ = self.build_service()
+        service.publish_version("alice", "code-review", make_bundle(), principal=service.resolve_principal("Bearer admin-token"))
+        info_refs_path = service.plugin_git_repo_root("code-review") / "info" / "refs"
+        info_refs_path.write_bytes(info_refs_path.read_bytes().replace(b"\n", b"\r\n"))
+        module = self.import_main_with_service(service)
+
+        with TestClient(module.app) as client:
+            info_refs = client.get("/marketplace/plugins/code-review.git/info/refs")
+
+        self.assertEqual(200, info_refs.status_code)
+        self.assertIn("refs/heads/main", info_refs.text)
+        self.assertNotIn(b"\r\n", info_refs_path.read_bytes())
+
+    def test_git_files_served_for_dumb_http_clone(self):
+        service, _ = self.build_service()
+        service.publish_version("alice", "code-review", make_bundle(), principal=service.resolve_principal("Bearer admin-token"))
+        repo = service.storage.git_dir
+        main_sha = read_repo_refs(repo)["refs/heads/main"]
+        object_rel = f"objects/{main_sha[:2]}/{main_sha[2:]}"
+        module = self.import_main_with_service(service)
+        with TestClient(module.app) as client:
+            info_refs = client.get("/marketplace/git/info/refs")
+            info_refs_git_alias = client.get("/marketplace/git.git/info/refs")
+            plugin_info_refs = client.get("/marketplace/plugins/code-review.git/info/refs")
+            head = client.get("/marketplace/git/HEAD")
+            head_git_alias = client.get("/marketplace/git.git/HEAD")
+            plugin_head = client.get("/marketplace/plugins/code-review.git/HEAD")
+            blob_object = client.get(f"/marketplace/git/{object_rel}")
+            blob_object_git_alias = client.get(f"/marketplace/git.git/{object_rel}")
+            missing = client.get("/marketplace/git/objects/xx/missing")
+
+        self.assertEqual(200, info_refs.status_code)
+        self.assertIn("refs/heads/main", info_refs.text)
+        self.assertEqual(200, info_refs_git_alias.status_code)
+        self.assertEqual(info_refs.text, info_refs_git_alias.text)
+        self.assertEqual(200, plugin_info_refs.status_code)
+        self.assertIn("refs/heads/main", plugin_info_refs.text)
+        self.assertNotEqual(info_refs.text, plugin_info_refs.text)
         self.assertEqual(200, head.status_code)
         self.assertIn("ref: refs/heads/main", head.text)
+        self.assertEqual(200, head_git_alias.status_code)
+        self.assertEqual(head.text, head_git_alias.text)
+        self.assertEqual(200, plugin_head.status_code)
+        self.assertEqual(head.text, plugin_head.text)
         self.assertEqual(200, blob_object.status_code)
         self.assertEqual("application/octet-stream", blob_object.headers["content-type"])
+        self.assertEqual(200, blob_object_git_alias.status_code)
+        self.assertEqual(blob_object.content, blob_object_git_alias.content)
         self.assertEqual(404, missing.status_code)
 
 

@@ -1,5 +1,14 @@
 # Frontend Chat UI
 
+## Skill library selection
+
+The sidebar now includes `/skills`, with card browsing, upload review and `/skills/detail` for
+Markdown, files, versions, downloads and workspace activation. It follows the existing Bee visual tokens.
+Chat adds a skill picker for enabled pinned versions in the current knowledge workspace. Requests
+send optional `skill_refs`; answers show `skills_loaded` metadata and restore it from message history.
+New/opened conversations clear selections. Failed or unavailable skills produce an actionable error.
+See [skill-library.md](skill-library.md) for authorization, runtime limits and version semantics.
+
 ## Keyboard and Failure Resilience
 
 The knowledge layout revision keeps catalog cards compact (300px maximum desktop tracks) and removes the diagonal navigation arrow. Document tiles group file icon/title/actions at the top, status/selection beneath the summary, and date/type/chunk count at the bottom. Document detail puts the content first in the DOM and a supporting summary/metadata aside on the right; mobile stacks the aside after the content. Text preview uses normal page scrolling on a white surface over `--color-reader-canvas`, while raw text remains unchanged and the source path is expandable. Wiki navigation is 292px on wide screens; its article is left-aligned and uses the available reader width instead of the prior centered/narrow measure. `node scripts/knowledge-layout-smoke.mjs` covers these four surfaces at 375/1440/1880px; parse requests use a local fixture and never trigger backend processing.

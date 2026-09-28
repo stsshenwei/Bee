@@ -31,6 +31,11 @@ assert.equal(assistant.agentCompleted, false);
 assert.equal(assistant.stopped, true);
 assert.equal(assistant.sources.length, 1);
 
+const loadedSkills = [{ skill_id: "skill-1", name: "review", version: "1.0.0", sha256: "abc" }];
+const skillHistory = historyMessageToChatMessage({ ...assistant, metadata_json: { skills_loaded: [...loadedSkills, { markdown: "do not render untrusted malformed entries" }] } });
+assert.deepEqual(skillHistory.skillsLoaded, loadedSkills);
+assert.equal(assistant.skillsLoaded, undefined);
+
 const ragWiki = historyMessageToChatMessage({
   ...assistant,
   id: "msg-rag-wiki",

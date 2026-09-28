@@ -64,12 +64,15 @@ class PluginSetting:
 class PluginRuntimeEnvironment:
     web_search_enabled: bool = False
     web_search_endpoint: str = ""
+    tavily_api_key_configured: bool = False
     web_fetch_enabled: bool = False
     web_fetch_allowed_domains: tuple[str, ...] = ()
     data_analysis_enabled: bool = False
     database_query_enabled: bool = False
     database_allowed_sources: dict[str, str] = field(default_factory=dict)
     skills_enabled: bool = False
+    skill_sandbox_enabled: bool = False
+    skill_sandbox_mode: str = "disabled"
     wiki_tools_enabled: bool = False
     wiki_maintenance_tools_enabled: bool = False
 

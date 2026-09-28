@@ -2,6 +2,8 @@
 
 import { ChangeEvent, FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { ModalSurface } from "../components/ModalSurface";
+import { SkillPicker } from "../components/SkillPicker";
+import type { LoadedSkill, SkillActivation } from "../lib/skills-api";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -16,6 +18,7 @@ import type { AgentStreamEvent, ChatAttachment, ChatMessage, FeedbackState, Know
 type ChatMode = "quick" | "reasoning" | "wiki" | "rag_wiki";
 
 type StreamPayload = {
+  skills_loaded?: { items: LoadedSkill[] };
   token?: string;
   error?: string;
   stop?: { reason?: string };
@@ -77,6 +80,7 @@ export default function ChatPage() {
   const [suggestedQuestions, setSuggestedQuestions] = useState<string[]>([]);
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const [knowledgeMenuOpen, setKnowledgeMenuOpen] = useState(false);
+  const [selectedSkills, setSelectedSkills] = useState<SkillActivation[]>([]);
 
   const [docViewerOpen, setDocViewerOpen] = useState(false);
   const [docLoading, setDocLoading] = useState(false);
@@ -270,6 +274,7 @@ export default function ChatPage() {
       setPendingAttachments([]);
       setAttachmentError("");
       setChatMode("quick");
+      setSelectedSkills([]);
     }
     window.addEventListener("bee:new-chat", handleNewChat);
     return () => window.removeEventListener("bee:new-chat", handleNewChat);
@@ -277,6 +282,7 @@ export default function ChatPage() {
 
   useEffect(() => {
     function handleOpenConversation(event: Event) {
+      setSelectedSkills([]);
       const sessionId = (event as CustomEvent<{ sessionId?: string }>).detail?.sessionId || window.localStorage.getItem("bee:conversationId") || "";
       if (!sessionId) return;
       abortControllerRef.current?.abort();
@@ -330,6 +336,8 @@ export default function ChatPage() {
       updateAssistantMessage(assistantId, (message) => ({ ...message, content: `后端错误: ${data.error}`, agentCompleted: true, is_completed: true }));
     } else if (data.stop) {
       updateAssistantMessage(assistantId, (message) => ({ ...message, stopped: true, agentCompleted: true, is_completed: true }));
+    } else if (data.skills_loaded) {
+      updateAssistantMessage(assistantId, (message) => ({ ...message, skillsLoaded: data.skills_loaded?.items }));
     } else if (data.sources) {
       updateAssistantMessage(assistantId, (message) => ({ ...message, sources: data.sources }));
     } else if (data.reasoning) {
@@ -436,12 +444,16 @@ export default function ChatPage() {
           memory_enabled: true,
           temporary: false,
           chat_mode: submittedMode,
+          skill_refs: selectedSkills.map(({ skill_id, version }) => ({ skill_id, version })),
           knowledge_base_ids: submittedKnowledgeBaseIds.length ? submittedKnowledgeBaseIds : undefined,
           attachment_ids: submittedAttachmentIds.length ? submittedAttachmentIds : undefined,
         }),
         signal: controller.signal,
       });
-      if (!res.ok || !res.body) throw new Error(`请求失败: ${res.status}`);
+      if (!res.ok || !res.body) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(typeof data.detail === "string" ? data.detail : data.detail?.message || `请求失败: ${res.status}`);
+      }
       await consumeSseResponse(res);
       markAssistantCompleted(currentAssistantMessageIdRef.current || currentAssistantMessageId || undefined);
       const finishedSessionId = conversationIdRef.current;
@@ -727,6 +739,7 @@ export default function ChatPage() {
           return (
             <article key={index} className={`message-row ${message.role}`}>
               <div className="message-content">
+                {message.skillsLoaded?.length ? <div className="skill-loaded">已加载技能：{message.skillsLoaded.map(skill => <a key={skill.skill_id} href={`/skills/detail?id=${encodeURIComponent(skill.skill_id)}`}>{skill.name} v{skill.version}</a>)}</div> : null}
                 {message.agentEvents?.length ? (
                   <AgentTimeline message={message} streaming={loading && index === messages.length - 1 && !message.agentCompleted} />
                 ) : null}
@@ -829,6 +842,7 @@ export default function ChatPage() {
           </div>
         ) : null}
         <div className="composer-toolbar">
+          <SkillPicker workspaceId={knowledgeBases.find(kb => effectiveKnowledgeBaseIds.includes(kb.id))?.workspace_id} selected={selectedSkills} onChange={setSelectedSkills} disabled={loading} />
           <div
             className={`composer-mode-select ${modeMenuOpen ? "open" : ""}`}
             onBlur={(event) => {

@@ -3,6 +3,8 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+import json
 
 from app.models.knowledge_base import KnowledgeBaseScope
 from app.models.agent_runtime import AgentRuntimeConfig, resolve_chat_runtime_policy
@@ -383,6 +385,34 @@ class AgentRuntimePromptsToolsTests(unittest.TestCase):
             result = registry.execute(name, args, context)
             self.assertFalse(result.success)
             self.assertIn("unavailable", result.metadata["status"])
+
+    def test_web_search_tool_uses_tavily_provider_when_api_key_is_supplied(self):
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return b'{"results":[{"title":"Redis docs","url":"https://docs.example.com/redis","content":"Redis docs","score":0.8}]}'
+
+        registry = build_default_tool_registry(
+            enabled_tools=("web_search",),
+            max_output_chars=1000,
+            skills_enabled=False,
+            web_search_enabled=True,
+            tavily_api_key="tvly-test-key",
+        )
+        context = RuntimeToolContext("q", FakeRAG().default_scope, FakeRAG())
+
+        with patch("urllib.request.urlopen", return_value=Response()):
+            result = registry.execute("web_search", {"query": "redis", "top_k": 2}, context)
+
+        self.assertTrue(result.success)
+        payload = json.loads(result.output)
+        self.assertEqual("Redis docs", payload["results"][0]["title"])
+        self.assertEqual(1, result.metadata["result_count"])
 
     def test_data_analysis_tool_describes_inline_records_when_enabled(self):
         result = DataAnalysisTool(enabled=True).execute(

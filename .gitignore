@@ -23,6 +23,7 @@ backend/.venv*/
 backend/log/
 backend/*.log
 backend/vector_db/
+backend/skill_packages/
 frontend/.next/
 frontend/tsconfig.tsbuildinfo
 frontend/*.log

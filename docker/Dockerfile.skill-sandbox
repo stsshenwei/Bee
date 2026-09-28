@@ -1,0 +1,10 @@
+﻿FROM python:3.11-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends bash nodejs npm jq \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd -g 1000 sandbox \
+    && useradd -u 1000 -g sandbox -m -s /usr/sbin/nologin sandbox
+
+WORKDIR /workspace/skill
+USER sandbox

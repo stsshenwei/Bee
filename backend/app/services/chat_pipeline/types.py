@@ -14,6 +14,7 @@ class StageId:
     QUERY_UNDERSTAND = "query_understand"
     RETRIEVE = "retrieve"
     RECALL_PARENT_CONTEXT = "recall_parent_context"
+    WEB_SEARCH_FALLBACK = "web_search_fallback"
     FILTER_TOP_K = "filter_top_k"
     EMIT_SOURCES = "emit_sources"
     EMIT_REASONING = "emit_reasoning"
@@ -32,6 +33,7 @@ QUICK_RAG_STAGE_IDS: tuple[str, ...] = (
     StageId.QUERY_UNDERSTAND,
     StageId.RETRIEVE,
     StageId.RECALL_PARENT_CONTEXT,
+    StageId.WEB_SEARCH_FALLBACK,
     StageId.EMIT_SOURCES,
     StageId.EMIT_REASONING,
     StageId.EMIT_AGENT_TRACE,
@@ -77,6 +79,17 @@ class ChatPipelineState:
     child_hits: list[dict[str, Any]] = field(default_factory=list)
     hits: list[dict[str, Any]] = field(default_factory=list)
     sources: list[dict[str, Any]] = field(default_factory=list)
+    web_fallback_used: bool = False
+    web_fallback_sources: list[dict[str, Any]] = field(default_factory=list)
+    web_fallback_context: str = ""
+    web_fallback_terminal_answer: str = ""
+    web_fallback_metadata: dict[str, Any] = field(default_factory=dict)
+    web_search_sources: list[dict[str, Any]] = field(default_factory=list)
+    web_search_context: str = ""
+    web_search_metadata: dict[str, Any] = field(default_factory=dict)
+    web_search_future: Any | None = None
+    web_search_executor: Any | None = None
+    quick_web_search_enabled: bool = False
     reasoning: dict[str, Any] = field(default_factory=dict)
     agent_events: list[dict[str, Any]] = field(default_factory=list)
     agent_events_truncated: bool = False
@@ -100,6 +113,7 @@ class ChatPipelineRuntime:
     rag_service: Any
     conversation_service: Any | None = None
     memory_service: Any | None = None
+    web_search_fallback_service: Any | None = None
     event_bus: ChatEventBus | None = None
     stream_identity: StreamIdentity | None = None
     stop_signal: Any | None = None

@@ -97,15 +97,75 @@ class MarketplacePublishTests(MarketplaceServiceTestBase):
         self.assertIn("plugins/code-review/skills/review/SKILL.md", names)
         self.assertIn("plugins/code-review/.codebuddy-plugin/plugin.json", names)
 
-    def test_catalog_lists_public_package_with_relative_source(self):
+    def test_catalog_lists_public_package_with_url_source_object(self):
         self.service.publish_version("alice", "code-review", make_bundle(), principal=self.principal)
         catalog = self.service.catalog_document()
         self.assertEqual("bee-plugins", catalog["name"])
         entries = catalog["plugins"]
         self.assertEqual(1, len(entries))
         self.assertEqual("code-review", entries[0]["name"])
-        self.assertEqual("./plugins/code-review", entries[0]["source"])
+        self.assertEqual({"source": "url", "url": ""}, entries[0]["source"])
+        self.assertNotIn("url", entries[0])
         self.assertEqual("alice", entries[0]["author"]["name"])
+
+    def test_catalog_exposes_plugin_capability_paths_for_url_marketplace_installers(self):
+        manifest = {
+            "name": "code-review",
+            "version": "1.0.0",
+            "description": "Review code",
+            "skills": ["./skills/review"],
+            "rules": ["./rules/review.md"],
+            "agents": ["./agents/reviewer.md"],
+            "hooks": "./hooks/hooks.json",
+        }
+        self.service.publish_version(
+            "alice",
+            "code-review",
+            make_bundle(
+                manifest=manifest,
+                files={
+                    "skills/review/SKILL.md": b"# review",
+                    "rules/review.md": b"# rule",
+                    "agents/reviewer.md": b"# agent",
+                    "hooks/hooks.json": b"{}",
+                },
+            ),
+            principal=self.principal,
+        )
+
+        entry = self.service.catalog_document()["plugins"][0]
+
+        self.assertEqual(["./skills/review"], entry["skills"])
+        self.assertEqual(["./rules/review.md"], entry["rules"])
+        self.assertEqual(["./agents/reviewer.md"], entry["agents"])
+        self.assertEqual("./hooks/hooks.json", entry["hooks"])
+
+    def test_catalog_includes_plugin_git_url_when_public_base_url_is_configured(self):
+        settings = MarketplaceSettings(
+            marketplace_name="bee-plugins",
+            storage_dir=str(self.storage_root),
+            admin_token="admin-token",
+            public_base_url="https://bee.example",
+        )
+        service = MarketplaceService(
+            self.repository,
+            MarketplaceStorage(settings.storage_dir),
+            settings,
+        )
+        service.publish_version("alice", "code-review", make_bundle(), principal=self.principal)
+        catalog = service.catalog_document()
+        snapshot_zip = self.storage_root / "snapshots" / "snapshot.zip"
+
+        expected_source = {
+            "source": "url",
+            "url": "https://bee.example/marketplace/plugins/code-review.git",
+        }
+        self.assertEqual(expected_source, catalog["plugins"][0]["source"])
+        self.assertNotIn("url", catalog["plugins"][0])
+        with zipfile.ZipFile(snapshot_zip) as archive:
+            embedded = json.loads(archive.read(".codebuddy-plugin/marketplace.json").decode("utf-8"))
+        self.assertEqual(expected_source, embedded["plugins"][0]["source"])
+        self.assertNotIn("url", embedded["plugins"][0])
 
     def test_catalog_relative_source_file_can_be_served(self):
         self.service.publish_version("alice", "code-review", make_bundle(), principal=self.principal)

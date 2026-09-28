@@ -271,6 +271,54 @@ class GrepThenSkipsDeepReadCompletions:
         return FakeResponse(FakeMessage(content="Redis is used by API Gateway."))
 
 
+class WebSearchFirstThenKnowledgeCompletions:
+    def __init__(self):
+        self.calls = 0
+
+    def create(self, **kwargs):
+        self.calls += 1
+        if self.calls == 1:
+            return FakeResponse(
+                FakeMessage(
+                    tool_calls=[
+                        {
+                            "id": "web-1",
+                            "type": "function",
+                            "function": {
+                                "name": "web_search",
+                                "arguments": '{"query":"Redis usage","top_k":3}',
+                            },
+                        }
+                    ]
+                )
+            )
+        if self.calls == 2:
+            return FakeResponse(
+                FakeMessage(
+                    tool_calls=[
+                        {
+                            "id": "grep-1",
+                            "type": "function",
+                            "function": {"name": "grep_chunks", "arguments": '{"query":"Redis|API Gateway","top_k":2}'},
+                        }
+                    ]
+                )
+            )
+        if self.calls == 3:
+            return FakeResponse(
+                FakeMessage(
+                    tool_calls=[
+                        {
+                            "id": "read-1",
+                            "type": "function",
+                            "function": {"name": "list_knowledge_chunks", "arguments": '{"chunk_ids":["c1"]}'},
+                        }
+                    ]
+                )
+            )
+        return FakeResponse(FakeMessage(content="Redis is used by API Gateway."))
+
+
 class FakeChat:
     def __init__(self, completions=None):
         self.completions = completions or FakeCompletions()
@@ -588,6 +636,27 @@ class AgentRuntimeLoopTests(unittest.TestCase):
 
         self.assertIn("RequireDeepRead", stages)
         self.assertEqual(["grep_chunks", "list_knowledge_chunks"], tool_names)
+
+    def test_reasoning_blocks_web_search_until_knowledge_base_was_checked(self):
+        runtime = build_runtime(
+            completions=WebSearchFirstThenKnowledgeCompletions(),
+            enabled_tools=("grep_chunks", "knowledge_search", "list_knowledge_chunks", "web_search"),
+        )
+        runtime.config.web_search_enabled = True
+        runtime.config.enabled_tools = tuple(
+            dict.fromkeys((*runtime.config.enabled_tools, "web_search"))
+        )
+        runtime.config.max_iterations = 5
+
+        events = list(runtime.stream_query_events("What uses Redis?", scope=runtime.rag_service.default_scope))
+        stages = [event.payload.get("stage") for event in events if event.event_type == "agent_trace"]
+        tool_names = [event.payload.get("tool") for event in events if event.event_type == "agent_tool_call"]
+        final = [event for event in events if event.event_type == "final"][-1]
+
+        self.assertIn("RequireKnowledgeBaseBeforeWebSearch", stages)
+        self.assertEqual(["grep_chunks", "list_knowledge_chunks"], tool_names)
+        self.assertNotIn("web_search", tool_names)
+        self.assertEqual("Redis is used by API Gateway.", final.payload["answer"])
 
     def test_domain_events_are_ordered_and_sanitized(self):
         runtime = build_runtime()

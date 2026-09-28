@@ -55,6 +55,8 @@ const TOOL_LABELS: Record<string, string> = {
   wiki_read_page: "阅读 Wiki 页面",
   wiki_read_source_doc: "读取 Wiki 来源",
   read_skill: "读取技能说明",
+  execute_skill: "执行技能脚本",
+  execute_skill_script: "执行技能脚本",
   RawRAGTool: "检索知识库",
   KeywordSearchTool: "搜索关键词",
   GraphRetrieverTool: "查询图谱证据",
@@ -663,6 +665,16 @@ function domainEventDetail(event: AgentStreamEvent): string | undefined {
 }
 
 function toolObservationSummary(event: AgentStreamEvent): string {
+  if (event.tool === "execute_skill" || event.tool === "execute_skill_script") {
+    const metadata = asRecord(event.metadata);
+    const sandbox = asRecord(metadata.sandbox);
+    const mode = stringValue(sandbox.mode);
+    const exitCode = numberValue(metadata.exit_code);
+    const timedOut = booleanValue(metadata.timed_out);
+    if (timedOut) return mode ? `技能脚本超时（${mode}）` : "技能脚本超时";
+    if (event.status === "failed") return mode ? `技能脚本执行失败（${mode}）` : "技能脚本执行失败";
+    return exitCode !== undefined ? `技能脚本退出码 ${exitCode}${mode ? `（${mode}）` : ""}` : event.outputSummary || "技能脚本已执行";
+  }
   if (event.tool === "wiki_search") {
     const pages = event.counts?.resultCount ?? countVisibleSourceTitles(event.sourceTitles);
     return pages > 0 ? `命中 ${pages} 个 Wiki 页面` : "未命中 Wiki 页面";
@@ -691,6 +703,20 @@ function toolObservationSummary(event: AgentStreamEvent): string {
 }
 
 function toolResultDetail(event: AgentStreamEvent): string | undefined {
+  if (event.tool === "execute_skill" || event.tool === "execute_skill_script") {
+    const metadata = asRecord(event.metadata);
+    const sandbox = asRecord(metadata.sandbox);
+    const parts = [
+      stringValue(metadata.skill_name) ? `技能：${stringValue(metadata.skill_name)}` : "",
+      stringValue(metadata.script_path) ? `脚本：${stringValue(metadata.script_path)}` : "",
+      stringValue(sandbox.backend) ? `沙箱：${stringValue(sandbox.backend)}` : "",
+      stringValue(sandbox.mode) ? `模式：${stringValue(sandbox.mode)}` : "",
+      numberValue(metadata.exit_code) !== undefined ? `退出码：${numberValue(metadata.exit_code)}` : "",
+      booleanValue(metadata.timed_out) ? "已超时" : "",
+      booleanValue(sandbox.stdout_truncated) || booleanValue(sandbox.stderr_truncated) ? "输出已截断" : "",
+    ].filter(Boolean);
+    return parts.join("；") || event.outputSummary;
+  }
   const counts = event.counts || {};
   if (event.tool === "wiki_search") {
     const pages = counts.resultCount ?? countVisibleSourceTitles(event.sourceTitles);

@@ -38,6 +38,7 @@ from app.services.agent.agent_prompt_templates import (
 )
 from app.services.agent.agent_runtime_spans import AgentRuntimeSpanRepository
 from app.services.agent.agent_runtime_tools import RuntimeToolContext, ToolRegistry
+from app.services.agent.runtime_skills import RequestSkillsManager, RuntimeSkillError
 from app.services.infrastructure.logging_config import get_trace_id, sanitize_payload, truncate_text
 from app.services.infrastructure.observability import activate_observation, get_observability_sink
 
@@ -80,6 +81,7 @@ class AgentRuntime:
         scope: KnowledgeBaseScope | None = None,
         attachments: list[dict[str, Any]] | None = None,
         mode: str = "reasoning",
+        resolved_skills: tuple = (),
     ) -> Generator[AgentRuntimeEvent, None, None]:
         yield from self.execute(
             question,
@@ -88,6 +90,7 @@ class AgentRuntime:
             scope=scope,
             attachments=attachments,
             mode=mode,
+            resolved_skills=resolved_skills,
         )
 
     def execute(
@@ -99,11 +102,13 @@ class AgentRuntime:
         scope: KnowledgeBaseScope | None = None,
         attachments: list[dict[str, Any]] | None = None,
         mode: str = "reasoning",
+        resolved_skills: tuple = (),
     ) -> Generator[AgentRuntimeEvent, None, None]:
         scope = scope or self.rag_service.default_scope
         policy = resolve_chat_runtime_policy(mode, self.config)
         yield from self.execute_loop(
             question,
+            resolved_skills=resolved_skills,
             policy=policy,
             conversation_context=conversation_context,
             memory_context=memory_context,
@@ -120,7 +125,11 @@ class AgentRuntime:
         memory_context: str | None = None,
         scope: KnowledgeBaseScope,
         attachments: list[dict[str, Any]] | None = None,
+        resolved_skills: tuple = (),
     ) -> Generator[AgentRuntimeEvent, None, None]:
+        if resolved_skills and not self.config.skills_enabled:
+            raise RuntimeSkillError("Runtime skills are disabled")
+        request_skills = RequestSkillsManager(self.skills_manager, resolved_skills) if resolved_skills else self.skills_manager
         run_id = uuid4().hex
         event_sequence = AgentEventSequencer()
         event_bus = AgentEventBus()
@@ -170,7 +179,7 @@ class AgentRuntime:
             scope=scope,
             rag_service=self.rag_service,
             graph_retriever=self.graph_retriever,
-            skills_manager=self.skills_manager,
+            skills_manager=request_skills,
             state=state,
         )
         messages = self._build_messages(
@@ -182,7 +191,10 @@ class AgentRuntime:
             policy=policy,
             contexts=preloaded_context,
             answer_guidance=answer_guidance,
+            request_skills=request_skills,
         )
+        if resolved_skills:
+            yield AgentRuntimeEvent("skills_loaded", {"items": [item.public_metadata() for item in resolved_skills]})
         tools = self.tool_registry.function_definitions(self._allowed_registered_tools(policy))
         root_span = self.span_repository.start_span(
             run_id=run_id,
@@ -352,6 +364,24 @@ class AgentRuntime:
                     messages.append({"role": "user", "content": "Please continue by using an available tool or provide a final answer."})
                     self.span_repository.finish_span(round_span, status="partial", output={"empty_retry": empty_retries})
                     obs_round.finish(output={"empty_retry": empty_retries, "status": "partial"})
+                    continue
+
+                if self._should_block_web_search_until_knowledge_base_checked(tool_calls, state, policy):
+                    self._append_knowledge_base_before_web_guard_message(messages, question)
+                    yield self._record_trace(
+                        trace,
+                        "RequireKnowledgeBaseBeforeWebSearch",
+                        "running",
+                        "Web search is available only after knowledge-base retrieval and deep reading are insufficient.",
+                        metadata={
+                            "round": round_number,
+                            "trace_id": get_trace_id(),
+                            "policy": policy.mode,
+                            "knowledge_base_first_required": True,
+                        },
+                    )
+                    self.span_repository.finish_span(round_span, status="partial", output={"guard": "knowledge_base_before_web_search"})
+                    obs_round.finish(output={"guard": "knowledge_base_before_web_search", "status": "partial"})
                     continue
 
                 if self._should_block_tool_calls_for_grep_first(tool_calls, state, policy):
@@ -1389,6 +1419,7 @@ class AgentRuntime:
         policy: ChatRuntimePolicy | None = None,
         contexts: list[dict[str, Any]] | str | None = None,
         answer_guidance: str = "",
+        request_skills=None,
     ) -> list[dict[str, Any]]:
         policy = policy or resolve_chat_runtime_policy("reasoning", self.config)
         system_prompt = self.prompt_catalog.render(
@@ -1397,7 +1428,7 @@ class AgentRuntime:
             web_search_enabled=self.config.web_search_enabled,
             knowledge_bases=scope_to_prompt_kbs(scope, getattr(self.rag_service, "knowledge_base_service", None)),
             tools=[item for item in self.tool_registry.metadata() if item.get("name") in set(self._allowed_registered_tools(policy))],
-            skills=self.skills_manager.metadata() if self.skills_manager is not None else [],
+            skills=(request_skills or self.skills_manager).metadata() if (request_skills or self.skills_manager) is not None else [],
         )
         knowledge_bases = scope_to_prompt_kbs(scope, getattr(self.rag_service, "knowledge_base_service", None))
         user_content = self.context_catalog.render(
@@ -1412,7 +1443,11 @@ class AgentRuntime:
             knowledge_bases=knowledge_bases,
             answer_guidance=answer_guidance,
         )
-        return [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_content}]
+        messages = [{"role": "system", "content": system_prompt}]
+        if isinstance(request_skills, RequestSkillsManager) and request_skills.resolved:
+            messages.append({"role": "user", "content": request_skills.instruction_message()})
+        messages.append({"role": "user", "content": user_content})
+        return messages
 
     def _call_model(
         self,
@@ -1626,6 +1661,26 @@ class AgentRuntime:
     def _should_block_for_grep_first(self, state: dict[str, Any], policy: ChatRuntimePolicy) -> bool:
         return False
 
+    def _should_block_web_search_until_knowledge_base_checked(
+        self,
+        tool_calls: list[dict[str, Any]],
+        state: dict[str, Any],
+        policy: ChatRuntimePolicy,
+    ) -> bool:
+        if policy.quick:
+            return False
+        tool_names = [str((call.get("function") or {}).get("name") or "") for call in tool_calls]
+        if "web_search" not in tool_names:
+            return False
+        if "web_search" not in set(self._allowed_registered_tools(policy)):
+            return False
+        if not _question_needs_knowledge_base_check(str(state.get("question") or "")):
+            return False
+        has_searched_kb = bool(state.get("grep_first_performed") or state.get("semantic_search_performed"))
+        has_candidates = bool(state.get("search_candidate_ids"))
+        has_deep_read = bool(state.get("deep_read_ids"))
+        return not ((has_searched_kb and not has_candidates) or has_deep_read)
+
     def _should_block_tool_calls_for_grep_first(
         self,
         tool_calls: list[dict[str, Any]],
@@ -1653,6 +1708,20 @@ class AgentRuntime:
                     "Use your language and domain knowledge to include "
                     "synonyms, aliases, abbreviations, English names, legacy names, product names, and time/action "
                     f"variants for this question: {question}"
+                ),
+            }
+        )
+
+    def _append_knowledge_base_before_web_guard_message(self, messages: list[dict[str, Any]], question: str) -> None:
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "Runtime guard: web_search cannot be the first evidence step for this factual or domain-specific "
+                    "question. Search the selected knowledge base first with grep_chunks and/or knowledge_search, "
+                    "then deep-read relevant results with list_knowledge_chunks or get_document_info. Use web_search "
+                    "only after the knowledge-base evidence is empty or insufficient. "
+                    f"Question: {question}"
                 ),
             }
         )
@@ -1857,6 +1926,31 @@ def _question_needs_exact_grep_anchor(question: str) -> bool:
         r"[A-Za-z0-9]+:[A-Za-z0-9.]+",
     ]
     return any(re.search(pattern, text) for pattern in exact_patterns)
+
+
+def _question_needs_knowledge_base_check(question: str) -> bool:
+    text = re.sub(r"\s+", " ", str(question or "").strip())
+    if not text:
+        return False
+    lowered = text.lower()
+    direct_chat = {
+        "hi",
+        "hello",
+        "hey",
+        "thanks",
+        "thank you",
+        "你好",
+        "您好",
+        "谢谢",
+        "多谢",
+        "早上好",
+        "晚上好",
+    }
+    if lowered in direct_chat:
+        return False
+    if len(text) <= 8 and any(item in text for item in ("你好", "谢谢", "嗨", "hi", "hello")):
+        return False
+    return True
 
 
 def _is_unsupported_parallel_tool_calls_error(exc: Exception) -> bool:

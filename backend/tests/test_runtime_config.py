@@ -55,6 +55,9 @@ def postgres_runtime_patches():
         "app.services.evaluation.postgres_evaluation_repository.inspect_postgres_startup_storage",
     )
     with ExitStack() as stack:
+        # Startup tests must not bootstrap tokens into a live database from .env.
+        stack.enter_context(patch("app.services.marketplace.postgres_marketplace_repository.PostgresMarketplaceRepository.upsert_token", return_value=None))
+        stack.enter_context(patch("app.services.skills.postgres_repository.PostgresSkillRepository.initialize_schema", return_value=None))
         for target in inspection_targets:
             stack.enter_context(patch(target, return_value={"ready": True}))
         stack.enter_context(
@@ -129,6 +132,12 @@ class RuntimeConfigTests(unittest.TestCase):
                 "RAG_DATA_DIR": str(Path(tmpdir) / "data"),
                 "RERANKER_TOP_N": "8",
                 "AGENTIC_RETRIEVAL_ENABLED": "false",
+                "AGENT_RUNTIME_WEB_SEARCH_ENABLED": "false",
+                "AGENT_RUNTIME_WEB_SEARCH_URL": "",
+                "WEB_SEARCH_FALLBACK_ENABLED": "false",
+                "WEB_SEARCH_FALLBACK_URL": "",
+                "TAVILY_API_KEY": "",
+                "TAVILY_SEARCH_URL": "",
                 "CHAT_AGENTIC_WORKFLOW_ENABLED": "false",
                 "AGENT_TRACE_STREAM_ENABLED": "false",
                 "RERANKER_ENABLED": "false",

@@ -1,0 +1,67 @@
+{
+  "measurements": [
+    {
+      "name": "upload-desktop",
+      "width": 1440,
+      "scrollWidth": 1440
+    },
+    {
+      "name": "catalog-desktop",
+      "width": 1440,
+      "scrollWidth": 1440
+    },
+    {
+      "name": "detail-desktop",
+      "width": 1440,
+      "scrollWidth": 1440
+    },
+    {
+      "name": "detail-390",
+      "width": 390,
+      "scrollWidth": 390
+    },
+    {
+      "name": "catalog-390",
+      "width": 390,
+      "scrollWidth": 390
+    },
+    {
+      "name": "upload-390",
+      "width": 390,
+      "scrollWidth": 390
+    },
+    {
+      "name": "detail-320",
+      "width": 320,
+      "scrollWidth": 320
+    },
+    {
+      "name": "catalog-320",
+      "width": 320,
+      "scrollWidth": 320
+    },
+    {
+      "name": "upload-320",
+      "width": 320,
+      "scrollWidth": 320
+    },
+    {
+      "name": "chat-skills-320",
+      "width": 320,
+      "scrollWidth": 320
+    }
+  ],
+  "errors": [],
+  "checks": [
+    "upload",
+    "catalog",
+    "detail",
+    "download",
+    "activation",
+    "files",
+    "source",
+    "mobile",
+    "escape",
+    "chat-selection"
+  ]
+}

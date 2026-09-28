@@ -45,6 +45,13 @@ class MarketplaceStorage:
     def git_dir(self) -> Path:
         return self.root / "git"
 
+    @property
+    def plugin_git_dir(self) -> Path:
+        return self.root / "plugin-git"
+
+    def plugin_git_repo_dir(self, name: str) -> Path:
+        return self.plugin_git_dir / f"{name}.git"
+
     def bundle_path(self, owner: str, name: str, version: str) -> Path:
         return self.bundles_dir / owner / name / f"{version}.zip"
 

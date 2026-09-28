@@ -28,10 +28,12 @@ Distribution (read):
 
 | Method | Path | Description |
 |---|---|---|
-| GET | `/marketplace/marketplace.json` | CodeBuddy-compatible catalog of public packages (relative-path entries). |
+| GET | `/marketplace/marketplace.json` | CodeBuddy-compatible catalog of public packages. Each plugin entry exposes `source` as `{source: "url", url: "<per-plugin git URL>"}` for click-to-install clients. |
 | GET | `/marketplace/snapshot/version` | Snapshot freshness payload `{revision, built_at, package_count}` (versionUrl). |
 | GET | `/marketplace/snapshot.zip` | Whole-marketplace ZIP (catalog + plugin files), with ETag/Last-Modified. |
 | GET | `/marketplace/git/{file}` | Bare git mirror files (`info/refs`, `HEAD`, `objects/...`) for dumb-HTTP clones. |
+| GET | `/marketplace/git.git/{file}` | Same mirror with a `.git`-style URL for clients that require git-looking install URLs. |
+| GET | `/marketplace/plugins/{name}.git/{file}` | Single-plugin bare git mirror. Plugin `url` fields point here. |
 | GET | `/marketplace/packages` | List packages (`owner`, `q`, `category` filters; private ones included with a token). |
 | GET | `/marketplace/packages/{owner}/{name}` | Package detail with version history. |
 | GET | `/marketplace/packages/{owner}/{name}/versions/{version}/download` | Download one version's bundle ZIP. |
@@ -60,17 +62,20 @@ Upload validation enforces: a parseable `.codebuddy-plugin/plugin.json`, manifes
    ```
 
 3. Point the client's marketplace source (套件源) at the service, trying in order:
+   - `http://<bee-host>:8000/marketplace/git.git` (recommended git clone / `/plugin marketplace add` source)
    - `http://<bee-host>:8000/marketplace/snapshot.zip`
-   - `http://<bee-host>:8000/marketplace/git` (git clone / `/plugin marketplace add` compatible)
    - `http://<bee-host>:8000/marketplace/marketplace.json`
 
 ## Git Mirror Channel
 
-`/plugin marketplace add http://<bee-host>:8000/marketplace/git` clones the mirror; the checked-out tree contains `.codebuddy-plugin/marketplace.json` and `plugins/<name>/...`, so plugins with skills/commands/hooks are materialized natively by the client.
+`/plugin marketplace add http://<bee-host>:8000/marketplace/git.git` clones the whole-market mirror; the checked-out tree contains `.codebuddy-plugin/marketplace.json` and `plugins/<name>/...`, so clients can add the marketplace as a source. The legacy `/marketplace/git` path serves the same repository for clients that already use it.
+
+Each plugin entry in `marketplace.json` includes a `source` object whose `url` is a distinct install URL such as `http://<bee-host>:8000/marketplace/plugins/agent-browser.git`. That URL clones a single-plugin repository whose working tree is the plugin root itself, with `.codebuddy-plugin/`, `skills/`, `commands/`, `agents/`, and other bundle files at the top level.
 
 Implementation notes:
 
 - The mirror is written in pure Python (loose objects + refs only, no packfiles, no git binary required) and updated atomically after each successful snapshot swap: objects first, then refs, then `info/refs`. A failed rebuild leaves the previous refs serving.
+- Mirror metadata includes a Bee layout marker so old per-plugin mirrors are rebuilt when the clone layout changes even if the marketplace revision is unchanged.
 - Clients that request the smart protocol (`?service=git-upload-pack`) transparently fall back to the dumb HTTP protocol, which this static serving supports.
 - Each rebuild moves `refs/heads/main` and creates `refs/tags/snapshot-<revision>`; old tags are retained as history.
 - Mirror failures are logged and never fail a publish — the ZIP snapshot remains the authoritative artifact.
@@ -83,6 +88,7 @@ Implementation notes:
 - Metadata: PostgreSQL tables `marketplace_owner`, `marketplace_token`, `marketplace_package`, `marketplace_package_version`, `marketplace_snapshot`.
 - Limits: `MARKETPLACE_MAX_UPLOAD_BYTES` (default 20 MiB), `MARKETPLACE_MAX_ENTRY_COUNT` (default 4000).
 - Naming: `MARKETPLACE_MARKETPLACE_NAME` (default `bee-plugins`), `MARKETPLACE_DESCRIPTION`, `MARKETPLACE_OWNER_NAME`.
+- Public URL: set `MARKETPLACE_PUBLIC_BASE_URL` when generated snapshot catalogs need external per-plugin git URLs; live `/marketplace/marketplace.json` responses derive those URLs from the request host.
 
 ## Validation
 

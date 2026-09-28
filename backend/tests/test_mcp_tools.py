@@ -377,7 +377,7 @@ def test_upload_plugin_tool_publishes_marketplace_bundle():
 
     assert uploaded["item"]["version"] == "1.3.0"
     assert uploaded["item"]["status"] == "published"
-    assert uploaded["marketplace_url"] == "/marketplace/marketplace.json"
+    assert uploaded["marketplace_url"] == "/marketplace/git.git"
     marketplace = service.services.marketplace_service
     assert marketplace.resolved_authorization == "Bearer publish-token"
     assert marketplace.published[0]["owner"] == "bee"

@@ -54,6 +54,7 @@ export function historyMessageToChatMessage(item: ChatHistoryMessage): ChatMessa
     assistant_message_id: item.role === "assistant" ? item.id : undefined,
     role: item.role,
     content: item.content,
+    skillsLoaded: Array.isArray(metadata.skills_loaded) ? metadata.skills_loaded.filter((value): value is NonNullable<ChatMessage["skillsLoaded"]>[number] => isRecord(value) && typeof value.skill_id === "string" && typeof value.name === "string" && typeof value.version === "string" && typeof value.sha256 === "string") : undefined,
     chatMode: chatModeValue,
     sources: Array.isArray(metadata.sources) ? metadata.sources as SourceItem[] : undefined,
     reasoning: isRecord(metadata.reasoning) ? metadata.reasoning as ReasoningSummary : undefined,
