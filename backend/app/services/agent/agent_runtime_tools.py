@@ -21,7 +21,9 @@ from app.models.agent_runtime import (
     ToolExecutionClass,
 )
 from app.models.knowledge_base import KnowledgeBaseScope
+from app.services.agent.runtime_skills import RuntimeSkillError
 from app.services.infrastructure.logging_config import get_trace_id, sanitize_payload, truncate_text
+from app.services.skills.sandbox import SkillSandboxDenied, SkillSandboxUnavailable
 
 logger = logging.getLogger(__name__)
 
@@ -1070,6 +1072,65 @@ class HTTPJSONSearchProvider:
         return results
 
 
+class TavilySearchProvider:
+    def __init__(
+        self,
+        api_key: str,
+        *,
+        timeout_seconds: float = 5.0,
+        max_results: int = 10,
+        endpoint: str = "https://api.tavily.com/search",
+    ):
+        self.api_key = api_key
+        self.timeout_seconds = timeout_seconds
+        self.max_results = max_results
+        self.endpoint = endpoint
+
+    def search(self, query: str, *, top_k: int = 5) -> list[dict[str, Any]]:
+        max_results = min(int(top_k or 5), self.max_results)
+        body = json.dumps(
+            {
+                "query": query,
+                "search_depth": "basic",
+                "max_results": max_results,
+                "include_answer": False,
+                "include_raw_content": False,
+            },
+            ensure_ascii=False,
+        ).encode("utf-8")
+        request = urllib.request.Request(
+            self.endpoint,
+            data=body,
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+                "User-Agent": "new-rag-project-agent/1.0",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+            payload = json.loads(response.read().decode("utf-8", errors="replace"))
+        raw_results = payload.get("results", []) if isinstance(payload, dict) else []
+        if not isinstance(raw_results, list):
+            return []
+        results: list[dict[str, Any]] = []
+        for item in raw_results[:max_results]:
+            if not isinstance(item, dict):
+                continue
+            result = {
+                "title": truncate_text(str(item.get("title") or ""), 160),
+                "url": truncate_text(str(item.get("url") or item.get("link") or ""), 500),
+                "snippet": truncate_text(str(item.get("snippet") or item.get("content") or ""), 500),
+            }
+            if "score" in item:
+                try:
+                    result["score"] = float(item.get("score") or 0.0)
+                except (TypeError, ValueError):
+                    result["score"] = 0.0
+            results.append(result)
+        return results
+
+
 class WebFetchTool:
     name = "web_fetch"
     execution_class = ToolExecutionClass.PARALLEL_SAFE
@@ -1234,19 +1295,86 @@ class DatabaseQueryTool:
 class ExecuteSkillTool:
     name = "execute_skill"
     execution_class = ToolExecutionClass.EXCLUSIVE
-    description = "Executable skill boundary. Always unavailable until a secure sandbox is implemented."
+    description = "Execute a script from a request-selected runtime skill through the configured secure sandbox."
     parameters = {
         "type": "object",
         "properties": {
-            "skill_name": {"type": "string"},
-            "arguments": {"type": "object"},
+            "skill_name": {"type": "string", "description": "Selected skill runtime name, for example library:<skill_id>."},
+            "script_path": {"type": "string", "description": "Relative script path inside the selected skill bundle."},
+            "args": {"type": "array", "items": {"type": "string"}, "description": "Bounded script arguments."},
+            "input": {"type": "string", "description": "Optional stdin for the script."},
+            "arguments": {"type": "object", "description": "Deprecated compatibility object; script_path/args/input are preferred."},
         },
         "required": ["skill_name"],
         "additionalProperties": False,
     }
 
+    def __init__(self, *, sandbox_manager: Any | None = None):
+        self.sandbox_manager = sandbox_manager
+
     def execute(self, arguments: dict[str, Any], context: RuntimeToolContext) -> RuntimeToolResult:
-        return _unavailable(self.name, "Executable skills are disabled because no secure sandbox is configured.")
+        if self.sandbox_manager is None or not getattr(self.sandbox_manager, "enabled", False):
+            reason = "Executable skills are disabled because no secure sandbox is configured."
+            if self.sandbox_manager is not None:
+                reason = self.sandbox_manager.unavailable_reason() or reason
+            return _unavailable(self.name, reason)
+        manager = context.skills_manager
+        if manager is None or not getattr(manager, "enabled", False):
+            return _unavailable(self.name, "Runtime skills are disabled.")
+        compatibility = arguments.get("arguments") if isinstance(arguments.get("arguments"), dict) else {}
+        skill_name = str(arguments.get("skill_name") or "")
+        script_path = str(arguments.get("script_path") or compatibility.get("script_path") or "")
+        if not script_path:
+            return _unavailable(self.name, "script_path is required for skill script execution.")
+        raw_args = arguments.get("args", compatibility.get("args", []))
+        if raw_args is None:
+            raw_args = []
+        if not isinstance(raw_args, list):
+            return RuntimeToolResult(success=False, error=f"args must be an array{TOOL_ERROR_HINT}", metadata={"tool": self.name, "status": "unavailable", "error_code": "validation_failed"})
+        stdin = str(arguments.get("input", compatibility.get("input", "")) or "")
+        try:
+            result = manager.execute_script(skill_name, script_path, [str(item) for item in raw_args], stdin, self.sandbox_manager)
+        except SkillSandboxUnavailable as exc:
+            return _unavailable(self.name, str(exc))
+        except (SkillSandboxDenied, RuntimeSkillError, ValueError) as exc:
+            error = RuntimeToolError(getattr(exc, "code", "sandbox_denied"), str(exc), fatal=False)
+            return RuntimeToolResult(
+                success=False,
+                error=f"{error.message}{TOOL_ERROR_HINT}",
+                observation=str(exc),
+                structured_error=error,
+                metadata={"tool": self.name, "status": "unavailable", "error_code": error.code},
+            )
+        payload = {
+            "skill_name": skill_name,
+            "script_path": script_path,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "exit_code": result.exit_code,
+            "timed_out": result.timed_out,
+            "output_files": list(result.output_files),
+        }
+        metadata = {
+            **result.metadata,
+            "skill_name": skill_name,
+            "script_path": script_path,
+            "exit_code": result.exit_code,
+            "timed_out": result.timed_out,
+            "output_files": list(result.output_files),
+            "error_code": result.error_code,
+        }
+        observation = f"Skill script {script_path} exited with {result.exit_code}" if not result.timed_out else f"Skill script {script_path} timed out"
+        return RuntimeToolResult(
+            success=result.success,
+            output=json.dumps(payload, ensure_ascii=False),
+            observation=observation if result.success else result.error or observation,
+            error=f"{result.error}{TOOL_ERROR_HINT}" if result.error else "",
+            metadata=metadata,
+        )
+
+
+class ExecuteSkillScriptTool(ExecuteSkillTool):
+    name = "execute_skill_script"
 
 
 def build_default_tool_registry(
@@ -1256,6 +1384,8 @@ def build_default_tool_registry(
     skills_enabled: bool,
     web_search_enabled: bool = False,
     web_search_endpoint: str = "",
+    tavily_api_key: str = "",
+    tavily_endpoint: str = "https://api.tavily.com/search",
     web_fetch_enabled: bool = False,
     web_fetch_allowed_domains: tuple[str, ...] = (),
     web_fetch_timeout_seconds: float = 5.0,
@@ -1264,6 +1394,7 @@ def build_default_tool_registry(
     database_allowed_sources: dict[str, str] | None = None,
     wiki_tools_enabled: bool = False,
     wiki_maintenance_tools_enabled: bool = False,
+    skill_sandbox_manager: Any | None = None,
 ) -> ToolRegistry:
     registry = ToolRegistry(max_output_chars=max_output_chars)
     available: dict[str, RuntimeTool] = {
@@ -1276,9 +1407,17 @@ def build_default_tool_registry(
         "query_knowledge_graph": QueryKnowledgeGraphTool(),
         "web_search": WebSearchTool(
             enabled=web_search_enabled,
-            provider=HTTPJSONSearchProvider(web_search_endpoint, timeout_seconds=web_fetch_timeout_seconds)
-            if web_search_endpoint
-            else None,
+            provider=(
+                HTTPJSONSearchProvider(web_search_endpoint, timeout_seconds=web_fetch_timeout_seconds)
+                if web_search_endpoint
+                else TavilySearchProvider(
+                    tavily_api_key,
+                    timeout_seconds=web_fetch_timeout_seconds,
+                    endpoint=tavily_endpoint,
+                )
+                if tavily_api_key
+                else None
+            ),
         ),
         "web_fetch": WebFetchTool(
             enabled=web_fetch_enabled,
@@ -1300,7 +1439,8 @@ def build_default_tool_registry(
         "wiki_replace_text": WikiReplaceTextTool(enabled=wiki_maintenance_tools_enabled),
         "wiki_rename_page": WikiRenamePageTool(enabled=wiki_maintenance_tools_enabled),
         "wiki_delete_page": WikiDeletePageTool(enabled=wiki_maintenance_tools_enabled),
-        "execute_skill": ExecuteSkillTool(),
+        "execute_skill": ExecuteSkillTool(sandbox_manager=skill_sandbox_manager),
+        "execute_skill_script": ExecuteSkillScriptTool(sandbox_manager=skill_sandbox_manager),
     }
     if skills_enabled:
         available["read_skill"] = ReadSkillTool()

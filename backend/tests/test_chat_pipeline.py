@@ -128,6 +128,60 @@ class EmptyRagService(FakeRagService):
         return []
 
 
+class FakeWebFallbackResult:
+    used = True
+    sources = [
+        {
+            "source": "Redis docs",
+            "source_type": "web",
+            "url": "https://docs.example.com/redis",
+            "snippet": "Redis is an in-memory data store.",
+            "provider": "web_search",
+            "score": 0.0,
+        }
+    ]
+    answer_context = "知识库无答案，以下来自网络搜索\n\n网络搜索结果:\n1. Redis docs"
+    metadata = {
+        "attempted": True,
+        "used": True,
+        "available": True,
+        "mode": "quick",
+        "trigger_reason": "no_internal_hits",
+        "result_count": 1,
+        "error": "",
+    }
+
+
+class FakeWebFallbackService:
+    def __init__(self):
+        self.calls = []
+
+    def search(self, query, *, trigger_reason, mode):
+        self.calls.append({"query": query, "trigger_reason": trigger_reason, "mode": mode})
+        return FakeWebFallbackResult()
+
+
+class RecordingWebFallbackService(FakeWebFallbackService):
+    def __init__(self, started_event):
+        super().__init__()
+        self.started_event = started_event
+
+    def search(self, query, *, trigger_reason, mode):
+        self.started_event.set()
+        return super().search(query, trigger_reason=trigger_reason, mode=mode)
+
+
+class BlockingRetrieveRagService(FakeRagService):
+    def __init__(self, web_search_started_event):
+        super().__init__()
+        self.web_search_started_event = web_search_started_event
+        self.web_started_before_retrieval_finished = False
+
+    def hybrid_retrieve_hits(self, question, scope=None):
+        self.web_started_before_retrieval_finished = self.web_search_started_event.wait(timeout=1.0)
+        return super().hybrid_retrieve_hits(question, scope=scope)
+
+
 class StopAfterFirstTokenRagService(FakeRagService):
     def __init__(self, stop_signal):
         super().__init__()
@@ -165,6 +219,7 @@ class ChatPipelineTests(unittest.TestCase):
                 rag_service=FakeRagService(),
                 conversation_service=FakeConversationService(),
                 memory_service=FakeMemoryService(),
+                web_search_fallback_service=None,
                 stop_signal=stop_signal,
             ),
         )
@@ -224,6 +279,54 @@ class ChatPipelineTests(unittest.TestCase):
         self.assertIn("reasoning", [event.event_type for event in events])
         self.assertIn("token", [event.event_type for event in events])
         self.assertEqual("done", events[-1].event_type)
+
+    def test_empty_retrieval_uses_web_fallback_before_sources_and_tokens(self):
+        context = self.make_context()
+        context.runtime.rag_service = EmptyRagService()
+        context.runtime.web_search_fallback_service = FakeWebFallbackService()
+
+        events = list(run_quick_rag_pipeline(context))
+
+        event_types = [event.event_type for event in events]
+        sources = next(event.payload["sources"] for event in events if event.event_type == "sources")
+        self.assertEqual(
+            [{"query": "question", "trigger_reason": "quick_parallel", "mode": "quick"}],
+            context.runtime.web_search_fallback_service.calls,
+        )
+        self.assertEqual("web", sources[0]["source_type"])
+        self.assertLess(event_types.index("sources"), event_types.index("token"))
+        self.assertTrue(context.state.web_fallback_used)
+        self.assertEqual(FakeWebFallbackResult.metadata, context.state.web_fallback_metadata)
+        self.assertIn("网络搜索结果", context.state.memory_context)
+        self.assertIn("网络搜索结果", context.runtime.rag_service.stream_calls[0]["memory_context"])
+
+    def test_quick_rag_pipeline_uses_web_search_alongside_sufficient_internal_evidence(self):
+        context = self.make_context()
+        context.runtime.web_search_fallback_service = FakeWebFallbackService()
+
+        list(run_quick_rag_pipeline(context))
+
+        self.assertEqual(
+            [{"query": "question", "trigger_reason": "quick_parallel", "mode": "quick"}],
+            context.runtime.web_search_fallback_service.calls,
+        )
+        self.assertEqual(["manual.md", "Redis docs", "attachment.txt"], [source["source"] for source in context.state.sources])
+        self.assertIn("Redis docs", context.runtime.rag_service.stream_calls[0]["memory_context"])
+        self.assertFalse(context.state.web_fallback_used)
+
+    def test_quick_rag_pipeline_starts_web_search_before_retrieval_finishes(self):
+        web_search_started = threading.Event()
+        context = self.make_context()
+        context.runtime.rag_service = BlockingRetrieveRagService(web_search_started)
+        context.runtime.web_search_fallback_service = RecordingWebFallbackService(web_search_started)
+
+        list(run_quick_rag_pipeline(context))
+
+        self.assertTrue(context.runtime.rag_service.web_started_before_retrieval_finished)
+        self.assertEqual(
+            [{"query": "question", "trigger_reason": "quick_parallel", "mode": "quick"}],
+            context.runtime.web_search_fallback_service.calls,
+        )
 
     def test_stop_during_streaming_avoids_assistant_persistence(self):
         signal = threading.Event()

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { Check, X, PanelLeftClose, PanelLeftOpen, MessageSquare, Plug, Plus } from "lucide-react";
+import { Check, X, PanelLeftClose, PanelLeftOpen, MessageSquare, Plug, Plus, BookOpen } from "lucide-react";
 import { DeleteIcon, EditIcon, LibraryIcon, MoreIcon, NewChatIcon } from "./Icons";
 import { deleteSession, listRecentSessions, renameSession } from "../lib/api";
 import type { ChatSessionSummary } from "../lib/types";
@@ -183,6 +183,9 @@ export function Sidebar() {
         <button type="button" aria-current={pathname.startsWith("/plugins") ? "page" : undefined} onClick={() => router.push("/plugins")} className={pathname.startsWith("/plugins") ? "active" : ""}>
           <Plug size={17} />
           <span>插件</span>
+        </button>
+        <button type="button" aria-current={pathname.startsWith("/skills") ? "page" : undefined} onClick={() => router.push("/skills")} className={pathname.startsWith("/skills") ? "active" : ""}>
+          <BookOpen size={17} /><span>技能库</span>
         </button>
       </nav>
 

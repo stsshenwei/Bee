@@ -85,18 +85,23 @@ When `CHAT_RAG_PIPELINE_ENABLED=true`, quick-answer chat uses the online Chat/RA
 4. `query_understand`
 5. `retrieve`
 6. `recall_parent_context`
-7. `emit_sources`
-8. `emit_reasoning`
-9. `emit_agent_trace`
-10. `into_prompt`
-11. `chat_completion_stream`
-12. `persist_assistant_message`
-13. `memory_storage`
-14. `done`
+7. `web_search_fallback`
+8. `emit_sources`
+9. `emit_reasoning`
+10. `emit_agent_trace`
+11. `into_prompt`
+12. `chat_completion_stream`
+13. `persist_assistant_message`
+14. `memory_storage`
+15. `done`
 
 Stages share a typed context with immutable request data, explicit mutable state, and runtime handles for `RAGService`, conversation service, memory service, EventBus, stream identity, and stop signal. Stage progress is recorded on the context, and public stage events are converted to the existing stored SSE shape by `main.py`.
 
-Fallback and cancellation are handled at pipeline boundaries. Empty retrieval still emits compatible `sources` and reasoning metadata before answer generation delegates to the existing `RAGService.stream_answer` behavior. Rerank degradation decisions remain owned by `RAGService.hybrid_retrieve_hits` and are copied into pipeline retrieval debug state. If the stop signal is set before a stage or during token streaming, the executor emits a compatible `stop` event and terminal `[DONE]`; the runtime completes the existing assistant placeholder with the exact accumulated partial answer and stopped metadata.
+Fallback and cancellation are handled at pipeline boundaries. Quick-answer chat starts configured web search in parallel with hybrid knowledge retrieval. After parent recall, the `web_search_fallback` stage waits for the quick web result, merges usable web sources into the emitted source list, and appends web context to the answer prompt. It still classifies internal evidence as insufficient when hits are empty, source extraction is empty, or the best score is below `WEB_SEARCH_FALLBACK_MIN_CONFIDENCE` (falling back to `MIN_RELEVANCE_SCORE`). Only insufficient internal evidence marks the web result as fallback and emits the `知识库无答案，以下来自网络搜索` notice. When web search is disabled, unconfigured, errors, or returns no results and internal evidence is also insufficient, the stream emits a deterministic insufficient-evidence answer instead of asking the model to answer from empty evidence.
+
+The legacy raw quick-chat path uses the same parallel quick web-search policy before emitting `sources`, so it matches the feature-flagged chat pipeline. Agent Runtime modes (`reasoning`, `wiki`, and `rag_wiki`) can use the `web_search` tool through plugin policy, but runtime guards reject web-search-first tool batches for factual or domain questions until the selected knowledge base has been searched and either deep-read or found empty. The route also checks terminal runtime output and applies the same deterministic fallback if no usable internal source evidence or answer token was produced. Fallback metadata is included in reasoning and assistant-message metadata, with only safe fields such as attempted/used, mode, trigger reason, result count, and sanitized error details.
+
+Web fallback result text remains request-local. It is passed as answer context or emitted as a safe terminal answer, but it is not written into document chunks, vector indexes, Wiki pages, graph state, feedback markdown, or durable memory. Memory extraction is skipped whenever web fallback was used. Rerank degradation decisions remain owned by `RAGService.hybrid_retrieve_hits` and are copied into pipeline retrieval debug state. If the stop signal is set before a stage or during token streaming, the executor emits a compatible `stop` event and terminal `[DONE]`; the runtime completes the existing assistant placeholder with the exact accumulated partial answer and stopped metadata.
 
 Refresh recovery uses StreamManager as a transient event log. Every public event is appended before SSE delivery, and replay polls storage every 100ms from the requested offset until complete, stop, or terminal error. Redis mode stores events under `stream:events:{sessionId}:{messageId}` with a configurable TTL that defaults to 24 hours; memory mode is development-only for replay across refresh/restart/multi-replica scenarios.
 

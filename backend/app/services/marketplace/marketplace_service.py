@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import logging
+import shutil
 import threading
 import zipfile
 from datetime import datetime, timezone
@@ -16,7 +17,7 @@ from app.services.marketplace.marketplace_bundle import (
     inspect_bundle,
     normalize_entry_path,
 )
-from app.services.marketplace.marketplace_git import GitMirrorBuilder
+from app.services.marketplace.marketplace_git import LAYOUT_VERSION, MAIN_REF, GitMirrorBuilder
 from app.services.marketplace.marketplace_models import (
     KEBAB_CASE_PATTERN,
     MarketplaceAuthError,
@@ -393,18 +394,19 @@ class MarketplaceService:
 
     # -------------------------------------------------------------- distribution
 
-    def catalog_document(self) -> dict[str, Any]:
+    def catalog_document(self, *, public_base_url: str | None = None) -> dict[str, Any]:
+        self.rebuild_snapshot()
         revision = self.storage.read_revision()
         if revision is not None:
             current = str(revision.get("revision") or "")
             if current:
                 catalog = self.storage.read_catalog(current)
                 if catalog is not None:
-                    return catalog
+                    return self._with_plugin_git_url(catalog, public_base_url)
         snapshot = self.repository.get_snapshot()
         if snapshot is not None and snapshot.catalog:
-            return dict(snapshot.catalog)
-        return self._build_catalog_document()[0]
+            return self._with_plugin_git_url(dict(snapshot.catalog), public_base_url)
+        return self._with_plugin_git_url(self._build_catalog_document()[0], public_base_url)
 
     def snapshot_version(self) -> dict[str, Any]:
         revision = self.storage.read_revision()
@@ -442,6 +444,7 @@ class MarketplaceService:
                 existing
                 and existing.get("revision") == revision
                 and self.storage.snapshot_zip_path_for_revision(revision).exists()
+                and (not self.settings.git_mirror_enabled or self._git_artifacts_ready(catalog))
             ):
                 self.repository.upsert_snapshot(
                     revision=revision,
@@ -516,31 +519,102 @@ class MarketplaceService:
                 revision=revision,
                 message=f"snapshot {revision}",
             )
+            self._update_plugin_git_mirrors(staging, revision)
         except Exception:  # noqa: BLE001 - git mirror must not break publishing
             logger.warning("Failed to update marketplace git mirror; snapshot is unaffected", exc_info=True)
 
     def git_repo_root(self) -> Path:
         return self.storage.git_dir.resolve()
 
+    def plugin_git_repo_root(self, name: str) -> Path:
+        return self.storage.plugin_git_repo_dir(name).resolve()
+
+    def _git_artifacts_ready(self, catalog: dict[str, Any]) -> bool:
+        if not self.git_repo_ready():
+            return False
+        for entry in list(catalog.get("plugins") or []):
+            if not isinstance(entry, dict):
+                continue
+            name = str(entry.get("name") or "").strip()
+            if name and not self.git_repo_ready(name):
+                return False
+        return True
+
+    def git_repo_ready(self, name: str | None = None) -> bool:
+        repo_dir = self.storage.plugin_git_repo_dir(name) if name else self.storage.git_dir
+        return self._git_repo_metadata_ready(repo_dir)
+
+    @staticmethod
+    def _git_repo_metadata_ready(repo_dir: Path) -> bool:
+        head = repo_dir / "HEAD"
+        main_ref = repo_dir / MAIN_REF
+        info_refs = repo_dir / "info" / "refs"
+        layout = repo_dir / "info" / "bee-layout"
+        if not head.exists() or not main_ref.exists() or not info_refs.exists() or not layout.exists():
+            return False
+        if layout.read_bytes() != LAYOUT_VERSION.encode("ascii"):
+            return False
+        head_bytes = head.read_bytes()
+        main_ref_bytes = main_ref.read_bytes()
+        info_refs_bytes = info_refs.read_bytes()
+        if b"\r" in head_bytes or b"\r" in main_ref_bytes or b"\r" in info_refs_bytes:
+            return False
+        if head_bytes != f"ref: {MAIN_REF}\n".encode("ascii"):
+            return False
+        sha = main_ref_bytes.strip()
+        if len(sha) != 40:
+            return False
+        try:
+            int(sha, 16)
+        except ValueError:
+            return False
+        return sha + b"\t" + MAIN_REF.encode("ascii") + b"\n" in info_refs_bytes
+
+    def _update_plugin_git_mirrors(self, staging: Path, revision: str) -> None:
+        plugin_root = staging / "plugins"
+        if not plugin_root.exists():
+            return
+        active_names: set[str] = set()
+        for package_dir in sorted(path for path in plugin_root.iterdir() if path.is_dir()):
+            name = package_dir.name
+            active_names.add(name)
+            plugin_files = {
+                path.relative_to(package_dir).as_posix(): path.read_bytes()
+                for path in sorted(package_dir.rglob("*"))
+                if path.is_file()
+            }
+            GitMirrorBuilder(self.storage.plugin_git_repo_dir(name)).update(
+                plugin_files,
+                revision=revision,
+                message=f"{name} {revision}",
+            )
+        root = self.storage.plugin_git_dir
+        if root.exists():
+            for repo_dir in root.glob("*.git"):
+                name = repo_dir.name[:-4]
+                if name not in active_names:
+                    shutil.rmtree(repo_dir, ignore_errors=True)
+
     def _build_catalog_document(self) -> tuple[dict[str, Any], int]:
         entries: list[dict[str, Any]] = []
+        public_base_url = self._default_public_base_url()
         packages = self.repository.list_packages(include_private=False)
         for package in packages:
             record = self.repository.latest_published_version(package.name)
             if record is None:
                 continue
-            entries.append(
-                {
-                    "name": package.name,
-                    "source": f"./{PLUGIN_DIR_PREFIX}{package.name}",
-                    "description": package.description or record.manifest.get("description") or "",
-                    "version": record.version,
-                    "author": {"name": package.owner_handle},
-                    "keywords": list(package.keywords or record.manifest.get("keywords") or []),
-                    "category": package.category or record.manifest.get("category") or "",
-                    "strict": True,
-                }
-            )
+            entry = {
+                "name": package.name,
+                "source": self._plugin_url_source(public_base_url, package.name),
+                "description": package.description or record.manifest.get("description") or "",
+                "version": record.version,
+                "author": {"name": package.owner_handle},
+                "keywords": list(package.keywords or record.manifest.get("keywords") or []),
+                "category": package.category or record.manifest.get("category") or "",
+                "strict": True,
+            }
+            self._copy_catalog_capability_paths(entry, record.manifest, package.name)
+            entries.append(entry)
         catalog = {
             "name": self.settings.marketplace_name,
             "owner": {"name": self.settings.owner_display_name},
@@ -548,6 +622,62 @@ class MarketplaceService:
             "plugins": entries,
         }
         return catalog, len(entries)
+
+    @staticmethod
+    def _copy_catalog_capability_paths(entry: dict[str, Any], manifest: dict[str, Any], name: str) -> None:
+        for key in ("skills", "rules", "agents"):
+            value = manifest.get(key)
+            if isinstance(value, list):
+                paths = [
+                    MarketplaceService._catalog_plugin_path(name, item)
+                    for item in value
+                    if isinstance(item, str) and item.strip()
+                ]
+                if paths:
+                    entry[key] = paths
+        hooks = manifest.get("hooks")
+        if isinstance(hooks, str) and hooks.strip():
+            entry["hooks"] = MarketplaceService._catalog_plugin_path(name, hooks)
+
+    @staticmethod
+    def _catalog_plugin_path(name: str, path: str) -> str:
+        clean = str(path or "").replace("\\", "/").strip()
+        if clean.startswith("./"):
+            clean = clean[2:]
+        clean = clean.lstrip("/")
+        plugin_prefix = f"{PLUGIN_DIR_PREFIX}{name}/"
+        if clean.startswith(plugin_prefix):
+            clean = clean[len(plugin_prefix):]
+        return f"./{clean}"
+
+    def _with_plugin_git_url(self, catalog: dict[str, Any], public_base_url: str | None) -> dict[str, Any]:
+        base_url = (public_base_url or self._default_public_base_url()).strip().rstrip("/")
+        decorated = dict(catalog)
+        plugins = []
+        for entry in list(catalog.get("plugins") or []):
+            if not isinstance(entry, dict) or not entry.get("name"):
+                plugins.append(entry)
+                continue
+            plugin = dict(entry)
+            plugin.pop("url", None)
+            plugin["source"] = self._plugin_url_source(base_url, str(plugin.get("name") or ""))
+            plugins.append(plugin)
+        decorated["plugins"] = plugins
+        return decorated
+
+    def _default_public_base_url(self) -> str:
+        return str(getattr(self.settings, "public_base_url", "") or "").strip().rstrip("/")
+
+    @classmethod
+    def _plugin_url_source(cls, base_url: str, name: str) -> dict[str, str]:
+        return {
+            "source": "url",
+            "url": cls._plugin_git_url(base_url, name) if base_url and name else "",
+        }
+
+    @staticmethod
+    def _plugin_git_url(base_url: str, name: str) -> str:
+        return f"{base_url.rstrip('/')}/marketplace/plugins/{name}.git"
 
     @staticmethod
     def _zip_staging_tree(staging: Path) -> bytes:

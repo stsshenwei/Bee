@@ -20,12 +20,14 @@ from app.services.chat_pipeline.stages import (
     QueryUnderstandStage,
     RecallParentContextStage,
     RetrieveStage,
+    WebSearchFallbackStage,
 )
 from app.services.chat_pipeline.types import (
     QUICK_RAG_STAGE_IDS,
     RETRIEVAL_ONLY_STAGE_IDS,
     ChatPipelineContext,
     ChatPipelineEvent,
+    StageId,
 )
 
 
@@ -38,6 +40,7 @@ def default_chat_pipeline_registry() -> ChatPipelineRegistry:
         QueryUnderstandStage(),
         RetrieveStage(),
         RecallParentContextStage(),
+        WebSearchFallbackStage(),
         FilterTopKStage(),
         EmitSourcesStage(),
         EmitReasoningStage(),
@@ -58,8 +61,12 @@ def run_quick_rag_pipeline(
     stage_ids: Iterable[str] = QUICK_RAG_STAGE_IDS,
     registry: ChatPipelineRegistry | None = None,
 ) -> Iterator[ChatPipelineEvent]:
+    stage_ids_tuple = tuple(stage_ids)
+    context.state.quick_web_search_enabled = (
+        context.request.chat_mode == "quick" and StageId.WEB_SEARCH_FALLBACK in stage_ids_tuple
+    )
     executor = ChatPipelineExecutor(registry or default_chat_pipeline_registry())
-    yield from executor.run(context, stage_ids)
+    yield from executor.run(context, stage_ids_tuple)
 
 
 def run_retrieval_only_pipeline(

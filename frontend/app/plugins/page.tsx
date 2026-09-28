@@ -150,7 +150,7 @@ export default function PluginsPage() {
 
   const owners = useMemo(() => Array.from(new Set(packages.map((pkg) => pkg.owner))).sort(), [packages]);
   const categories = useMemo(() => Array.from(new Set(packages.map((pkg) => pkg.category).filter(Boolean))).sort(), [packages]);
-  const marketplaceUrl = `${API_BASE}/marketplace/marketplace.json`;
+  const marketplaceUrl = `${API_BASE}/marketplace/git.git`;
 
   const validateFile = async (nextFile: File) => {
     setFile(nextFile);

@@ -183,7 +183,7 @@ class PluginManagementService:
             record = self._record_for(descriptor, setting)
             if descriptor.id == "web_search" and record.enabled and record.availability == "available":
                 endpoint = str(record.config.get("endpoint") or next_config.web_search_endpoint or "").strip()
-                next_config.web_search_enabled = bool(endpoint)
+                next_config.web_search_enabled = bool(endpoint or self.runtime_environment.tavily_api_key_configured)
                 next_config.web_search_endpoint = endpoint
             if descriptor.id == "web_fetch" and record.enabled and record.availability == "available":
                 domains = tuple(_csv_values(record.config.get("allowed_domains"))) or next_config.web_fetch_allowed_domains
@@ -198,6 +198,8 @@ class PluginManagementService:
                     next_config.database_allowed_sources = {str(k): str(v) for k, v in sources.items() if str(k).strip() and str(v).strip()}
             if descriptor.id == "skills":
                 next_config.skills_enabled = bool(record.enabled and record.availability == "available")
+            if descriptor.id == "execute_skill" and record.enabled and record.availability == "available":
+                next_config.enabled_tools = tuple(dict.fromkeys((*next_config.enabled_tools, *descriptor.mapped_tools)))
             if descriptor.id == "wiki":
                 next_config.wiki_tools_enabled = bool(record.enabled and record.availability == "available")
             next_config = _apply_tool_bindings(next_config, descriptor, record.enabled and record.availability == "available", setting.mode_bindings)
@@ -260,11 +262,18 @@ class PluginManagementService:
                 return "unavailable", ["服务器配置中尚未设置网页抓取域名白名单。"]
         if descriptor.id == "skills":
             return ("available", []) if env.skills_enabled else ("unavailable", ["服务器配置已禁用运行时技能。"])
+        if descriptor.id == "execute_skill":
+            if not env.skills_enabled:
+                return "unavailable", ["Runtime skills are disabled."]
+            if not env.skill_sandbox_enabled:
+                return "unavailable", ["Skill script sandbox is disabled (mode=%s)." % env.skill_sandbox_mode]
         return "available", []
 
     def _configuration_status(self, descriptor: PluginDescriptor, config: dict[str, Any], available: str) -> str:
         if available != "available":
             return "unavailable"
+        if descriptor.id == "web_search" and self.runtime_environment.tavily_api_key_configured:
+            return "configured"
         try:
             self._validate_config(descriptor, config)
         except PluginValidationError:
@@ -352,7 +361,7 @@ def _default_descriptors() -> tuple[PluginDescriptor, ...]:
             description="通过已配置的 HTTP JSON 服务进行网页搜索。",
             category="external",
             mapped_tools=("web_search",),
-            supported_modes=("reasoning", "rag_wiki"),
+            supported_modes=("quick", "reasoning", "wiki", "rag_wiki"),
             safety_labels=("外部网络", "受限"),
             permissions=("将搜索查询发送给已配置的搜索服务。",),
             config_fields=(PluginConfigField("endpoint", "搜索端点", "url", True, "支持 q= 查询参数的 HTTP JSON 端点。"),),
@@ -395,7 +404,7 @@ def _default_descriptors() -> tuple[PluginDescriptor, ...]:
             description="读取已配置的运行时技能说明。",
             category="skills",
             mapped_tools=("read_skill",),
-            supported_modes=("reasoning",),
+            supported_modes=("quick", "reasoning", "wiki", "rag_wiki"),
             safety_labels=("只读",),
             permissions=("从已配置的技能路径读取预加载技能文件。",),
         ),
@@ -404,11 +413,10 @@ def _default_descriptors() -> tuple[PluginDescriptor, ...]:
             name="技能执行",
             description="在安全沙箱可用时执行运行时技能。",
             category="skills",
-            mapped_tools=("execute_skill",),
+            mapped_tools=("execute_skill", "execute_skill_script"),
             supported_modes=("reasoning",),
             safety_labels=("已禁用", "专用"),
             permissions=("当前构建未授予执行权限。",),
-            always_unavailable_reason="尚未配置安全沙箱，因此技能执行不可用。",
         ),
     )
 

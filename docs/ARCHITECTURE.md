@@ -1,5 +1,26 @@
 # Architecture
 
+## Skill library
+
+`/skills` is an independent catalog beside the plugin marketplace. `backend/app/services/skills/`
+owns standalone SKILL.md/ZIP validation, immutable versions, PostgreSQL metadata and local
+bundle storage. Tables `skill_package`, `skill_version`, and `workspace_skill_activation`
+are created additively; skill uploads never enter RAG document ingestion or plugin snapshots.
+
+Publication uses existing marketplace owner/admin token identity. Workspace activation requires
+an admin token and pins a published version. `/chat/stream` accepts optional `skill_refs` and
+resolves them against the server-selected knowledge workspace before calling the model.
+Request-local `RequestSkillsManager` supplies selected instructions to all four runtime modes.
+Uploaded scripts are executable only through the optional skill script sandbox. The sandbox is
+disabled by default; when enabled, Bee materializes the selected immutable ZIP version by hash,
+mounts only that version into a hardened Docker container, and fails closed if enforcement is
+unavailable. Companion files are not automatically injected into prompts. `skills_loaded` metadata
+is stored with the assistant message and replayed through the existing stream manager; sandboxed
+script execution appears separately as tool-result metadata.
+
+The new pages use the incumbent Bee tokens and global stylesheet, with a dedicated upload
+dialog and detail reading surface. See `docs/design-docs/skill-library.md` for boundaries and operations.
+
 This repository is a two-tier RAG application:
 
 - `frontend/`: Next.js App Router UI for chat, knowledge-base browsing, uploads, document preview, Wiki, feedback, and evaluation entry points.
@@ -71,6 +92,7 @@ flowchart LR
 | Memory and audit | `backend/app/services/memory/postgres_*repository.py`, `knowledge/postgres_audit_repository.py` | conversations, memories, query logs, answer feedback |
 | Evaluation | `backend/app/services/evaluation/postgres_evaluation_repository.py` | eval runs/results stored outside the retrievable corpus |
 | Plugin management | `backend/app/services/plugins/` | user-facing Agent Runtime catalog, persisted workspace plugin settings, guardrail validation, and runtime tool policy updates |
+| Web-search fallback | `backend/app/services/web_search_fallback.py` | cross-mode insufficient-evidence fallback, web source normalization, disclosure text, and safe fallback metadata |
 
 ## Storage Layout
 
@@ -134,7 +156,9 @@ Durable chat history lives in the relational `conversation` and `conversation_me
 
 New chat turns create a completed user row and an incomplete assistant placeholder before generation starts. The assistant row is completed exactly once after normal completion or user stop, while the frontend renders the active answer from SSE events. Message history is loaded from PostgreSQL through cursor pagination; prompt context uses a separate bounded recent-message query so long transcripts do not enter prompts wholesale.
 
-Quick Chat/RAG can additionally run through `backend/app/services/chat_pipeline/` when `CHAT_RAG_PIPELINE_ENABLED=true`. The pipeline uses a typed request/state/runtime context and ordered plugin stages for conversation bootstrap, history, memory, query understanding, hybrid retrieval, parent recall, source/reasoning/trace emission, streamed completion, assistant persistence, memory storage, and terminal completion. Public events still flow through `ChatEventBus` into `StreamManager`, so replay and old SSE clients keep the same behavior. The raw quick-chat path remains available when the flag is disabled.
+Quick Chat/RAG can additionally run through `backend/app/services/chat_pipeline/` when `CHAT_RAG_PIPELINE_ENABLED=true`. The pipeline uses a typed request/state/runtime context and ordered plugin stages for conversation bootstrap, history, memory, query understanding, hybrid retrieval, parent recall, web-search fallback, source/reasoning/trace emission, streamed completion, assistant persistence, memory storage, and terminal completion. Public events still flow through `ChatEventBus` into `StreamManager`, so replay and old SSE clients keep the same behavior. The raw quick-chat path remains available when the flag is disabled.
+
+All chat modes share a web-search fallback policy for insufficient internal evidence. `quick` applies the policy before source emission in both the pipeline and raw paths. Agent Runtime modes (`reasoning`, `wiki`, and `rag_wiki`) can expose the guarded `web_search` tool through plugin policy and also run a deterministic terminal fallback if the normal retrieval/tool flow ends without usable internal sources. Web fallback answers begin with the required disclosure, emit `source_type: "web"` source records, persist safe `web_search_fallback` metadata on the assistant message, and are not indexed into knowledge, Wiki, graph, feedback, or durable memory.
 
 `STREAM_MANAGER_TYPE=redis` enables cross-process replay and distributed stop propagation. If the setting is absent, `MemoryStreamManager` supports only local single-process streaming; refresh replay can fail after process restart or cross-replica routing. Production multi-replica deployments should configure Redis and the stream TTL via `STREAM_EVENT_TTL_SECONDS` when the 24 hour default is not appropriate.
 
@@ -150,7 +174,7 @@ This layer deliberately excludes internal Chat/RAG pipeline stages under `backen
 
 ## Plugin Marketplace
 
-A separate marketplace domain (`backend/app/services/marketplace/`) provides a self-hosted plugin registry for vibecoding clients. `MarketplaceService` orchestrates ZIP bundle upload with security validation, immutable SemVer versions scoped by owner, yank/purge deletion, and derivation of CodeBuddy-compatible distribution artifacts: a dynamic `marketplace.json` catalog, a whole-marketplace `snapshot.zip`, and a bare git mirror (pure-Python loose objects served statically for dumb-HTTP clones), all rebuilt atomically with last-good fallback. Bundle ZIPs on disk are the single source of truth; metadata lives in `marketplace_*` PostgreSQL tables; bearer tokens (scopes `publish`/`admin`) provide identity. The `/plugins` frontend workspace hosts the marketplace admin console while the built-in catalog API stays unchanged. See `docs/MARKETPLACE.md`.
+A separate marketplace domain (`backend/app/services/marketplace/`) provides a self-hosted plugin registry for vibecoding clients. `MarketplaceService` orchestrates ZIP bundle upload with security validation, immutable SemVer versions scoped by owner, yank/purge deletion, and derivation of CodeBuddy-compatible distribution artifacts: a dynamic `marketplace.json` catalog, a whole-marketplace `snapshot.zip`, a whole-market bare git mirror, and per-plugin bare git mirrors (pure-Python loose objects served statically for dumb-HTTP clones), all rebuilt atomically with last-good fallback. Bundle ZIPs on disk are the single source of truth; metadata lives in `marketplace_*` PostgreSQL tables; bearer tokens (scopes `publish`/`admin`) provide identity. The `/plugins` frontend workspace hosts the marketplace admin console while the built-in catalog API stays unchanged. See `docs/MARKETPLACE.md`.
 
 ## Reset And Compatibility
 

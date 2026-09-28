@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import inspect
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
 from app.services.chat_pipeline.types import ChatPipelineContext, ChatPipelineEvent, StageId
+from app.services.web_search_fallback import WEB_FALLBACK_NOTICE, assess_evidence_sufficiency
 
 
 @dataclass(frozen=True)
@@ -76,6 +78,7 @@ class RetrieveStage:
 
     def run(self, context: ChatPipelineContext) -> None:
         rag_service = context.runtime.rag_service
+        _start_quick_web_search(context)
         context.state.child_hits = rag_service.hybrid_retrieve_hits(context.request.question, scope=context.request.scope)
         context.state.retrieval_debug = dict(getattr(rag_service, "_last_retrieval_debug", {}) or {})
         understanding = context.state.retrieval_debug.get("query_understanding")
@@ -98,6 +101,61 @@ class RecallParentContextStage:
 
 
 @dataclass(frozen=True)
+class WebSearchFallbackStage:
+    stage_id: str = StageId.WEB_SEARCH_FALLBACK
+
+    def run(self, context: ChatPipelineContext) -> None:
+        service = context.runtime.web_search_fallback_service
+        if service is None:
+            return
+        sources = context.runtime.rag_service.extract_sources(context.state.hits)
+        decision = assess_evidence_sufficiency(context.state.hits, sources)
+        parallel_result = _consume_quick_web_search(context)
+        context.state.web_fallback_metadata = {
+            "attempted": False,
+            "used": False,
+            "trigger_reason": decision.reason,
+            "internal_evidence": {
+                "sufficient": decision.sufficient,
+                "best_score": decision.best_score,
+                "hit_count": decision.hit_count,
+                "source_count": decision.source_count,
+            },
+        }
+        if parallel_result is not None:
+            context.state.web_search_metadata = dict(getattr(parallel_result, "metadata", {}) or {})
+            parallel_sources = list(getattr(parallel_result, "sources", []) or [])
+            if parallel_sources:
+                context.state.web_search_sources = parallel_sources
+                context.state.web_search_context = _web_sources_context(parallel_sources)
+        if decision.sufficient:
+            if context.state.web_search_context:
+                context.state.memory_context = _join_request_context(context.state.memory_context, context.state.web_search_context)
+            return
+        result = parallel_result
+        if result is None:
+            result = service.search(
+                context.request.question,
+                trigger_reason=decision.reason,
+                mode=context.request.chat_mode,
+            )
+            context.state.web_search_metadata = dict(getattr(result, "metadata", {}) or {})
+            if getattr(result, "sources", None):
+                context.state.web_search_sources = list(result.sources or [])
+        context.state.web_fallback_metadata = dict(result.metadata or {})
+        if not result.used:
+            context.state.web_fallback_context = str(result.answer_context or "")
+            context.state.web_fallback_terminal_answer = context.state.web_fallback_context
+            return
+        context.state.web_fallback_used = True
+        context.state.web_fallback_sources = list(result.sources or [])
+        context.state.web_search_sources = list(result.sources or [])
+        context.state.web_fallback_context = str(result.answer_context or "")
+        context.state.sources = _merge_sources(sources, context.state.web_search_sources, context.request.temporary_sources)
+        context.state.memory_context = _join_request_context(context.state.memory_context, context.state.web_fallback_context)
+
+
+@dataclass(frozen=True)
 class FilterTopKStage:
     stage_id: str = StageId.FILTER_TOP_K
 
@@ -113,7 +171,7 @@ class EmitSourcesStage:
 
     def run(self, context: ChatPipelineContext) -> ChatPipelineEvent:
         sources = context.runtime.rag_service.extract_sources(context.state.hits)
-        context.state.sources = _merge_sources(sources, context.request.temporary_sources)
+        context.state.sources = _merge_sources(sources, context.state.web_search_sources, context.request.temporary_sources)
         return ChatPipelineEvent("sources", {"sources": context.state.sources})
 
 
@@ -123,6 +181,11 @@ class EmitReasoningStage:
 
     def run(self, context: ChatPipelineContext) -> ChatPipelineEvent:
         reasoning = context.runtime.rag_service.build_reasoning_summary(context.request.question, context.state.hits)
+        if context.state.web_fallback_metadata:
+            reasoning = {
+                **dict(reasoning or {}),
+                "web_search_fallback": dict(context.state.web_fallback_metadata),
+            }
         context.state.reasoning = dict(reasoning or {})
         return ChatPipelineEvent("reasoning", {"reasoning": reasoning})
 
@@ -163,6 +226,15 @@ class ChatCompletionStreamStage:
 
     def run(self, context: ChatPipelineContext) -> Iterable[ChatPipelineEvent]:
         def events() -> Iterable[ChatPipelineEvent]:
+            if context.state.web_fallback_terminal_answer:
+                answer = context.state.web_fallback_terminal_answer
+                context.state.answer_parts.append(answer)
+                yield ChatPipelineEvent("token", {"token": answer})
+                return
+            if context.state.web_fallback_used:
+                notice = f"{WEB_FALLBACK_NOTICE}\n\n"
+                context.state.answer_parts.append(notice)
+                yield ChatPipelineEvent("token", {"token": notice})
             for token in context.runtime.rag_service.stream_answer(
                 context.request.question,
                 hits=context.state.hits,
@@ -196,6 +268,8 @@ class PersistAssistantMessageStage:
             "chat_mode": context.request.chat_mode,
             "temporary_attachment_ids": context.request.temporary_attachment_ids,
         }
+        if context.state.web_fallback_metadata:
+            metadata["web_search_fallback"] = dict(context.state.web_fallback_metadata)
         if context.state.reasoning:
             metadata["reasoning"] = context.state.reasoning
         if context.state.agent_events:
@@ -234,6 +308,8 @@ class MemoryStorageStage:
         service = context.runtime.memory_service
         if service is None:
             return None
+        if context.state.web_fallback_used:
+            return None
         updates = service.process_exchange(
             user_message=context.request.question,
             assistant_message=context.state.answer,
@@ -259,16 +335,79 @@ def _join_request_context(*blocks: str) -> str:
     return "\n\n".join(block.strip() for block in blocks if block and block.strip())
 
 
-def _merge_sources(sources: list[dict[str, Any]], temporary_sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    if not temporary_sources:
-        return list(sources)
-    seen = {str(item.get("temporary_attachment_id") or item.get("source") or "") for item in sources}
-    merged = list(sources)
-    for item in temporary_sources:
-        key = str(item.get("temporary_attachment_id") or item.get("source") or "")
-        if key not in seen:
-            merged.append(item)
-            seen.add(key)
+def _start_quick_web_search(context: ChatPipelineContext) -> None:
+    if not context.state.quick_web_search_enabled:
+        return
+    service = context.runtime.web_search_fallback_service
+    if service is None or context.state.web_search_future is not None:
+        return
+    executor = ThreadPoolExecutor(max_workers=1)
+    context.state.web_search_executor = executor
+    context.state.web_search_future = executor.submit(
+        service.search,
+        context.request.question,
+        trigger_reason="quick_parallel",
+        mode=context.request.chat_mode,
+    )
+
+
+def _consume_quick_web_search(context: ChatPipelineContext) -> Any | None:
+    future = context.state.web_search_future
+    if future is None:
+        return None
+    try:
+        return future.result()
+    except Exception as exc:
+        context.state.web_search_metadata = {
+            "attempted": True,
+            "used": False,
+            "available": True,
+            "mode": context.request.chat_mode,
+            "trigger_reason": "quick_parallel",
+            "result_count": 0,
+            "error": "web_search_failed",
+            "error_type": exc.__class__.__name__,
+        }
+        return None
+    finally:
+        executor = context.state.web_search_executor
+        if executor is not None:
+            executor.shutdown(wait=False)
+        context.state.web_search_future = None
+        context.state.web_search_executor = None
+
+
+def _web_sources_context(sources: list[dict[str, Any]]) -> str:
+    if not sources:
+        return ""
+    lines = ["网络搜索结果:"]
+    for index, source in enumerate(sources, start=1):
+        title = source.get("source") or source.get("url") or "Web result"
+        url = source.get("url") or ""
+        snippet = source.get("snippet") or ""
+        line = f"{index}. {title}"
+        if url:
+            line = f"{line} ({url})"
+        if snippet:
+            line = f"{line}\n   {snippet}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _merge_sources(*source_groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for sources in source_groups:
+        for item in sources or []:
+            key = str(
+                item.get("temporary_attachment_id")
+                or item.get("url")
+                or item.get("source")
+                or ""
+            )
+            if key not in seen:
+                merged.append(item)
+                seen.add(key)
     return merged
 
 

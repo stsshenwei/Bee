@@ -19,6 +19,7 @@ def build_service():
         runtime_environment=PluginRuntimeEnvironment(
             web_search_enabled=False,
             web_search_endpoint="",
+            tavily_api_key_configured=False,
             web_fetch_enabled=True,
             web_fetch_allowed_domains=("docs.example.com",),
             data_analysis_enabled=True,
@@ -106,6 +107,51 @@ def test_plugin_settings_update_runtime_config_tools():
     assert updated.web_search_endpoint == "https://search.example.com/api"
     assert "data_analysis" in updated.enabled_tools
     assert "web_search" in updated.enabled_tools
+
+
+def test_web_search_can_be_bound_to_all_chat_modes_for_fallback():
+    service, _ = build_service()
+    service.update_plugin(
+        "web_search",
+        {
+            "enabled": True,
+            "enabled_modes": ["quick", "reasoning", "wiki", "rag_wiki"],
+            "config": {"endpoint": "https://search.example.com/api"},
+        },
+    )
+    config = AgentRuntimeConfig(
+        enabled=True,
+        quick_enabled_tools=(),
+        enabled_tools=("thinking",),
+        wiki_enabled_tools=("wiki_search",),
+        rag_wiki_enabled_tools=("knowledge_search", "wiki_search"),
+    )
+
+    updated = service.apply_to_agent_runtime_config(config)
+
+    assert updated.web_search_enabled is True
+    assert "web_search" in updated.quick_enabled_tools
+    assert "web_search" in updated.enabled_tools
+    assert "web_search" in updated.wiki_enabled_tools
+    assert "web_search" in updated.rag_wiki_enabled_tools
+
+
+def test_web_search_plugin_is_configured_when_tavily_key_is_available():
+    repo = InMemoryPluginSettingsRepository()
+    service = PluginManagementService(
+        repo,
+        workspace_id="workspace-1",
+        runtime_environment=PluginRuntimeEnvironment(
+            web_search_enabled=True,
+            web_search_endpoint="",
+            tavily_api_key_configured=True,
+        ),
+    )
+
+    record = service.get_plugin("web_search")
+
+    assert record["availability"] == "available"
+    assert record["configuration_status"] == "configured"
 
 
 def test_plugin_test_is_bounded_and_side_effect_free_by_default():

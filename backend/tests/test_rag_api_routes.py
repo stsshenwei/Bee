@@ -2,6 +2,7 @@ import importlib
 import os
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -319,6 +320,115 @@ class FakeRagService:
         return {"title": "修正", "source": "feedback/fix.md", "chunks": 1}
 
 
+class EmptyRouteRagService(FakeRagService):
+    def hybrid_retrieve_hits(self, question, scope=None):
+        return []
+
+    def recall_parent_hits(self, child_hits, scope=None):
+        return []
+
+    def extract_sources(self, hits):
+        return []
+
+
+class FakeWebFallbackResult:
+    used = True
+    sources = [
+        {
+            "source": "Redis docs",
+            "source_type": "web",
+            "url": "https://docs.example.com/redis",
+            "snippet": "Redis is an in-memory data store.",
+            "provider": "web_search",
+            "score": 0.0,
+        }
+    ]
+    answer_context = "知识库无答案，以下来自网络搜索\n\n网络搜索结果:\n1. Redis docs"
+    metadata = {
+        "attempted": True,
+        "used": True,
+        "available": True,
+        "mode": "quick",
+        "trigger_reason": "no_internal_hits",
+        "result_count": 1,
+        "error": "",
+    }
+
+
+class FakeWebFallbackService:
+    def __init__(self):
+        self.calls = []
+
+    def search(self, query, *, trigger_reason, mode):
+        self.calls.append({"query": query, "trigger_reason": trigger_reason, "mode": mode})
+        return FakeWebFallbackResult()
+
+
+class RecordingWebFallbackService(FakeWebFallbackService):
+    def __init__(self, started_event):
+        super().__init__()
+        self.started_event = started_event
+
+    def search(self, query, *, trigger_reason, mode):
+        self.started_event.set()
+        return super().search(query, trigger_reason=trigger_reason, mode=mode)
+
+
+class BlockingRouteRagService(FakeRagService):
+    def __init__(self, web_search_started_event):
+        super().__init__()
+        self.web_search_started_event = web_search_started_event
+        self.web_started_before_retrieval_finished = False
+
+    def hybrid_retrieve_hits(self, question, scope=None):
+        self.web_started_before_retrieval_finished = self.web_search_started_event.wait(timeout=1.0)
+        return super().hybrid_retrieve_hits(question, scope=scope)
+
+
+class EmptyAgentRuntime:
+    def __init__(self):
+        self.calls = []
+
+    def stream_query_events(self, question, mode="reasoning", **kwargs):
+        self.calls.append({"question": question, "mode": mode, **kwargs})
+        yield SimpleNamespace(event_type="final", payload={"citations": []})
+
+
+class EmptyRuntimeRouteRagService(EmptyRouteRagService):
+    def __init__(self):
+        super().__init__()
+        self.agent_runtime = EmptyAgentRuntime()
+        self.agent_runtime_enabled = True
+        self.unified_chat_runtime_enabled = True
+        self.quick_runtime_enabled = True
+        self.wiki_runtime_enabled = True
+        self.rag_wiki_runtime_enabled = True
+        self.agentic_workflow = None
+
+
+class SufficientAgentRuntime:
+    def __init__(self):
+        self.calls = []
+
+    def stream_query_events(self, question, mode="reasoning", **kwargs):
+        self.calls.append({"question": question, "mode": mode, **kwargs})
+        yield SimpleNamespace(event_type="sources", payload={"items": [{"source": "manual.txt", "score": 0.8}]})
+        yield SimpleNamespace(event_type="token", payload={"token": "internal answer"})
+        yield SimpleNamespace(event_type="final", payload={"citations": [{"source": "manual.txt", "score": 0.8}]})
+
+
+class SufficientRuntimeRouteRagService(FakeRagService):
+    def __init__(self):
+        super().__init__()
+        self.agent_runtime = SufficientAgentRuntime()
+        self.agent_runtime_enabled = True
+        self.unified_chat_runtime_enabled = True
+        self.quick_runtime_enabled = True
+        self.wiki_runtime_enabled = True
+        self.rag_wiki_runtime_enabled = True
+        self.agentic_workflow = None
+
+
 class FakeConversationService:
     def __init__(self):
         self.created = 0
@@ -411,6 +521,8 @@ class RagApiRouteTests(unittest.TestCase):
                 "RAG_DATA_DIR": str(Path(tmpdir) / "data"),
                 "AUTO_INGEST_ON_STARTUP": "false",
                 "WIKI_INGEST_ENABLED": "false",
+                "STREAM_MANAGER_TYPE": "memory",
+                "LANGFUSE_ENABLED": "false",
             }
             with patch.dict(os.environ, env, clear=False):
                 with postgres_runtime_patches():
@@ -792,6 +904,138 @@ class RagApiRouteTests(unittest.TestCase):
         self.assertIn('"term_mappings": ["电口 -> RJ-45"]', payload)
         self.assertLess(payload.index('"reasoning"'), payload.index('"token"'))
         self.assertNotIn('"agent_trace"', payload)
+
+    def test_chat_stream_raw_quick_uses_web_fallback_for_empty_internal_evidence(self):
+        module = self.import_main()
+        fake_rag = EmptyRouteRagService()
+        fake_fallback = FakeWebFallbackService()
+        fake_memory = FakeMemoryService()
+        module.rag_service = fake_rag
+        module.web_search_fallback_service = fake_fallback
+        module.conversation_service = FakeConversationService()
+        module.memory_service = fake_memory
+        module.chat_stream_manager = MemoryStreamManager()
+
+        with TestClient(module.app) as client:
+            response = client.post("/chat/stream", json={"message": "What is Redis?", "chat_mode": "quick"})
+
+        payload = response.text
+        self.assertEqual([{"query": "What is Redis?", "trigger_reason": "quick_parallel", "mode": "quick"}], fake_fallback.calls)
+        self.assertIn('"source_type": "web"', payload)
+        self.assertLess(payload.index('"sources"'), payload.index('"token"'))
+        self.assertIn("网络搜索结果", fake_rag.stream_calls[0]["memory_context"])
+        self.assertNotIn('"memory_updated"', payload)
+        self.assertEqual([], fake_memory.extract_calls)
+
+    def test_chat_stream_raw_quick_merges_web_search_with_sufficient_internal_evidence(self):
+        module = self.import_main()
+        fake_rag = FakeRagService()
+        fake_fallback = FakeWebFallbackService()
+        module.rag_service = fake_rag
+        module.web_search_fallback_service = fake_fallback
+        module.conversation_service = FakeConversationService()
+        module.memory_service = FakeMemoryService()
+        module.chat_stream_manager = MemoryStreamManager()
+
+        with TestClient(module.app) as client:
+            response = client.post("/chat/stream", json={"message": "Latest AI news?", "chat_mode": "quick"})
+
+        payload = response.text
+        self.assertEqual([{"query": "Latest AI news?", "trigger_reason": "quick_parallel", "mode": "quick"}], fake_fallback.calls)
+        self.assertIn('"source": "manual.txt"', payload)
+        self.assertIn('"source": "Redis docs"', payload)
+        self.assertLess(payload.index('"sources"'), payload.index('"token"'))
+        self.assertIn("Redis docs", fake_rag.stream_calls[0]["memory_context"])
+
+    def test_chat_stream_raw_quick_starts_web_search_before_retrieval_finishes(self):
+        module = self.import_main()
+        web_search_started = threading.Event()
+        fake_rag = BlockingRouteRagService(web_search_started)
+        fake_fallback = RecordingWebFallbackService(web_search_started)
+        module.rag_service = fake_rag
+        module.web_search_fallback_service = fake_fallback
+        module.conversation_service = FakeConversationService()
+        module.memory_service = FakeMemoryService()
+        module.chat_stream_manager = MemoryStreamManager()
+        module.chat_rag_pipeline_enabled = False
+
+        with TestClient(module.app) as client:
+            response = client.post("/chat/stream", json={"message": "Latest AI news?", "chat_mode": "quick"})
+
+        self.assertEqual(200, response.status_code)
+        self.assertTrue(fake_rag.web_started_before_retrieval_finished)
+        self.assertEqual(
+            [{"query": "Latest AI news?", "trigger_reason": "quick_parallel", "mode": "quick"}],
+            fake_fallback.calls,
+        )
+
+    def test_chat_stream_quick_uses_rag_path_even_when_quick_runtime_is_enabled(self):
+        module = self.import_main()
+        fake_rag = EmptyRuntimeRouteRagService()
+        fake_fallback = FakeWebFallbackService()
+        fake_memory = FakeMemoryService()
+        module.rag_service = fake_rag
+        module.web_search_fallback_service = fake_fallback
+        module.conversation_service = FakeConversationService()
+        module.memory_service = fake_memory
+        module.chat_stream_manager = MemoryStreamManager()
+        module.chat_rag_pipeline_enabled = False
+
+        with TestClient(module.app) as client:
+            response = client.post("/chat/stream", json={"message": "AI最新资讯", "chat_mode": "quick"})
+
+        payload = response.text
+        self.assertEqual([], fake_rag.agent_runtime.calls)
+        self.assertEqual([{"query": "AI最新资讯", "trigger_reason": "quick_parallel", "mode": "quick"}], fake_fallback.calls)
+        self.assertIn('"source_type": "web"', payload)
+        self.assertIn("Redis docs", fake_rag.stream_calls[0]["memory_context"])
+        self.assertNotIn("无法从当前知识库证据中确定答案", payload)
+
+    def test_chat_stream_runtime_modes_use_terminal_web_fallback_when_internal_evidence_empty(self):
+        for mode in ("reasoning", "wiki", "rag_wiki"):
+            with self.subTest(mode=mode):
+                module = self.import_main()
+                fake_rag = EmptyRuntimeRouteRagService()
+                fake_fallback = FakeWebFallbackService()
+                fake_memory = FakeMemoryService()
+                module.rag_service = fake_rag
+                module.web_search_fallback_service = fake_fallback
+                module.conversation_service = FakeConversationService()
+                module.memory_service = fake_memory
+                module.chat_stream_manager = MemoryStreamManager()
+
+                with TestClient(module.app) as client:
+                    response = client.post("/chat/stream", json={"message": "What is Redis?", "chat_mode": mode})
+
+                payload = response.text
+                self.assertEqual([{"query": "What is Redis?", "trigger_reason": "no_internal_hits", "mode": mode}], fake_fallback.calls)
+                self.assertEqual(mode, fake_rag.agent_runtime.calls[0]["mode"])
+                self.assertIn('"source_type": "web"', payload)
+                self.assertLess(payload.index('"sources"'), payload.index('"token"'))
+                self.assertLess(payload.index('"token"'), payload.index('"final"'))
+                self.assertNotIn('"memory_updated"', payload)
+                self.assertEqual([], fake_memory.extract_calls)
+
+    def test_chat_stream_runtime_modes_do_not_fallback_when_internal_evidence_is_sufficient(self):
+        for mode in ("reasoning", "wiki", "rag_wiki"):
+            with self.subTest(mode=mode):
+                module = self.import_main()
+                fake_rag = SufficientRuntimeRouteRagService()
+                fake_fallback = FakeWebFallbackService()
+                module.rag_service = fake_rag
+                module.web_search_fallback_service = fake_fallback
+                module.conversation_service = FakeConversationService()
+                module.memory_service = FakeMemoryService()
+                module.chat_stream_manager = MemoryStreamManager()
+
+                with TestClient(module.app) as client:
+                    response = client.post("/chat/stream", json={"message": "What is Redis?", "chat_mode": mode})
+
+                payload = response.text
+                self.assertEqual([], fake_fallback.calls)
+                self.assertEqual(mode, fake_rag.agent_runtime.calls[0]["mode"])
+                self.assertIn("internal answer", payload)
+                self.assertNotIn('"source_type": "web"', payload)
 
     def test_chat_stream_optionally_sends_agent_trace_before_tokens(self):
         module = self.import_main()

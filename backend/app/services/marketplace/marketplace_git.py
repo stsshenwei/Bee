@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 GIT_IDENTITY_NAME = "Bee Marketplace"
 GIT_IDENTITY_EMAIL = "marketplace@bee.local"
 MAIN_REF = "refs/heads/main"
+LAYOUT_VERSION = "bee-git-mirror-v2\n"
 
 
 def _nested_files(files: dict[str, bytes]) -> dict[str, Any]:
@@ -47,11 +48,16 @@ class GitMirrorBuilder:
         (self.repo_dir / "refs" / "tags").mkdir(parents=True, exist_ok=True)
         (self.repo_dir / "info").mkdir(parents=True, exist_ok=True)
         head = self.repo_dir / "HEAD"
-        if not head.exists():
-            head.write_text("ref: refs/heads/main\n", encoding="utf-8")
+        expected_head = b"ref: refs/heads/main\n"
+        if not head.exists() or head.read_bytes() != expected_head:
+            head.write_bytes(expected_head)
         packs = self.repo_dir / "objects" / "info" / "packs"
         if not packs.exists():
-            packs.write_text("", encoding="utf-8")
+            packs.write_bytes(b"")
+        layout = self.repo_dir / "info" / "bee-layout"
+        expected_layout = LAYOUT_VERSION.encode("ascii")
+        if not layout.exists() or layout.read_bytes() != expected_layout:
+            layout.write_bytes(expected_layout)
 
     def update(self, files: dict[str, bytes], *, revision: str, message: str) -> str:
         """Commit ``files`` and move ``main`` plus a revision tag to it.
@@ -112,7 +118,7 @@ class GitMirrorBuilder:
         ref_path = self.repo_dir / ref
         ref_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = ref_path.with_name(ref_path.name + ".tmp")
-        tmp.write_text(sha + "\n", encoding="utf-8")
+        tmp.write_bytes((sha + "\n").encode("ascii"))
         os.replace(tmp, ref_path)
 
     def _write_info_refs(self) -> None:
@@ -127,7 +133,7 @@ class GitMirrorBuilder:
         body = "".join(f"{sha}\t{ref}\n" for sha, ref in sorted(refs))
         target = self.repo_dir / "info" / "refs"
         tmp = target.with_name("refs.tmp")
-        tmp.write_text(body, encoding="utf-8")
+        tmp.write_bytes(body.encode("ascii"))
         os.replace(tmp, target)
 
 

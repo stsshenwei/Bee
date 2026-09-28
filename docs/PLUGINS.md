@@ -10,7 +10,7 @@ For the self-hosted plugin marketplace (plugin packages, upload/download/delete,
 |---|---|---|
 | Knowledge Retrieval | `knowledge_search`, `grep_chunks`, `list_knowledge_chunks`, `get_document_info`, `query_knowledge_graph` | Read-only, scoped to selected knowledge bases. |
 | Wiki Tools | `wiki_search`, `wiki_read_page`, `wiki_read_source_doc`, `wiki_flag_issue` | Read-mostly Wiki access; write/maintenance tools stay controlled by runtime policy. |
-| Web Search | `web_search` | Uses a configured HTTP JSON endpoint. Tests validate configuration by default and only execute a provider request when explicitly requested. |
+| Web Search | `web_search` | Uses either a configured HTTP JSON endpoint or Tavily via `TAVILY_API_KEY`. Can be bound to `quick`, `reasoning`, `wiki`, and `rag_wiki` for insufficient-evidence fallback. Tests validate configuration by default and only execute a provider request when explicitly requested. |
 | Web Fetch | `web_fetch` | Requires server allowlisted domains. UI settings cannot add domains outside that allowlist. |
 | Data Analysis | `data_analysis` | Bounded analysis of inline JSON records. |
 | Database Query | `database_query` | Read-only access to server allowlisted SQLite sources. UI settings can select source names, not replace server paths. |
@@ -40,6 +40,8 @@ Relevant Agent Runtime env values include:
 - `AGENT_RUNTIME_RAG_WIKI_ENABLED_TOOLS`
 - `AGENT_RUNTIME_WEB_SEARCH_ENABLED`
 - `AGENT_RUNTIME_WEB_SEARCH_URL`
+- `TAVILY_API_KEY`
+- `TAVILY_SEARCH_URL`
 - `AGENT_RUNTIME_WEB_FETCH_ENABLED`
 - `AGENT_RUNTIME_WEB_FETCH_ALLOWED_DOMAINS`
 - `AGENT_RUNTIME_DATA_ANALYSIS_ENABLED`
@@ -49,6 +51,22 @@ Relevant Agent Runtime env values include:
 - `AGENT_RUNTIME_SKILLS_PATH`
 
 Persisted settings are workspace-scoped in PostgreSQL table `plugin_setting`. Changes are applied when the API refreshes the Agent Runtime registry after a plugin update, and they affect new chat turns. Existing in-flight chat streams keep their current runtime state.
+
+## Web Search Fallback
+
+When internal evidence is insufficient, `/chat/stream` can use the configured `web_search` provider as a fallback for every chat mode. Quick chat calls the shared fallback service before source emission. Agent Runtime modes can expose `web_search` through plugin mode bindings and also have a deterministic terminal fallback if the runtime ends without usable internal evidence.
+
+Fallback availability follows server guardrails. `WEB_SEARCH_FALLBACK_ENABLED` and `WEB_SEARCH_FALLBACK_URL` can be set explicitly; otherwise they inherit `AGENT_RUNTIME_WEB_SEARCH_ENABLED` and `AGENT_RUNTIME_WEB_SEARCH_URL`. If no HTTP JSON search URL is configured, `TAVILY_API_KEY` enables Tavily as the provider; `TAVILY_SEARCH_URL` can override the default `https://api.tavily.com/search`. `WEB_SEARCH_FALLBACK_TOP_K`, `WEB_SEARCH_FALLBACK_TIMEOUT_SECONDS`, and `WEB_SEARCH_FALLBACK_MIN_CONFIDENCE` bound result count, timeout, and evidence threshold.
+
+Minimal Tavily-backed configuration:
+
+```env
+AGENT_RUNTIME_WEB_SEARCH_ENABLED=true
+WEB_SEARCH_FALLBACK_ENABLED=true
+TAVILY_API_KEY=tvly-...
+```
+
+Successful fallback answers begin with `知识库无答案，以下来自网络搜索` and emit web source records with `source_type: "web"`. If web search is disabled, unconfigured, fails, or returns no usable results, the backend returns a safe insufficient-evidence answer and records sanitized fallback metadata without exposing credentials or provider stack traces.
 
 ## Validation
 

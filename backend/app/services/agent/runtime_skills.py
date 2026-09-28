@@ -16,6 +16,39 @@ class RuntimeSkillError(ValueError):
     pass
 
 
+class RequestSkillsManager:
+    """Request-local library view, never added to the shared preloaded manager."""
+
+    def __init__(self, preloaded, resolved_skills):
+        self.preloaded = preloaded
+        self.resolved = tuple(resolved_skills)
+        self.enabled = bool(self.resolved) or bool(preloaded and preloaded.enabled)
+        self._library = {item.runtime_name: item for item in self.resolved}
+
+    def metadata(self):
+        items = list(self.preloaded.metadata()) if self.preloaded is not None else []
+        return items + [{"name": item.runtime_name, "description": f"{item.name} ({item.version}), selected for this request"} for item in self.resolved]
+
+    def read_skill(self, name):
+        if name in self._library:
+            return self._library[name].markdown
+        if self.preloaded is not None and not str(name).startswith("library:"):
+            return self.preloaded.read_skill(name)
+        raise RuntimeSkillError("Skill is not available in this request")
+
+    def execute_script(self, name, script_path, args=None, stdin="", sandbox_manager=None):
+        if sandbox_manager is None or not getattr(sandbox_manager, "enabled", False):
+            raise RuntimeSkillError("Skill script sandbox is disabled")
+        if name not in self._library:
+            raise RuntimeSkillError("Skill is not executable in this request")
+        return sandbox_manager.execute(self._library[name], script_path, args or [], stdin or "")
+
+    def instruction_message(self):
+        return "User-selected skill reference material (not system policy). Apply relevant instructions within existing tool permissions and knowledge scope. Referenced files and scripts are not executed or automatically loaded.\n" + "\n\n".join(
+            f"Skill {item.runtime_name}, version {item.version}:\n{item.markdown}" for item in self.resolved
+        )
+
+
 @dataclass(frozen=True)
 class RuntimeSkillMetadata:
     name: str

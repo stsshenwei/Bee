@@ -5,6 +5,7 @@ import mimetypes
 import os
 import threading
 import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -178,6 +179,9 @@ from app.services.async_runtime.diagnostics import async_runtime_diagnostics
 from app.services.async_runtime.queue import CeleryProcessingQueue, DisabledProcessingQueue
 from app.services.async_runtime.reconciliation import reconcile_processing_queue
 from app.services.agent.runtime_skills import RuntimeSkillsManager
+from app.services.skills import SkillService, SkillSettings, PostgresSkillRepository, create_skill_router
+from app.services.skills.sandbox import SkillSandboxManager, SkillSandboxSettings
+from app.services.skills.models import SkillError
 from app.services.infrastructure.logging_config import (
     configure_logging_from_env,
     generate_trace_id,
@@ -208,6 +212,11 @@ from app.services.chat_pipeline import (
     ChatPipelineRequest,
     ChatPipelineRuntime,
     run_quick_rag_pipeline,
+)
+from app.services.web_search_fallback import (
+    WEB_FALLBACK_NOTICE,
+    WebSearchFallbackService,
+    assess_evidence_sufficiency,
 )
 
 load_dotenv()
@@ -890,6 +899,20 @@ def build_rag_service() -> RAGService:
         context_template_id=_get_env("AGENT_CONTEXT_TEMPLATE_ID", default="default_context"),
         skills_enabled=_get_env_bool("AGENT_RUNTIME_SKILLS_ENABLED", default=False),
         skills_path=_get_env("AGENT_RUNTIME_SKILLS_PATH", default="runtime_skills/preloaded"),
+        skill_sandbox_mode=_get_env("AGENT_RUNTIME_SKILL_SANDBOX_MODE", default="disabled"),
+        skill_sandbox_docker_image=_get_env("AGENT_RUNTIME_SKILL_SANDBOX_DOCKER_IMAGE", default="bee-skill-sandbox:latest"),
+        skill_sandbox_timeout_seconds=_get_env_float("AGENT_RUNTIME_SKILL_SANDBOX_TIMEOUT_SECONDS", default=60.0),
+        skill_sandbox_memory_bytes=_get_env_int("AGENT_RUNTIME_SKILL_SANDBOX_MEMORY_BYTES", default=256 * 1024 * 1024),
+        skill_sandbox_cpus=_get_env_float("AGENT_RUNTIME_SKILL_SANDBOX_CPU", default=1.0),
+        skill_sandbox_pids_limit=_get_env_int("AGENT_RUNTIME_SKILL_SANDBOX_PIDS_LIMIT", default=100),
+        skill_sandbox_network_enabled=_get_env_bool("AGENT_RUNTIME_SKILL_SANDBOX_NETWORK", default=False),
+        skill_sandbox_max_input_chars=_get_env_int("AGENT_RUNTIME_SKILL_SANDBOX_MAX_INPUT_CHARS", default=64 * 1024),
+        skill_sandbox_max_stdout_chars=_get_env_int("AGENT_RUNTIME_SKILL_SANDBOX_MAX_STDOUT_CHARS", default=64 * 1024),
+        skill_sandbox_max_stderr_chars=_get_env_int("AGENT_RUNTIME_SKILL_SANDBOX_MAX_STDERR_CHARS", default=64 * 1024),
+        skill_sandbox_max_output_files=_get_env_int("AGENT_RUNTIME_SKILL_SANDBOX_MAX_OUTPUT_FILES", default=100),
+        skill_sandbox_max_output_file_bytes=_get_env_int("AGENT_RUNTIME_SKILL_SANDBOX_MAX_OUTPUT_FILE_BYTES", default=20 * 1024 * 1024),
+        skill_sandbox_cache_dir=_get_env("AGENT_RUNTIME_SKILL_SANDBOX_CACHE_DIR", default="skill_runs/cache"),
+        skill_sandbox_output_dir=_get_env("AGENT_RUNTIME_SKILL_SANDBOX_OUTPUT_DIR", default="skill_runs/outputs"),
         enabled_tools=_get_env_csv("AGENT_RUNTIME_ENABLED_TOOLS", DEFAULT_AGENT_RUNTIME_TOOLS),
         max_iterations=_get_env_int("AGENT_RUNTIME_MAX_ITERATIONS", default=6),
         max_empty_retries=_get_env_int("AGENT_RUNTIME_MAX_EMPTY_RETRIES", default=2),
@@ -982,18 +1005,22 @@ def build_rag_service() -> RAGService:
         wiki_maintenance_tools_enabled=_get_env_bool("AGENT_RUNTIME_WIKI_MAINTENANCE_TOOLS_ENABLED", default=False),
         fallback_to_deterministic=_get_env_bool("AGENT_RUNTIME_FALLBACK_TO_DETERMINISTIC", default=True),
     )
+    skill_sandbox_settings = SkillSandboxSettings.from_env()
     plugin_management_service = PluginManagementService(
         PostgresPluginSettingsRepository(postgres_database, schema=postgres_schema),
         workspace_id=knowledge_base_defaults.workspace_id,
         runtime_environment=PluginRuntimeEnvironment(
             web_search_enabled=agent_runtime_config.web_search_enabled,
             web_search_endpoint=agent_runtime_config.web_search_endpoint,
+            tavily_api_key_configured=bool(_get_env("TAVILY_API_KEY", default="")),
             web_fetch_enabled=agent_runtime_config.web_fetch_enabled,
             web_fetch_allowed_domains=agent_runtime_config.web_fetch_allowed_domains,
             data_analysis_enabled=agent_runtime_config.data_analysis_enabled,
             database_query_enabled=agent_runtime_config.database_query_enabled,
             database_allowed_sources=agent_runtime_config.database_allowed_sources,
             skills_enabled=agent_runtime_config.skills_enabled,
+            skill_sandbox_enabled=skill_sandbox_settings.enabled,
+            skill_sandbox_mode=skill_sandbox_settings.mode,
             wiki_tools_enabled=agent_runtime_config.wiki_tools_enabled,
             wiki_maintenance_tools_enabled=agent_runtime_config.wiki_maintenance_tools_enabled,
         ),
@@ -1006,6 +1033,14 @@ def build_rag_service() -> RAGService:
         marketplace_settings,
     )
     rag_service.marketplace_service = marketplace_service
+    skill_repository = PostgresSkillRepository(postgres_database)
+    skill_repository.initialize_schema()
+    rag_service.skill_service = SkillService(
+        skill_repository,
+        _get_env("SKILL_STORAGE_DIR", default=str(Path(__file__).resolve().parents[1] / "skill_packages")),
+        SkillSettings.from_env(),
+    )
+    skill_sandbox_manager = SkillSandboxManager(rag_service.skill_service.storage_dir, skill_sandbox_settings)
     agent_runtime_config = plugin_management_service.apply_to_agent_runtime_config(agent_runtime_config)
     rag_service.agent_runtime_enabled = agent_runtime_config.enabled
     rag_service.unified_chat_runtime_enabled = agent_runtime_config.unified_chat_runtime_enabled
@@ -1045,6 +1080,8 @@ def build_rag_service() -> RAGService:
                 skills_enabled=agent_runtime_config.skills_enabled,
                 web_search_enabled=agent_runtime_config.web_search_enabled,
                 web_search_endpoint=agent_runtime_config.web_search_endpoint,
+                tavily_api_key=_get_env("TAVILY_API_KEY", default=""),
+                tavily_endpoint=_get_env("TAVILY_SEARCH_URL", default="https://api.tavily.com/search"),
                 web_fetch_enabled=agent_runtime_config.web_fetch_enabled,
                 web_fetch_allowed_domains=agent_runtime_config.web_fetch_allowed_domains,
                 web_fetch_timeout_seconds=agent_runtime_config.tool_timeout_seconds,
@@ -1053,6 +1090,7 @@ def build_rag_service() -> RAGService:
                 database_allowed_sources=agent_runtime_config.database_allowed_sources,
                 wiki_tools_enabled=agent_runtime_config.wiki_tools_enabled,
                 wiki_maintenance_tools_enabled=agent_runtime_config.wiki_maintenance_tools_enabled,
+                skill_sandbox_manager=skill_sandbox_manager,
             ),
             config=agent_runtime_config,
             skills_manager=skills_manager,
@@ -1163,6 +1201,7 @@ conversation_service = ConversationService(
     summary_message_threshold=_get_env_int("CONVERSATION_SUMMARY_MESSAGE_THRESHOLD", default=20),
 )
 memory_service = MemoryService(PostgresMemoryRepository(postgres_database, schema=postgres_schema))
+web_search_fallback_service = WebSearchFallbackService()
 chat_stream_manager = _build_chat_stream_manager()
 chat_stream_cancellations: dict[str, threading.Event] = {}
 chat_stream_cancellations_lock = threading.Lock()
@@ -1315,6 +1354,34 @@ def _marketplace_principal(authorization: str | None) -> MarketplacePrincipal | 
     return _marketplace_service().resolve_principal(authorization)
 
 
+def _skill_service() -> SkillService:
+    service = getattr(rag_service, "skill_service", None)
+    if service is None:
+        raise HTTPException(status_code=503, detail="技能库服务不可用")
+    return service
+
+
+def _validate_skill_workspace(workspace_id: str):
+    workspace = _knowledge_base_service().repository.get_workspace(workspace_id)
+    if workspace is None or workspace.status != "active":
+        raise HTTPException(status_code=404, detail="工作空间不存在或已归档")
+
+
+def _library_runtime_enabled(workspace_id: str, mode: str | None = None) -> bool:
+    runtime = getattr(rag_service, "agent_runtime", None)
+    if runtime is None or not runtime.config.skills_enabled:
+        return False
+    plugin = _plugin_service().get_plugin("skills", workspace_id)
+    return bool(plugin["enabled"] and plugin["availability"] == "available" and (mode is None or mode in plugin["enabled_modes"]))
+
+
+def _workspace_library_runtime_enabled(workspace_id: str) -> bool:
+    return _library_runtime_enabled(workspace_id)
+
+
+app.include_router(create_skill_router(_skill_service, _marketplace_service, _validate_skill_workspace, _workspace_library_runtime_enabled))
+
+
 def _marketplace_http_error(exc: MarketplaceError) -> HTTPException:
     if isinstance(exc, MarketplaceAuthError):
         return HTTPException(status_code=401, detail=str(exc))
@@ -1357,6 +1424,8 @@ def _refresh_agent_runtime_plugin_settings() -> None:
         skills_enabled=config.skills_enabled,
         web_search_enabled=config.web_search_enabled,
         web_search_endpoint=config.web_search_endpoint,
+        tavily_api_key=_get_env("TAVILY_API_KEY", default=""),
+        tavily_endpoint=_get_env("TAVILY_SEARCH_URL", default="https://api.tavily.com/search"),
         web_fetch_enabled=config.web_fetch_enabled,
         web_fetch_allowed_domains=config.web_fetch_allowed_domains,
         web_fetch_timeout_seconds=config.tool_timeout_seconds,
@@ -1365,6 +1434,7 @@ def _refresh_agent_runtime_plugin_settings() -> None:
         database_allowed_sources=config.database_allowed_sources,
         wiki_tools_enabled=config.wiki_tools_enabled,
         wiki_maintenance_tools_enabled=config.wiki_maintenance_tools_enabled,
+        skill_sandbox_manager=skill_sandbox_manager,
     )
 
 
@@ -1416,8 +1486,23 @@ def test_plugin(
 
 
 @app.get("/marketplace/marketplace.json")
-def marketplace_catalog():
-    return JSONResponse(_marketplace_service().catalog_document())
+def marketplace_catalog(request: Request):
+    public_base_url = str(request.base_url).rstrip("/")
+    return JSONResponse(_marketplace_service().catalog_document(public_base_url=public_base_url))
+
+
+@app.get("/marketplace/plugins/{name}.git/{file_path:path}")
+def marketplace_plugin_git_file(name: str, file_path: str):
+    """Serve a single plugin's bare git mirror for per-plugin installs."""
+
+    service = _marketplace_service()
+    package = service.repository.get_package(name)
+    if package is None or package.visibility != "public" or not package.latest_version:
+        raise HTTPException(status_code=404, detail="Marketplace plugin git repository not found")
+    repo_root = service.plugin_git_repo_root(name)
+    if not service.git_repo_ready(name) and service.settings.git_mirror_enabled:
+        service.rebuild_snapshot()
+    return _marketplace_git_file_response(file_path, repo_root=repo_root)
 
 
 @app.get("/marketplace/plugins/{name}/{file_path:path}")
@@ -1630,12 +1715,30 @@ def marketplace_git_file(file_path: str):
     """Serve the bare git mirror as static files for dumb-HTTP clones."""
 
     service = _marketplace_service()
-    target = resolve_repo_file(service.git_repo_root(), file_path)
+    if not service.git_repo_ready() and service.settings.git_mirror_enabled:
+        service.rebuild_snapshot()
+    return _marketplace_git_file_response(file_path)
+
+
+@app.get("/marketplace/git.git/{file_path:path}")
+def marketplace_git_alias_file(file_path: str):
+    """Serve the same git mirror under a .git-looking URL for clients that require it."""
+
+    service = _marketplace_service()
+    if not service.git_repo_ready() and service.settings.git_mirror_enabled:
+        service.rebuild_snapshot()
+    return _marketplace_git_file_response(file_path)
+
+
+def _marketplace_git_file_response(file_path: str, *, repo_root: Path | None = None):
+    service = _marketplace_service()
+    root = repo_root or service.git_repo_root()
+    target = resolve_repo_file(root, file_path)
     if target is None:
         raise HTTPException(status_code=404, detail="文件不存在")
     media_type = (
         "application/octet-stream"
-        if target.relative_to(service.git_repo_root()).parts[0] == "objects"
+        if target.relative_to(root).parts[0] == "objects"
         else "text/plain"
     )
     return FileResponse(target, media_type=media_type)
@@ -2144,19 +2247,20 @@ def _temporary_attachment_sources(attachments: list[dict]) -> list[dict]:
     return [temporary_attachment_repository.source_for_resolved(item) for item in attachments]
 
 
-def _merge_sources(sources: list[dict], temporary_sources: list[dict]) -> list[dict]:
-    if not temporary_sources:
-        return sources
-    seen = {
-        str(item.get("temporary_attachment_id") or item.get("source") or "")
-        for item in sources
-    }
-    merged = list(sources)
-    for item in temporary_sources:
-        key = str(item.get("temporary_attachment_id") or item.get("source") or "")
-        if key not in seen:
-            merged.append(item)
-            seen.add(key)
+def _merge_sources(*source_groups: list[dict]) -> list[dict]:
+    merged: list[dict] = []
+    seen: set[str] = set()
+    for sources in source_groups:
+        for item in sources or []:
+            key = str(
+                item.get("temporary_attachment_id")
+                or item.get("url")
+                or item.get("source")
+                or ""
+            )
+            if key not in seen:
+                merged.append(item)
+                seen.add(key)
     return merged
 
 
@@ -2174,6 +2278,99 @@ def _temporary_attachment_context(attachments: list[dict]) -> str:
 
 def _join_request_context(*blocks: str) -> str:
     return "\n\n".join(block.strip() for block in blocks if block and block.strip())
+
+
+def _empty_web_fallback_metadata(mode: str, decision) -> dict:
+    return {
+        "attempted": False,
+        "used": False,
+        "mode": str(mode or ""),
+        "trigger_reason": decision.reason,
+        "internal_evidence": {
+            "sufficient": decision.sufficient,
+            "best_score": decision.best_score,
+            "hit_count": decision.hit_count,
+            "source_count": decision.source_count,
+        },
+    }
+
+
+def _apply_web_search_fallback(
+    *,
+    question: str,
+    hits: list[dict],
+    sources: list[dict],
+    memory_context: str,
+    stream_state: dict,
+    mode: str,
+) -> tuple[list[dict], str, object | None]:
+    decision = assess_evidence_sufficiency(hits, sources)
+    stream_state["web_search_fallback"] = _empty_web_fallback_metadata(mode, decision)
+    if decision.sufficient or web_search_fallback_service is None:
+        return sources, memory_context, None
+    result = web_search_fallback_service.search(
+        question,
+        trigger_reason=decision.reason,
+        mode=mode,
+    )
+    stream_state["web_search_fallback"] = dict(result.metadata or {})
+    stream_state["web_search_fallback_context"] = str(result.answer_context or "")
+    if not result.used:
+        return sources, memory_context, result
+    fallback_sources = list(result.sources or [])
+    return fallback_sources, _join_request_context(memory_context, stream_state["web_search_fallback_context"]), result
+
+
+def _start_quick_web_search_future(
+    question: str,
+    *,
+    mode: str,
+) -> tuple[Future | None, ThreadPoolExecutor | None]:
+    if web_search_fallback_service is None:
+        return None, None
+    executor = ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(
+        web_search_fallback_service.search,
+        question,
+        trigger_reason="quick_parallel",
+        mode=mode,
+    )
+    return future, executor
+
+
+def _consume_quick_web_search_future(
+    future: Future | None,
+    executor: ThreadPoolExecutor | None,
+    *,
+    mode: str,
+) -> object | None:
+    try:
+        if future is None:
+            return None
+        return future.result()
+    except Exception as exc:
+        logger.warning("quick.web_search.failed", extra={"mode": mode, "error_type": exc.__class__.__name__})
+        return None
+    finally:
+        if executor is not None:
+            executor.shutdown(wait=False)
+
+
+def _web_sources_context(sources: list[dict]) -> str:
+    if not sources:
+        return ""
+    lines = ["网络搜索结果:"]
+    for index, source in enumerate(sources, start=1):
+        title = source.get("source") or source.get("url") or "Web result"
+        url = source.get("url") or ""
+        snippet = source.get("snippet") or ""
+        line = f"{index}. {title}"
+        if url:
+            line = f"{line} ({url})"
+        if snippet:
+            line = f"{line}\n   {snippet}"
+        lines.append(line)
+    return "\n".join(lines)
 
 
 def _resolve_chat_mode(payload: ChatRequest) -> str:
@@ -2196,6 +2393,7 @@ def _stream_agentic_chat_events(
     temporary_sources: list[dict] | None = None,
 ):
     temporary_sources = temporary_sources or []
+    initial_answer_part_count = len(answer_parts)
     for event in rag_service.agentic_workflow.stream_query_events(
         question,
         conversation_context=conversation_context,
@@ -2222,6 +2420,15 @@ def _stream_agentic_chat_events(
             )
         else:
             yield f"data: {json.dumps({event_type: payload_data}, ensure_ascii=False)}\n\n"
+    if len(answer_parts) == initial_answer_part_count:
+        for sse_payload in _terminal_web_fallback_payloads(
+            question,
+            answer_parts,
+            stream_state,
+            temporary_sources,
+            mode="reasoning",
+        ):
+            yield f"data: {json.dumps(sse_payload, ensure_ascii=False)}\n\n"
 
 
 def _stream_agent_runtime_chat_events(
@@ -2233,8 +2440,10 @@ def _stream_agent_runtime_chat_events(
     scope,
     temporary_sources: list[dict] | None = None,
     mode: str = "reasoning",
+    resolved_skills: tuple = (),
 ):
     temporary_sources = temporary_sources or []
+    initial_answer_part_count = len(answer_parts)
     stream_kwargs = {
         "conversation_context": conversation_context,
         "memory_context": memory_context,
@@ -2246,11 +2455,73 @@ def _stream_agent_runtime_chat_events(
         runtime_parameters = {}
     if "mode" in runtime_parameters:
         stream_kwargs["mode"] = mode
+    if resolved_skills:
+        stream_kwargs["resolved_skills"] = resolved_skills
     for event in rag_service.agent_runtime.stream_query_events(question, **stream_kwargs):
         event_type = getattr(event, "event_type", "")
         payload_data = getattr(event, "payload", {})
-        for sse_payload in _agent_runtime_sse_payloads(event_type, payload_data, stream_state, answer_parts, temporary_sources):
+        sse_payloads = _agent_runtime_sse_payloads(event_type, payload_data, stream_state, answer_parts, temporary_sources)
+        if event_type == "final" and len(answer_parts) == initial_answer_part_count:
+            for fallback_payload in _terminal_web_fallback_payloads(
+                question,
+                answer_parts,
+                stream_state,
+                temporary_sources,
+                mode=mode,
+            ):
+                yield f"data: {json.dumps(fallback_payload, ensure_ascii=False)}\n\n"
+        for sse_payload in sse_payloads:
             yield f"data: {json.dumps(sse_payload, ensure_ascii=False)}\n\n"
+    if len(answer_parts) == initial_answer_part_count:
+        for sse_payload in _terminal_web_fallback_payloads(
+            question,
+            answer_parts,
+            stream_state,
+            temporary_sources,
+            mode=mode,
+        ):
+            yield f"data: {json.dumps(sse_payload, ensure_ascii=False)}\n\n"
+
+
+def _terminal_web_fallback_payloads(
+    question: str,
+    answer_parts: list[str],
+    stream_state: dict,
+    temporary_sources: list[dict],
+    *,
+    mode: str,
+) -> list[dict]:
+    if stream_state.get("_web_terminal_fallback_checked"):
+        return []
+    stream_state["_web_terminal_fallback_checked"] = True
+    current_sources = list(stream_state.get("sources", []))
+    internal_sources = [
+        source
+        for source in current_sources
+        if source.get("source_type") not in {"web", "temporary_attachment"}
+    ]
+    fallback_sources, _, fallback_result = _apply_web_search_fallback(
+        question=question,
+        hits=[],
+        sources=internal_sources,
+        memory_context="",
+        stream_state=stream_state,
+        mode=mode,
+    )
+    if fallback_result is None:
+        return []
+    payloads: list[dict] = []
+    metadata = dict(stream_state.get("web_search_fallback") or {})
+    if getattr(fallback_result, "used", False):
+        sources = _merge_sources(fallback_sources, temporary_sources)
+        stream_state["sources"] = sources
+        payloads.append({"sources": sources})
+    payloads.append({"reasoning": {"web_search_fallback": metadata}})
+    answer = str(getattr(fallback_result, "answer_context", "") or "")
+    if answer:
+        answer_parts.append(answer)
+        payloads.append({"token": answer})
+    return payloads
 
 
 def _agent_runtime_sse_payloads(
@@ -2309,6 +2580,8 @@ _CHAT_PROCESS_EVENT_KEYS = {
 
 
 def _remember_chat_process_payload(stream_state: dict, payload: dict) -> None:
+    if isinstance(payload.get("skills_loaded"), dict):
+        stream_state["skills_loaded"] = payload["skills_loaded"].get("items", [])
     if "reasoning" in payload and isinstance(payload.get("reasoning"), dict):
         stream_state["reasoning"] = payload["reasoning"]
     if "evidence_summary" in payload and isinstance(payload.get("evidence_summary"), dict):
@@ -2348,10 +2621,14 @@ def _chat_completion_metadata(
     }
     if isinstance(stream_state.get("reasoning"), dict):
         metadata["reasoning"] = stream_state["reasoning"]
+    if isinstance(stream_state.get("skills_loaded"), list):
+        metadata["skills_loaded"] = stream_state["skills_loaded"]
     if isinstance(stream_state.get("evidence_summary"), dict):
         metadata["evidence_summary"] = stream_state["evidence_summary"]
     if isinstance(stream_state.get("citation_verification"), dict):
         metadata["citation_verification"] = stream_state["citation_verification"]
+    if isinstance(stream_state.get("web_search_fallback"), dict):
+        metadata["web_search_fallback"] = stream_state["web_search_fallback"]
     if isinstance(stream_state.get("agent_events"), list):
         metadata["agent_events"] = stream_state["agent_events"]
     if stream_state.get("agent_events_truncated"):
@@ -2369,12 +2646,52 @@ def _stream_raw_chat_events(
     temporary_sources: list[dict] | None = None,
 ):
     temporary_sources = temporary_sources or []
+    web_future, web_executor = _start_quick_web_search_future(question, mode="quick")
     hits = rag_service.recall_parent_hits(rag_service.hybrid_retrieve_hits(question, scope=scope), scope=scope)
-    sources = _merge_sources(rag_service.extract_sources(hits), temporary_sources)
+    internal_sources = rag_service.extract_sources(hits)
+    answer_memory_context = memory_context
+    decision = assess_evidence_sufficiency(hits, internal_sources)
+    stream_state["web_search_fallback"] = _empty_web_fallback_metadata("quick", decision)
+    web_fallback_result = None
+    web_sources: list[dict] = []
+    parallel_web_result = _consume_quick_web_search_future(web_future, web_executor, mode="quick")
+    if parallel_web_result is None:
+        if not decision.sufficient:
+            web_sources, answer_memory_context, web_fallback_result = _apply_web_search_fallback(
+                question=question,
+                hits=hits,
+                sources=internal_sources,
+                memory_context=memory_context,
+                stream_state=stream_state,
+                mode="quick",
+            )
+    else:
+        result_metadata = dict(getattr(parallel_web_result, "metadata", {}) or {})
+        if not decision.sufficient:
+            stream_state["web_search_fallback"] = result_metadata
+            stream_state["web_search_fallback_context"] = str(getattr(parallel_web_result, "answer_context", "") or "")
+            web_fallback_result = parallel_web_result
+        result_sources = list(getattr(parallel_web_result, "sources", []) or [])
+        if result_sources:
+            web_sources = result_sources
+            if decision.sufficient:
+                answer_memory_context = _join_request_context(answer_memory_context, _web_sources_context(web_sources))
+            elif getattr(parallel_web_result, "used", False):
+                answer_memory_context = _join_request_context(
+                    memory_context,
+                    stream_state.get("web_search_fallback_context", ""),
+                )
+    sources = _merge_sources(internal_sources, web_sources, temporary_sources)
     stream_state["sources"] = sources
 
     yield f"data: {json.dumps({'sources': sources}, ensure_ascii=False)}\n\n"
-    yield f"data: {json.dumps({'reasoning': rag_service.build_reasoning_summary(question, hits)}, ensure_ascii=False)}\n\n"
+    reasoning = rag_service.build_reasoning_summary(question, hits)
+    if isinstance(stream_state.get("web_search_fallback"), dict):
+        reasoning = {
+            **dict(reasoning or {}),
+            "web_search_fallback": dict(stream_state["web_search_fallback"]),
+        }
+    yield f"data: {json.dumps({'reasoning': reasoning}, ensure_ascii=False)}\n\n"
 
     build_agent_trace = getattr(rag_service, "build_chat_agent_trace", None)
     if callable(build_agent_trace):
@@ -2387,11 +2704,22 @@ def _stream_raw_chat_events(
         for trace_step in build_agent_trace(question, hits, **trace_kwargs):
             yield f"data: {json.dumps({'agent_trace': trace_step}, ensure_ascii=False)}\n\n"
 
+    if web_fallback_result is not None and not getattr(web_fallback_result, "used", False):
+        answer = str(getattr(web_fallback_result, "answer_context", "") or "")
+        answer_parts.append(answer)
+        yield f"data: {json.dumps({'token': answer}, ensure_ascii=False)}\n\n"
+        return
+
+    if web_fallback_result is not None and getattr(web_fallback_result, "used", False):
+        notice = f"{WEB_FALLBACK_NOTICE}\n\n"
+        answer_parts.append(notice)
+        yield f"data: {json.dumps({'token': notice}, ensure_ascii=False)}\n\n"
+
     for token in rag_service.stream_answer(
         question,
         hits=hits,
         conversation_context=conversation_context,
-        memory_context=memory_context,
+        memory_context=answer_memory_context,
         scope=scope,
     ):
         answer_parts.append(token)
@@ -2930,6 +3258,20 @@ def chat_stream(payload: ChatRequest, request: Request) -> StreamingResponse:
         return StreamingResponse(replay_event_gen(), media_type="text/event-stream")
 
     memory_enabled = bool(payload.memory_enabled) and not bool(payload.temporary)
+    resolved_skills = ()
+    if payload.skill_refs:
+        runtime_flags = {
+            "reasoning": bool(getattr(rag_service, "agent_runtime_enabled", False)),
+            "quick": bool(getattr(rag_service, "unified_chat_runtime_enabled", False) and getattr(rag_service, "quick_runtime_enabled", False)),
+            "wiki": bool(getattr(rag_service, "wiki_runtime_enabled", False)),
+            "rag_wiki": bool(getattr(rag_service, "rag_wiki_runtime_enabled", False)),
+        }
+        if not runtime_flags.get(chat_mode) or getattr(rag_service, "agent_runtime", None) is None:
+            raise HTTPException(status_code=409, detail={"code": "skill_runtime_unavailable", "message": "当前聊天模式未启用技能运行时，请切换模式或移除技能。"})
+        try:
+            resolved_skills = _skill_service().resolve(scope.workspace_id, [_payload_dict(ref) for ref in payload.skill_refs], _library_runtime_enabled(scope.workspace_id, chat_mode))
+        except SkillError as exc:
+            raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": str(exc)}) from exc
     turn_metadata = {
         "knowledge_base_scope": scope.to_dict(),
         "chat_mode": chat_mode,
@@ -2967,7 +3309,7 @@ def chat_stream(payload: ChatRequest, request: Request) -> StreamingResponse:
                 raise ValueError("RAG + Wiki 模式暂不可用，请确认混合检索 runtime 已启用")
             if chat_mode == "reasoning" and not (runtime_available or agentic_available):
                 raise ValueError("智能推理暂不可用，请切换为快速问答后重试")
-            if chat_mode == "quick" and chat_rag_pipeline_enabled and not quick_runtime_available:
+            if chat_mode == "quick" and chat_rag_pipeline_enabled and not resolved_skills:
                 context = ChatPipelineContext(
                     request=ChatPipelineRequest(
                         question=question,
@@ -2988,6 +3330,7 @@ def chat_stream(payload: ChatRequest, request: Request) -> StreamingResponse:
                         rag_service=rag_service,
                         conversation_service=conversation_service,
                         memory_service=memory_service,
+                        web_search_fallback_service=web_search_fallback_service,
                         event_bus=event_bus,
                         stream_identity=stream_identity,
                         stop_signal=stop_signal,
@@ -3004,6 +3347,8 @@ def chat_stream(payload: ChatRequest, request: Request) -> StreamingResponse:
                 stream_state["reasoning"] = context.state.reasoning
                 stream_state["agent_events"] = context.state.agent_events
                 stream_state["agent_events_truncated"] = context.state.agent_events_truncated
+                if context.state.web_fallback_metadata:
+                    stream_state["web_search_fallback"] = context.state.web_fallback_metadata
                 answer_parts[:] = list(context.state.answer_parts)
                 if context.state.stopped:
                     _complete_chat_assistant(
@@ -3051,6 +3396,7 @@ def chat_stream(payload: ChatRequest, request: Request) -> StreamingResponse:
                         scope,
                         temporary_sources,
                         mode="rag_wiki",
+                        resolved_skills=resolved_skills,
                     ),
                     stream_state=stream_state,
                     event_bus=event_bus,
@@ -3069,6 +3415,7 @@ def chat_stream(payload: ChatRequest, request: Request) -> StreamingResponse:
                         scope,
                         temporary_sources,
                         mode="wiki",
+                        resolved_skills=resolved_skills,
                     ),
                     stream_state=stream_state,
                     event_bus=event_bus,
@@ -3087,6 +3434,7 @@ def chat_stream(payload: ChatRequest, request: Request) -> StreamingResponse:
                         scope,
                         temporary_sources,
                         mode="reasoning",
+                        resolved_skills=resolved_skills,
                     ),
                     stream_state=stream_state,
                     event_bus=event_bus,
@@ -3110,7 +3458,7 @@ def chat_stream(payload: ChatRequest, request: Request) -> StreamingResponse:
                     stop_signal=stop_signal,
                 ):
                     pass
-            elif quick_runtime_available:
+            elif chat_mode == "quick" and quick_runtime_available and resolved_skills:
                 for _event in _store_raw_sse_events(
                     stream_identity,
                     _stream_agent_runtime_chat_events(
@@ -3122,6 +3470,7 @@ def chat_stream(payload: ChatRequest, request: Request) -> StreamingResponse:
                         scope,
                         temporary_sources,
                         mode="quick",
+                        resolved_skills=resolved_skills,
                     ),
                     stream_state=stream_state,
                     event_bus=event_bus,
@@ -3155,13 +3504,16 @@ def chat_stream(payload: ChatRequest, request: Request) -> StreamingResponse:
             )
             _complete_chat_assistant(conversation_id, str(assistant_message["id"]), answer, completion_metadata)
             _maybe_summarize_chat_conversation(conversation_id, principal=principal)
-            memory_updates = memory_service.process_exchange(
-                user_message=question,
-                assistant_message=answer,
-                conversation_id=conversation_id,
-                user_message_id=str(user_message["id"]),
-                memory_enabled=memory_enabled,
-            )
+            memory_updates = []
+            web_fallback_metadata = stream_state.get("web_search_fallback")
+            if not (isinstance(web_fallback_metadata, dict) and web_fallback_metadata.get("used")):
+                memory_updates = memory_service.process_exchange(
+                    user_message=question,
+                    assistant_message=answer,
+                    conversation_id=conversation_id,
+                    user_message_id=str(user_message["id"]),
+                    memory_enabled=memory_enabled,
+                )
             if memory_updates:
                 _emit_stored_sse(
                     stream_identity,

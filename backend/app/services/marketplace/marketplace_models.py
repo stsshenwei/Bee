@@ -66,6 +66,7 @@ class MarketplaceSettings:
     marketplace_name: str = "bee-plugins"
     marketplace_description: str = "Bee 插件市场"
     owner_display_name: str = "Bee"
+    public_base_url: str = ""
     storage_dir: str = os.path.join("data", "marketplace")
     max_upload_bytes: int = 20 * 1024 * 1024
     max_entry_count: int = 4000
@@ -87,6 +88,7 @@ class MarketplaceSettings:
             marketplace_name=name,
             marketplace_description=str(env.get("MARKETPLACE_DESCRIPTION") or "").strip() or "Bee 插件市场",
             owner_display_name=str(env.get("MARKETPLACE_OWNER_NAME") or "").strip() or "Bee",
+            public_base_url=str(env.get("MARKETPLACE_PUBLIC_BASE_URL") or "").strip().rstrip("/"),
             storage_dir=storage_dir,
             max_upload_bytes=max_upload,
             max_entry_count=max_entries,
